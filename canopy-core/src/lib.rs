@@ -58,19 +58,9 @@ pub struct DomainModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrontendConfig {
-    pub framework: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackendConfig {
-    pub framework: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Architecture {
-    pub frontend: FrontendConfig,
-    pub backend: BackendConfig,
+    pub frontend: serde_yaml::Value,
+    pub backend: serde_yaml::Value,
     pub database: String,
     pub deployment: String,
     pub reasoning: Vec<String>,
@@ -150,8 +140,8 @@ mod tests {
     #[test]
     fn architecture_yaml_round_trip() {
         let a = Architecture {
-            frontend: FrontendConfig { framework: "React".into() },
-            backend: BackendConfig { framework: "Axum".into() },
+            frontend: serde_yaml::Value::String("React".into()),
+            backend: serde_yaml::Value::String("Axum".into()),
             database: "PostgreSQL".into(),
             deployment: "AWS".into(),
             reasoning: vec!["Strong ecosystem".into()],
@@ -160,6 +150,35 @@ mod tests {
         let a2: Architecture = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(a.database, a2.database);
         assert_eq!(a.reasoning, a2.reasoning);
+    }
+
+    #[test]
+    fn architecture_rich_backend_parses() {
+        let yaml = r#"
+frontend:
+  framework: Next.js 14
+  ui_library: Tailwind CSS
+backend:
+  services:
+    api: Axum
+    worker: Tokio
+database: PostgreSQL
+deployment: AWS ECS
+reasoning:
+  - Strong ecosystem
+"#;
+        let a: Architecture = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(a.database, "PostgreSQL");
+        assert!(matches!(a.backend, serde_yaml::Value::Mapping(_)));
+    }
+
+    #[test]
+    fn architecture_with_wrapper_key_handled_by_explore() {
+        let yaml = "architecture:\n  frontend:\n    framework: React\n  backend:\n    framework: Axum\n  database: PG\n  deployment: AWS\n  reasoning:\n    - Good choice\n";
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let inner = &value["architecture"];
+        let a: Architecture = serde_yaml::from_value(inner.clone()).unwrap();
+        assert_eq!(a.database, "PG");
     }
 
     #[test]

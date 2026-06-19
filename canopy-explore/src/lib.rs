@@ -211,11 +211,18 @@ Requirements:
 Domain model:
 {domain_yaml}
 
-Recommend a concrete, specific architecture as YAML. Use real names (e.g. "SvelteKit" not "a frontend framework"):
+Recommend a concrete, specific architecture as YAML.
+
+CRITICAL: The output must start directly with "frontend:" — do NOT add a top-level "architecture:" wrapper key.
+
+Use real names (e.g. "Next.js" not "a frontend framework"). You may include sub-fields under frontend and backend (e.g. ui_library, state_management, services) as long as the top-level keys are exactly: frontend, backend, database, deployment, reasoning.
+
 frontend:
   framework: <specific framework>
+  <optional additional fields>
 backend:
   framework: <specific framework>
+  <optional additional fields>
 database: <specific database>
 deployment: <specific hosting approach>
 reasoning:
@@ -275,6 +282,23 @@ pub fn generate_architecture(
     domain: &DomainModel,
 ) -> Result<Architecture, ExploreError> {
     let raw = client.complete(&architecture_prompt(vision, requirements, domain))?;
-    serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
+    parse_architecture(&raw)
+}
+
+fn parse_architecture(raw: &str) -> Result<Architecture, ExploreError> {
+    // Direct parse — the expected path.
+    if let Ok(a) = serde_yaml::from_str::<Architecture>(raw) {
+        return Ok(a);
+    }
+    // Fallback: the LLM sometimes wraps the output in an `architecture:` key despite instructions.
+    // Parse the whole document as a generic value and extract the inner mapping.
+    let value: serde_yaml::Value = serde_yaml::from_str(raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() })?;
+    if let Some(inner) = value.get("architecture") {
+        return serde_yaml::from_value(inner.clone())
+            .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() });
+    }
+    // Neither worked — re-run the direct parse to surface its error.
+    serde_yaml::from_str::<Architecture>(raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() })
 }
