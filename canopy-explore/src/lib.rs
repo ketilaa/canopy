@@ -137,11 +137,11 @@ Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
     )
 }
 
-fn requirements_prompt(idea: &Idea, vision: &Vision, answers: &[AnsweredQuestion]) -> String {
+fn delivery_intents_prompt(idea: &Idea, vision: &Vision, answers: &[AnsweredQuestion]) -> String {
     let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
     let qa = format_answers(answers);
     format!(
-        r#"You are an experienced software architect.
+        r#"You are an experienced product strategist and software architect.
 
 Project vision:
 {vision_yaml}
@@ -151,11 +151,12 @@ Original idea: {description}
 Q&A context:
 {qa}
 
-Generate comprehensive requirements as YAML:
-functional:
-  - <what the system must do — one concrete requirement per item>
-non_functional:
-  - <quality attributes: performance, security, scalability, accessibility, etc.>
+Produce an ordered list of delivery intents as YAML. Each intent is a coherent slice of value that can be designed, built, and delivered independently. Order them from foundational to differentiating — earlier intents enable later ones.
+
+intents:
+  - title: <short action-oriented title, e.g. "User authentication">
+    description: <what is built and how it works, 1-2 sentences>
+    value: <the concrete user or business value this delivers>
 
 Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
         vision_yaml = vision_yaml,
@@ -164,77 +165,44 @@ Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
     )
 }
 
-fn domain_prompt(vision: &Vision, requirements: &Requirements) -> String {
+fn architecture_principles_prompt(vision: &Vision, intents: &DeliveryIntents, answers: &[AnsweredQuestion]) -> String {
     let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let req_yaml = serde_yaml::to_string(requirements).unwrap_or_default();
-    format!(
-        r#"You are an experienced software architect applying Domain-Driven Design.
-
-Project vision:
-{vision_yaml}
-
-Requirements:
-{req_yaml}
-
-Generate a DDD domain model as YAML:
-entities:
-  - EntityName
-entities_detail:
-  - name: EntityName
-    attributes:
-      - fieldName: type description
-events:
-  - SomethingHappened
-relationships:
-  - "EntityA owns many EntityB"
-  - "EntityC collaborates with EntityD"
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        vision_yaml = vision_yaml,
-        req_yaml = req_yaml
-    )
-}
-
-fn architecture_prompt(vision: &Vision, requirements: &Requirements, domain: &DomainModel) -> String {
-    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let req_yaml = serde_yaml::to_string(requirements).unwrap_or_default();
-    let domain_yaml = serde_yaml::to_string(domain).unwrap_or_default();
+    let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
+    let qa = format_answers(answers);
     format!(
         r#"You are an experienced software architect.
 
 Project vision:
 {vision_yaml}
 
-Requirements:
-{req_yaml}
+Delivery intents:
+{intents_yaml}
 
-Domain model:
-{domain_yaml}
+Q&A context:
+{qa}
 
-Recommend a concrete, specific architecture as YAML.
+Capture architectural principles, constraints, and structural commitments for this system as YAML.
 
-CRITICAL: The output must start directly with "frontend:" — do NOT add a top-level "architecture:" wrapper key.
+Do NOT name specific technologies, frameworks, or databases. Capture what is known now:
+- principles: how the system should behave architecturally
+- constraints: non-negotiable requirements (compliance, deployment environment, team expertise, integration mandates)
+- structural_commitments: system-wide decisions that must be consistent across all delivery intents
 
-Use real names (e.g. "Next.js" not "a frontend framework"). You may include sub-fields under frontend and backend (e.g. ui_library, state_management, services) as long as the top-level keys are exactly: frontend, backend, database, deployment, reasoning.
+CRITICAL: Output must start directly with "principles:" — do NOT add a top-level wrapper key.
 
-frontend:
-  framework: <specific framework>
-  <optional additional fields>
-backend:
-  framework: <specific framework>
-  <optional additional fields>
-database: <specific database>
-deployment: <specific hosting approach>
-reasoning:
-  - <why this frontend choice fits the project's users and goals>
-  - <why this backend choice fits the requirements>
-  - <why this database fits the domain model>
-  - <why this deployment approach fits the team and scale>
+principles:
+  - <architectural principle, e.g. "Stateless application tier — no session state in services">
+constraints:
+  - <hard constraint, e.g. "Must deploy on-premise, no public cloud">
+structural_commitments:
+  deployment_topology: <e.g. "Modular monolith, extractable to microservices">
+  integration_style: <e.g. "Event-driven integration between bounded contexts">
+  data_ownership: <e.g. "Shared database with schema-per-module boundaries">
 
 Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
         vision_yaml = vision_yaml,
-        req_yaml = req_yaml,
-        domain_yaml = domain_yaml
+        intents_yaml = intents_yaml,
+        qa = qa
     )
 }
 
@@ -254,51 +222,40 @@ pub fn generate_vision(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
-pub fn generate_requirements(
+pub fn generate_delivery_intents(
     client: &LlmClient,
     idea: &Idea,
     vision: &Vision,
     answers: &[AnsweredQuestion],
-) -> Result<Requirements, ExploreError> {
-    let raw = client.complete(&requirements_prompt(idea, vision, answers))?;
+) -> Result<DeliveryIntents, ExploreError> {
+    let raw = client.complete(&delivery_intents_prompt(idea, vision, answers))?;
     serde_yaml::from_str(&raw)
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
-pub fn generate_domain(
+pub fn generate_architecture_principles(
     client: &LlmClient,
     vision: &Vision,
-    requirements: &Requirements,
-) -> Result<DomainModel, ExploreError> {
-    let raw = client.complete(&domain_prompt(vision, requirements))?;
-    serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
+    intents: &DeliveryIntents,
+    answers: &[AnsweredQuestion],
+) -> Result<ArchitecturePrinciples, ExploreError> {
+    let raw = client.complete(&architecture_principles_prompt(vision, intents, answers))?;
+    parse_architecture_principles(&raw)
 }
 
-pub fn generate_architecture(
-    client: &LlmClient,
-    vision: &Vision,
-    requirements: &Requirements,
-    domain: &DomainModel,
-) -> Result<Architecture, ExploreError> {
-    let raw = client.complete(&architecture_prompt(vision, requirements, domain))?;
-    parse_architecture(&raw)
-}
-
-fn parse_architecture(raw: &str) -> Result<Architecture, ExploreError> {
-    // Direct parse — the expected path.
-    if let Ok(a) = serde_yaml::from_str::<Architecture>(raw) {
-        return Ok(a);
+fn parse_architecture_principles(raw: &str) -> Result<ArchitecturePrinciples, ExploreError> {
+    if let Ok(ap) = serde_yaml::from_str::<ArchitecturePrinciples>(raw) {
+        return Ok(ap);
     }
-    // Fallback: the LLM sometimes wraps the output in an `architecture:` key despite instructions.
-    // Parse the whole document as a generic value and extract the inner mapping.
+    // Fallback: LLM sometimes wraps output in a top-level key despite instructions.
     let value: serde_yaml::Value = serde_yaml::from_str(raw)
         .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() })?;
-    if let Some(inner) = value.get("architecture") {
-        return serde_yaml::from_value(inner.clone())
-            .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() });
+    for key in &["architecture_principles", "architecture", "principles_doc"] {
+        if let Some(inner) = value.get(*key) {
+            return serde_yaml::from_value(inner.clone())
+                .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() });
+        }
     }
-    // Neither worked — re-run the direct parse to surface its error.
-    serde_yaml::from_str::<Architecture>(raw)
+    serde_yaml::from_str::<ArchitecturePrinciples>(raw)
         .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() })
 }

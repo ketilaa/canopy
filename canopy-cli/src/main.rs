@@ -4,7 +4,7 @@ use dialoguer::{theme::ColorfulTheme, Input};
 
 use canopy_core::*;
 use canopy_explore::{
-    generate_architecture, generate_domain, generate_questions, generate_requirements,
+    generate_architecture_principles, generate_delivery_intents, generate_questions,
     generate_vision, LlmClient,
 };
 use canopy_storage::*;
@@ -30,23 +30,20 @@ enum Commands {
     Explore,
     /// Regenerate vision.yaml from saved idea
     Vision,
-    /// Regenerate requirements.yaml from saved idea and vision
-    Requirements,
-    /// Regenerate domain.yaml from saved vision and requirements
-    Domain,
-    /// Regenerate architecture.yaml from saved vision, requirements, and domain
-    Architecture,
+    /// Regenerate delivery_intents.yaml from saved idea and vision
+    DeliveryIntents,
+    /// Regenerate architecture_principles.yaml from saved vision and delivery intents
+    ArchitecturePrinciples,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let debug = cli.llm_debug;
     match cli.command {
-        Commands::Explore      => cmd_explore(debug),
-        Commands::Vision       => cmd_vision(debug),
-        Commands::Requirements => cmd_requirements(debug),
-        Commands::Domain       => cmd_domain(debug),
-        Commands::Architecture => cmd_architecture(debug),
+        Commands::Explore               => cmd_explore(debug),
+        Commands::Vision                => cmd_vision(debug),
+        Commands::DeliveryIntents       => cmd_delivery_intents(debug),
+        Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
     }
 }
 
@@ -91,23 +88,17 @@ fn cmd_explore(debug: bool) -> Result<()> {
     save_vision(&vision).context("failed to save vision.yaml")?;
     println!("  Saved .canopy/vision.yaml");
 
-    println!("Generating requirements...");
-    let requirements = generate_requirements(&client, &idea, &vision, &answers)
-        .context("failed to generate requirements")?;
-    save_requirements(&requirements).context("failed to save requirements.yaml")?;
-    println!("  Saved .canopy/requirements.yaml");
+    println!("Generating delivery intents...");
+    let intents = generate_delivery_intents(&client, &idea, &vision, &answers)
+        .context("failed to generate delivery intents")?;
+    save_delivery_intents(&intents).context("failed to save delivery_intents.yaml")?;
+    println!("  Saved .canopy/delivery_intents.yaml");
 
-    println!("Generating domain model...");
-    let domain = generate_domain(&client, &vision, &requirements)
-        .context("failed to generate domain model")?;
-    save_domain(&domain).context("failed to save domain.yaml")?;
-    println!("  Saved .canopy/domain.yaml");
-
-    println!("Generating architecture...");
-    let architecture = generate_architecture(&client, &vision, &requirements, &domain)
-        .context("failed to generate architecture")?;
-    save_architecture(&architecture).context("failed to save architecture.yaml")?;
-    println!("  Saved .canopy/architecture.yaml");
+    println!("Generating architecture principles...");
+    let principles = generate_architecture_principles(&client, &vision, &intents, &answers)
+        .context("failed to generate architecture principles")?;
+    save_architecture_principles(&principles).context("failed to save architecture_principles.yaml")?;
+    println!("  Saved .canopy/architecture_principles.yaml");
 
     println!("\nExploration complete. All artifacts saved to .canopy/");
     Ok(())
@@ -126,49 +117,32 @@ fn cmd_vision(debug: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_requirements(debug: bool) -> Result<()> {
+fn cmd_delivery_intents(debug: bool) -> Result<()> {
     let client = LlmClient::from_env(debug)
         .context("ANTHROPIC_API_KEY must be set in environment")?;
     let idea = load_idea()
         .context("No idea.yaml found — run `canopy explore` first")?;
     let vision = load_vision()
         .context("No vision.yaml found — run `canopy vision` first")?;
-    println!("Generating requirements...");
-    let requirements = generate_requirements(&client, &idea, &vision, &[])
-        .context("failed to generate requirements")?;
-    save_requirements(&requirements).context("failed to save requirements.yaml")?;
-    println!("Saved .canopy/requirements.yaml");
+    println!("Generating delivery intents...");
+    let intents = generate_delivery_intents(&client, &idea, &vision, &[])
+        .context("failed to generate delivery intents")?;
+    save_delivery_intents(&intents).context("failed to save delivery_intents.yaml")?;
+    println!("Saved .canopy/delivery_intents.yaml");
     Ok(())
 }
 
-fn cmd_domain(debug: bool) -> Result<()> {
+fn cmd_architecture_principles(debug: bool) -> Result<()> {
     let client = LlmClient::from_env(debug)
         .context("ANTHROPIC_API_KEY must be set in environment")?;
     let vision = load_vision()
         .context("No vision.yaml found — run `canopy vision` first")?;
-    let requirements = load_requirements()
-        .context("No requirements.yaml found — run `canopy requirements` first")?;
-    println!("Generating domain model...");
-    let domain = generate_domain(&client, &vision, &requirements)
-        .context("failed to generate domain model")?;
-    save_domain(&domain).context("failed to save domain.yaml")?;
-    println!("Saved .canopy/domain.yaml");
-    Ok(())
-}
-
-fn cmd_architecture(debug: bool) -> Result<()> {
-    let client = LlmClient::from_env(debug)
-        .context("ANTHROPIC_API_KEY must be set in environment")?;
-    let vision = load_vision()
-        .context("No vision.yaml found — run `canopy vision` first")?;
-    let requirements = load_requirements()
-        .context("No requirements.yaml found — run `canopy requirements` first")?;
-    let domain = load_domain()
-        .context("No domain.yaml found — run `canopy domain` first")?;
-    println!("Generating architecture...");
-    let architecture = generate_architecture(&client, &vision, &requirements, &domain)
-        .context("failed to generate architecture")?;
-    save_architecture(&architecture).context("failed to save architecture.yaml")?;
-    println!("Saved .canopy/architecture.yaml");
+    let intents = load_delivery_intents()
+        .context("No delivery_intents.yaml found — run `canopy delivery-intents` first")?;
+    println!("Generating architecture principles...");
+    let principles = generate_architecture_principles(&client, &vision, &intents, &[])
+        .context("failed to generate architecture principles")?;
+    save_architecture_principles(&principles).context("failed to save architecture_principles.yaml")?;
+    println!("Saved .canopy/architecture_principles.yaml");
     Ok(())
 }

@@ -52,8 +52,14 @@ pub fn load_requirements() -> Result<Requirements, StorageError>       { load("r
 pub fn save_domain(d: &DomainModel) -> Result<(), StorageError>        { save("domain.yaml", d) }
 pub fn load_domain() -> Result<DomainModel, StorageError>              { load("domain.yaml") }
 
-pub fn save_architecture(a: &Architecture) -> Result<(), StorageError> { save("architecture.yaml", a) }
-pub fn load_architecture() -> Result<Architecture, StorageError>       { load("architecture.yaml") }
+pub fn save_delivery_intents(di: &DeliveryIntents) -> Result<(), StorageError>         { save("delivery_intents.yaml", di) }
+pub fn load_delivery_intents() -> Result<DeliveryIntents, StorageError>               { load("delivery_intents.yaml") }
+
+pub fn save_architecture_principles(ap: &ArchitecturePrinciples) -> Result<(), StorageError> { save("architecture_principles.yaml", ap) }
+pub fn load_architecture_principles() -> Result<ArchitecturePrinciples, StorageError>        { load("architecture_principles.yaml") }
+
+pub fn save_component_architecture(a: &ComponentArchitecture) -> Result<(), StorageError> { save("component_architecture.yaml", a) }
+pub fn load_component_architecture() -> Result<ComponentArchitecture, StorageError>       { load("component_architecture.yaml") }
 
 pub fn save_adr(index: usize, slug: &str, adr: &Adr) -> Result<(), StorageError> {
     save(&format!("decisions/adr-{:03}-{}.yaml", index, slug), adr)

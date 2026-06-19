@@ -58,7 +58,33 @@ pub struct DomainModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Architecture {
+pub struct DeliveryIntent {
+    pub title: String,
+    pub description: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryIntents {
+    pub intents: Vec<DeliveryIntent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuralCommitments {
+    pub deployment_topology: String,
+    pub integration_style: String,
+    pub data_ownership: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchitecturePrinciples {
+    pub principles: Vec<String>,
+    pub constraints: Vec<String>,
+    pub structural_commitments: StructuralCommitments,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentArchitecture {
     pub frontend: serde_yaml::Value,
     pub backend: serde_yaml::Value,
     pub database: serde_yaml::Value,
@@ -138,8 +164,52 @@ mod tests {
     }
 
     #[test]
-    fn architecture_yaml_round_trip() {
-        let a = Architecture {
+    fn delivery_intents_yaml_round_trip() {
+        let di = DeliveryIntents {
+            intents: vec![
+                DeliveryIntent {
+                    title: "User authentication".into(),
+                    description: "Users can register and log in securely.".into(),
+                    value: "Enables personalized access to all features.".into(),
+                },
+                DeliveryIntent {
+                    title: "Dashboard".into(),
+                    description: "Users see an overview of their data.".into(),
+                    value: "Gives users immediate insight after login.".into(),
+                },
+            ],
+        };
+        let yaml = serde_yaml::to_string(&di).unwrap();
+        let di2: DeliveryIntents = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(di.intents.len(), di2.intents.len());
+        assert_eq!(di.intents[0].title, di2.intents[0].title);
+        assert_eq!(di.intents[1].value, di2.intents[1].value);
+    }
+
+    #[test]
+    fn architecture_principles_yaml_round_trip() {
+        let ap = ArchitecturePrinciples {
+            principles: vec!["Stateless application tier".into()],
+            constraints: vec!["Must deploy on-premise".into(), "Team expertise: Rust".into()],
+            structural_commitments: StructuralCommitments {
+                deployment_topology: "Modular monolith".into(),
+                integration_style: "Event-driven via internal event bus".into(),
+                data_ownership: "Shared database, schema-per-module".into(),
+            },
+        };
+        let yaml = serde_yaml::to_string(&ap).unwrap();
+        let ap2: ArchitecturePrinciples = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(ap.principles, ap2.principles);
+        assert_eq!(ap.constraints.len(), 2);
+        assert_eq!(
+            ap.structural_commitments.deployment_topology,
+            ap2.structural_commitments.deployment_topology
+        );
+    }
+
+    #[test]
+    fn component_architecture_yaml_round_trip() {
+        let a = ComponentArchitecture {
             frontend: serde_yaml::Value::String("React".into()),
             backend: serde_yaml::Value::String("Axum".into()),
             database: serde_yaml::Value::String("PostgreSQL".into()),
@@ -147,13 +217,13 @@ mod tests {
             reasoning: vec![serde_yaml::Value::String("Strong ecosystem".into())],
         };
         let yaml = serde_yaml::to_string(&a).unwrap();
-        let a2: Architecture = serde_yaml::from_str(&yaml).unwrap();
+        let a2: ComponentArchitecture = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(a.database, a2.database);
         assert_eq!(a.reasoning, a2.reasoning);
     }
 
     #[test]
-    fn architecture_rich_fields_parse() {
+    fn component_architecture_rich_fields_parse() {
         let yaml = r#"
 frontend:
   framework: Next.js 14
@@ -176,19 +246,10 @@ deployment:
 reasoning:
   - Strong ecosystem
 "#;
-        let a: Architecture = serde_yaml::from_str(yaml).unwrap();
+        let a: ComponentArchitecture = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(a.database, serde_yaml::Value::Mapping(_)));
         assert!(matches!(a.deployment, serde_yaml::Value::Mapping(_)));
         assert_eq!(a.reasoning.len(), 1);
-    }
-
-    #[test]
-    fn architecture_with_wrapper_key_handled_by_explore() {
-        let yaml = "architecture:\n  frontend:\n    framework: React\n  backend:\n    framework: Axum\n  database: PG\n  deployment: AWS\n  reasoning:\n    - Good choice\n";
-        let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        let inner = &value["architecture"];
-        let a: Architecture = serde_yaml::from_value(inner.clone()).unwrap();
-        assert_eq!(a.database, serde_yaml::Value::String("PG".into()));
     }
 
     #[test]
