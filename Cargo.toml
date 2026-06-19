@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "canopy-cli",
+    "canopy-core",
+    "canopy-explore",
+    "canopy-storage",
+]
+resolver = "2"
