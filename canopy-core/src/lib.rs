@@ -61,8 +61,8 @@ pub struct DomainModel {
 pub struct Architecture {
     pub frontend: serde_yaml::Value,
     pub backend: serde_yaml::Value,
-    pub database: String,
-    pub deployment: String,
+    pub database: serde_yaml::Value,
+    pub deployment: serde_yaml::Value,
     pub reasoning: Vec<String>,
 }
 
@@ -142,8 +142,8 @@ mod tests {
         let a = Architecture {
             frontend: serde_yaml::Value::String("React".into()),
             backend: serde_yaml::Value::String("Axum".into()),
-            database: "PostgreSQL".into(),
-            deployment: "AWS".into(),
+            database: serde_yaml::Value::String("PostgreSQL".into()),
+            deployment: serde_yaml::Value::String("AWS".into()),
             reasoning: vec!["Strong ecosystem".into()],
         };
         let yaml = serde_yaml::to_string(&a).unwrap();
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn architecture_rich_backend_parses() {
+    fn architecture_rich_fields_parse() {
         let yaml = r#"
 frontend:
   framework: Next.js 14
@@ -162,14 +162,24 @@ backend:
   services:
     api: Axum
     worker: Tokio
-database: PostgreSQL
-deployment: AWS ECS
+database:
+  catalogue_service:
+    engine: PostgreSQL 16
+    port: 5433
+  cart_service:
+    engine: Redis 7
+    port: 6379
+deployment:
+  platform: AWS ECS
+  regions:
+    - eu-west-1
 reasoning:
   - Strong ecosystem
 "#;
         let a: Architecture = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(a.database, "PostgreSQL");
-        assert!(matches!(a.backend, serde_yaml::Value::Mapping(_)));
+        assert!(matches!(a.database, serde_yaml::Value::Mapping(_)));
+        assert!(matches!(a.deployment, serde_yaml::Value::Mapping(_)));
+        assert_eq!(a.reasoning, vec!["Strong ecosystem"]);
     }
 
     #[test]
@@ -178,7 +188,7 @@ reasoning:
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
         let inner = &value["architecture"];
         let a: Architecture = serde_yaml::from_value(inner.clone()).unwrap();
-        assert_eq!(a.database, "PG");
+        assert_eq!(a.database, serde_yaml::Value::String("PG".into()));
     }
 
     #[test]
