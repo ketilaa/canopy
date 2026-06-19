@@ -63,7 +63,7 @@ pub struct Architecture {
     pub backend: serde_yaml::Value,
     pub database: serde_yaml::Value,
     pub deployment: serde_yaml::Value,
-    pub reasoning: Vec<String>,
+    pub reasoning: Vec<serde_yaml::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,7 +144,7 @@ mod tests {
             backend: serde_yaml::Value::String("Axum".into()),
             database: serde_yaml::Value::String("PostgreSQL".into()),
             deployment: serde_yaml::Value::String("AWS".into()),
-            reasoning: vec!["Strong ecosystem".into()],
+            reasoning: vec![serde_yaml::Value::String("Strong ecosystem".into())],
         };
         let yaml = serde_yaml::to_string(&a).unwrap();
         let a2: Architecture = serde_yaml::from_str(&yaml).unwrap();
@@ -179,7 +179,7 @@ reasoning:
         let a: Architecture = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(a.database, serde_yaml::Value::Mapping(_)));
         assert!(matches!(a.deployment, serde_yaml::Value::Mapping(_)));
-        assert_eq!(a.reasoning, vec!["Strong ecosystem"]);
+        assert_eq!(a.reasoning.len(), 1);
     }
 
     #[test]
