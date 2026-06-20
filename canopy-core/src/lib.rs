@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 /// An entity attribute as returned by the LLM.
 /// The LLM naturally produces YAML key-value maps (`- fieldName: description`)
@@ -98,6 +99,36 @@ pub struct Adr {
     pub decision: String,
     pub reason: String,
     pub alternatives: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProvider {
+    Anthropic,
+    Ollama,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLlmConfig {
+    pub provider: LlmProvider,
+    pub model: String,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanopyConfig {
+    pub default: Option<AgentLlmConfig>,
+    pub agents: Option<HashMap<String, AgentLlmConfig>>,
+}
+
+impl CanopyConfig {
+    pub fn for_agent(&self, agent: &str) -> Option<AgentLlmConfig> {
+        self.agents
+            .as_ref()
+            .and_then(|m| m.get(agent))
+            .or_else(|| self.default.as_ref())
+            .cloned()
+    }
 }
 
 #[cfg(test)]
@@ -264,5 +295,56 @@ reasoning:
         let adr2: Adr = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(adr.title, adr2.title);
         assert_eq!(adr.alternatives, adr2.alternatives);
+    }
+
+    #[test]
+    fn canopy_config_yaml_round_trip() {
+        let yaml = r#"
+default:
+  provider: ollama
+  model: qwen2.5:32b
+agents:
+  explorer:
+    provider: anthropic
+    model: claude-sonnet-4-6
+"#;
+        let cfg: CanopyConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.default.as_ref().unwrap().provider, LlmProvider::Ollama);
+        assert_eq!(cfg.default.as_ref().unwrap().model, "qwen2.5:32b");
+        let explorer = cfg.agents.as_ref().unwrap().get("explorer").unwrap();
+        assert_eq!(explorer.provider, LlmProvider::Anthropic);
+    }
+
+    #[test]
+    fn canopy_config_for_agent_falls_back_to_default() {
+        let cfg: CanopyConfig = serde_yaml::from_str(
+            "default:\n  provider: ollama\n  model: qwen2.5:32b\n"
+        ).unwrap();
+        let resolved = cfg.for_agent("explorer").unwrap();
+        assert_eq!(resolved.provider, LlmProvider::Ollama);
+        assert_eq!(resolved.model, "qwen2.5:32b");
+    }
+
+    #[test]
+    fn canopy_config_for_agent_prefers_specific_over_default() {
+        let yaml = r#"
+default:
+  provider: ollama
+  model: qwen2.5:32b
+agents:
+  explorer:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+"#;
+        let cfg: CanopyConfig = serde_yaml::from_str(yaml).unwrap();
+        let resolved = cfg.for_agent("explorer").unwrap();
+        assert_eq!(resolved.provider, LlmProvider::Anthropic);
+        assert_eq!(resolved.model, "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn canopy_config_for_agent_returns_none_when_no_match() {
+        let cfg = CanopyConfig { default: None, agents: None };
+        assert!(cfg.for_agent("explorer").is_none());
     }
 }

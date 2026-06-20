@@ -65,6 +65,18 @@ pub fn save_adr(index: usize, slug: &str, adr: &Adr) -> Result<(), StorageError>
     save(&format!("decisions/adr-{:03}-{}.yaml", index, slug), adr)
 }
 
+pub fn load_config() -> Result<Option<CanopyConfig>, StorageError> {
+    match load::<CanopyConfig>("config.yaml") {
+        Ok(cfg) => Ok(Some(cfg)),
+        Err(StorageError::NotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn save_config(config: &CanopyConfig) -> Result<(), StorageError> {
+    save("config.yaml", config)
+}
+
 pub fn list_adrs() -> Result<Vec<PathBuf>, StorageError> {
     let dir = storage_dir().join("decisions");
     if !dir.exists() {
@@ -126,6 +138,34 @@ mod tests {
         with_tmpdir(|| {
             let result = load_vision();
             assert!(matches!(result, Err(StorageError::NotFound(_))));
+        });
+    }
+
+    #[test]
+    fn load_config_missing_returns_none() {
+        with_tmpdir(|| {
+            let result = load_config().unwrap();
+            assert!(result.is_none());
+        });
+    }
+
+    #[test]
+    fn save_load_config_round_trip() {
+        with_tmpdir(|| {
+            use canopy_core::{AgentLlmConfig, CanopyConfig, LlmProvider};
+            let config = CanopyConfig {
+                default: Some(AgentLlmConfig {
+                    provider: LlmProvider::Ollama,
+                    model: "qwen2.5:32b".into(),
+                    base_url: None,
+                }),
+                agents: None,
+            };
+            save_config(&config).unwrap();
+            let loaded = load_config().unwrap().unwrap();
+            let default = loaded.default.unwrap();
+            assert_eq!(default.provider, LlmProvider::Ollama);
+            assert_eq!(default.model, "qwen2.5:32b");
         });
     }
 

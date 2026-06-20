@@ -5,9 +5,9 @@ use thiserror::Error;
 pub enum ExploreError {
     #[error("ANTHROPIC_API_KEY environment variable is not set. Export it before running canopy.")]
     MissingApiKey,
-    #[error("HTTP request to Anthropic API failed: {0}")]
+    #[error("HTTP request failed: {0}")]
     Http(String),
-    #[error("Failed to parse JSON from Anthropic response: {0}")]
+    #[error("Failed to parse JSON from LLM response: {0}")]
     JsonParse(String),
     #[error("Failed to parse YAML from LLM response: {source}\nRaw LLM output:\n{raw}")]
     YamlParse {
@@ -15,7 +15,7 @@ pub enum ExploreError {
         source: serde_yaml::Error,
         raw: String,
     },
-    #[error("Unexpected Anthropic response shape: {0}")]
+    #[error("Unexpected LLM response shape: {0}")]
     UnexpectedShape(String),
 }
 
@@ -23,6 +23,8 @@ pub struct LlmClient {
     api_key: String,
     model: String,
     debug: bool,
+    provider: LlmProvider,
+    base_url: String,
 }
 
 impl LlmClient {
@@ -33,7 +35,27 @@ impl LlmClient {
             api_key,
             model: "claude-sonnet-4-6".to_string(),
             debug,
+            provider: LlmProvider::Anthropic,
+            base_url: "https://api.anthropic.com".to_string(),
         })
+    }
+
+    pub fn from_agent_config(cfg: &AgentLlmConfig, debug: bool) -> Self {
+        let base_url = cfg.base_url.clone().unwrap_or_else(|| match cfg.provider {
+            LlmProvider::Anthropic => "https://api.anthropic.com".to_string(),
+            LlmProvider::Ollama => "http://localhost:11434".to_string(),
+        });
+        let api_key = match cfg.provider {
+            LlmProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+            LlmProvider::Ollama => String::new(),
+        };
+        Self {
+            api_key,
+            model: cfg.model.clone(),
+            debug,
+            provider: cfg.provider.clone(),
+            base_url,
+        }
     }
 
     pub fn complete(&self, prompt: &str) -> Result<String, ExploreError> {
@@ -43,34 +65,21 @@ impl LlmClient {
             eprintln!("╚════════════════════════════════════════════════════════╝\n");
         }
 
-        let body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": 4096,
-            "messages": [{"role": "user", "content": prompt}]
-        });
-
-        let response = ureq::post("https://api.anthropic.com/v1/messages")
-            .set("x-api-key", &self.api_key)
-            .set("anthropic-version", "2023-06-01")
-            .set("content-type", "application/json")
-            .send_json(body)
-            .map_err(|e| ExploreError::Http(e.to_string()))?;
-
-        let json: serde_json::Value = response
-            .into_json()
-            .map_err(|e| ExploreError::JsonParse(e.to_string()))?;
-
-        let text = json["content"][0]["text"]
-            .as_str()
-            .ok_or_else(|| ExploreError::UnexpectedShape(
-                format!("expected content[0].text string, got: {json}")
-            ))?
-            .to_string();
+        let (text, json) = match self.provider {
+            LlmProvider::Anthropic => self.call_anthropic(prompt)?,
+            LlmProvider::Ollama => self.call_openai_compatible(prompt)?,
+        };
 
         if self.debug {
             let model = json["model"].as_str().unwrap_or(&self.model);
-            let input_tokens = json["usage"]["input_tokens"].as_u64().unwrap_or(0);
-            let output_tokens = json["usage"]["output_tokens"].as_u64().unwrap_or(0);
+            let input_tokens = json["usage"]["input_tokens"]
+                .as_u64()
+                .or_else(|| json["usage"]["prompt_tokens"].as_u64())
+                .unwrap_or(0);
+            let output_tokens = json["usage"]["output_tokens"]
+                .as_u64()
+                .or_else(|| json["usage"]["completion_tokens"].as_u64())
+                .unwrap_or(0);
             eprintln!("╔══ LLM OUTPUT ══════════════════════════════════════════╗");
             eprintln!("  model:         {model}");
             eprintln!("  input tokens:  {input_tokens}");
@@ -81,6 +90,53 @@ impl LlmClient {
         }
 
         Ok(text)
+    }
+
+    fn call_anthropic(&self, prompt: &str) -> Result<(String, serde_json::Value), ExploreError> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}]
+        });
+        let url = format!("{}/v1/messages", self.base_url);
+        let response = ureq::post(&url)
+            .set("x-api-key", &self.api_key)
+            .set("anthropic-version", "2023-06-01")
+            .set("content-type", "application/json")
+            .send_json(body)
+            .map_err(|e| ExploreError::Http(e.to_string()))?;
+        let json: serde_json::Value = response
+            .into_json()
+            .map_err(|e| ExploreError::JsonParse(e.to_string()))?;
+        let text = json["content"][0]["text"]
+            .as_str()
+            .ok_or_else(|| ExploreError::UnexpectedShape(
+                format!("expected content[0].text, got: {json}")
+            ))?
+            .to_string();
+        Ok((text, json))
+    }
+
+    fn call_openai_compatible(&self, prompt: &str) -> Result<(String, serde_json::Value), ExploreError> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}]
+        });
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        let response = ureq::post(&url)
+            .set("content-type", "application/json")
+            .send_json(body)
+            .map_err(|e| ExploreError::Http(e.to_string()))?;
+        let json: serde_json::Value = response
+            .into_json()
+            .map_err(|e| ExploreError::JsonParse(e.to_string()))?;
+        let text = json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| ExploreError::UnexpectedShape(
+                format!("expected choices[0].message.content, got: {json}")
+            ))?
+            .to_string();
+        Ok((text, json))
     }
 }
 

@@ -36,6 +36,24 @@ enum Commands {
     ArchitecturePrinciples,
 }
 
+fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
+    match canopy_storage::load_config()
+        .context("failed to read .canopy/config.yaml")?
+    {
+        Some(cfg) => {
+            let agent_cfg = cfg.for_agent(agent).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no LLM config for agent '{}' and no default in .canopy/config.yaml",
+                    agent
+                )
+            })?;
+            Ok(LlmClient::from_agent_config(&agent_cfg, debug))
+        }
+        None => LlmClient::from_env(debug)
+            .context("ANTHROPIC_API_KEY must be set when no .canopy/config.yaml exists"),
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let debug = cli.llm_debug;
@@ -59,8 +77,7 @@ fn cmd_explore(debug: bool) -> Result<()> {
     save_idea(&idea).context("failed to save idea.yaml")?;
     println!("Saved .canopy/idea.yaml");
 
-    let client = LlmClient::from_env(debug)
-        .context("ANTHROPIC_API_KEY must be set in environment before running canopy")?;
+    let client = build_client("explorer", debug)?;
 
     println!("\nGenerating clarifying questions...");
     let questions = generate_questions(&client, &idea)
@@ -105,8 +122,7 @@ fn cmd_explore(debug: bool) -> Result<()> {
 }
 
 fn cmd_vision(debug: bool) -> Result<()> {
-    let client = LlmClient::from_env(debug)
-        .context("ANTHROPIC_API_KEY must be set in environment")?;
+    let client = build_client("explorer", debug)?;
     let idea = load_idea()
         .context("No idea.yaml found — run `canopy explore` first")?;
     println!("Generating vision...");
@@ -118,8 +134,7 @@ fn cmd_vision(debug: bool) -> Result<()> {
 }
 
 fn cmd_delivery_intents(debug: bool) -> Result<()> {
-    let client = LlmClient::from_env(debug)
-        .context("ANTHROPIC_API_KEY must be set in environment")?;
+    let client = build_client("explorer", debug)?;
     let idea = load_idea()
         .context("No idea.yaml found — run `canopy explore` first")?;
     let vision = load_vision()
@@ -133,8 +148,7 @@ fn cmd_delivery_intents(debug: bool) -> Result<()> {
 }
 
 fn cmd_architecture_principles(debug: bool) -> Result<()> {
-    let client = LlmClient::from_env(debug)
-        .context("ANTHROPIC_API_KEY must be set in environment")?;
+    let client = build_client("explorer", debug)?;
     let vision = load_vision()
         .context("No vision.yaml found — run `canopy vision` first")?;
     let intents = load_delivery_intents()
