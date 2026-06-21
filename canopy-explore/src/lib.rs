@@ -740,7 +740,7 @@ Angular (use ng new, NOT Vite — Vite's Angular template is interactive and can
 Spring Boot microservice (Java) — PREFERRED for any backend service or API:
   curl -G https://start.spring.io/starter.tgz \
     -d dependencies=web,actuator -d language=java -d type=maven-project \
-    -d bootVersion=3.4.1 \
+    -d bootVersion=4.1.0 \
     -d groupId=<groupId> -d artifactId=<artifactId> -d name=<artifactId> \
     | tar -xzvf - -C <artifactId>
   Add dependencies as needed: web,actuator,data-jpa,postgresql,kafka,security,validation
@@ -749,7 +749,7 @@ Spring Boot microservice (Java) — PREFERRED for any backend service or API:
 Spring Boot microservice (Kotlin) — use instead of Java when project uses Kotlin:
   curl -G https://start.spring.io/starter.tgz \
     -d dependencies=web,actuator -d language=kotlin -d type=gradle-project \
-    -d bootVersion=3.4.1 \
+    -d bootVersion=4.1.0 \
     -d groupId=<groupId> -d artifactId=<artifactId> -d name=<artifactId> \
     | tar -xzvf - -C <artifactId>
 
