@@ -708,12 +708,13 @@ pub fn generate_implementation_plan(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
-fn scaffold_plan_prompt(project_name: &str, comp_arch: &ComponentArchitecture) -> String {
+fn scaffold_plan_prompt(project_name: &str, group_id: &str, comp_arch: &ComponentArchitecture) -> String {
     let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
     format!(
         r#"You are a software architect generating project scaffold commands.
 
 Project name: {project_name}
+Java groupId / package: {group_id}
 Component architecture:
 {arch_yaml}
 
@@ -780,7 +781,7 @@ commands:
 
 Rules:
 - Follow the syntax reference exactly — do not paraphrase or invent flags
-- Derive artifactId from the component name; derive groupId as com.example.{slug}
+- Use the provided groupId for all Java/Kotlin components; derive artifactId from the component name
 - The 'creates' value must be the actual directory/file name the command produces
 - Omit components that have no scaffold tool (document them in a comment in the label instead)
 
@@ -793,9 +794,10 @@ Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
 pub fn generate_scaffold_plan(
     client: &LlmClient,
     project_name: &str,
+    group_id: &str,
     comp_arch: &ComponentArchitecture,
 ) -> Result<ScaffoldPlan, ExploreError> {
-    let raw = client.complete(&scaffold_plan_prompt(project_name, comp_arch))?;
+    let raw = client.complete(&scaffold_plan_prompt(project_name, group_id, comp_arch))?;
     if let Ok(plan) = serde_yaml::from_str::<ScaffoldPlan>(&raw) {
         return Ok(plan);
     }

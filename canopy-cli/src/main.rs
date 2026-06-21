@@ -514,9 +514,16 @@ fn cmd_scaffold(dir: &str, regenerate: bool, debug: bool) -> Result<()> {
                     .context("failed to read project name")?,
             };
 
+            let slug = project_name.to_lowercase().replace(' ', "");
+            let group_id: String = Input::with_theme(&theme)
+                .with_prompt("Java groupId / base package (used for Spring Boot and Maven components)")
+                .default(format!("com.example.{slug}"))
+                .interact_text()
+                .context("failed to read groupId")?;
+
             let client = build_client("scaffold", debug)?;
             println!("\nGenerating scaffold plan...");
-            let mut plan = generate_scaffold_plan(&client, &project_name, &comp_arch)
+            let mut plan = generate_scaffold_plan(&client, &project_name, &group_id, &comp_arch)
                 .context("failed to generate scaffold plan")?;
             plan.generated_at = unix_timestamp();
             save_scaffold_plan(&plan).context("failed to save scaffold.yaml")?;
