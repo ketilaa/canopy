@@ -724,12 +724,16 @@ Exact syntax reference — copy these patterns, do not invent flags:
 Next.js:
   npx create-next-app@latest <name> --typescript --tailwind --app --no-git
 
-Vite (React, Vue, Svelte, Angular, etc.):
+Vite (React, Vue, Svelte, etc. — NOT Angular):
   npm create vite@latest <name> -- --template <template>
   Valid templates: vanilla, vanilla-ts, vue, vue-ts, react, react-ts, react-swc,
                    react-swc-ts, preact, preact-ts, lit, lit-ts, svelte, svelte-ts,
-                   solid, solid-ts, qwik, qwik-ts, angular
+                   solid, solid-ts, qwik, qwik-ts
   NOTE: flags MUST come after the bare "--" separator when using npm create
+
+Angular (use ng new, NOT Vite — Vite's Angular template is interactive and cannot be scripted):
+  npx @angular/cli@latest new <name> --style=css --routing --no-interactive
+  Replace --style=css with --style=scss or --style=less if preferred
 
 Maven (Java):
   mvn archetype:generate -DgroupId=<groupId> -DartifactId=<artifactId> \
