@@ -1,11 +1,14 @@
+mod roots;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use dialoguer::{theme::ColorfulTheme, Input};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 
 use canopy_core::*;
 use canopy_explore::{
-    generate_architecture_principles, generate_delivery_intents, generate_questions,
-    generate_vision, LlmClient,
+    generate_adrs, generate_architecture_principles, generate_component_architecture,
+    generate_delivery_intents, generate_domain_model, generate_implementation_plan,
+    generate_intent_spec, generate_questions, generate_scaffold_plan, generate_vision, LlmClient,
 };
 use canopy_storage::*;
 
@@ -21,7 +24,7 @@ struct Cli {
     llm_debug: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -34,6 +37,23 @@ enum Commands {
     DeliveryIntents,
     /// Regenerate architecture_principles.yaml from saved vision and delivery intents
     ArchitecturePrinciples,
+    /// Generate domain.yaml — optional upfront entity model (domain accumulates automatically via `canopy plan`)
+    Domain,
+    /// Generate spec.yaml and plan.yaml for a delivery intent
+    Plan {
+        /// Intent to plan: index (0, 1, …) or title fragment. Prompts interactively if omitted.
+        #[arg(long)]
+        intent: Option<String>,
+    },
+    /// Mark a plan as confirmed so an implementation agent can consume it
+    PlanConfirm {
+        /// Plan slug (directory name under .canopy/plans/)
+        slug: String,
+    },
+    /// List all plans and their current status
+    PlanList,
+    /// Derive scaffold commands from component_architecture.yaml and run them
+    Scaffold,
 }
 
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
@@ -54,15 +74,84 @@ fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
     }
 }
 
+fn unix_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
+}
+
+fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
+    match cmd {
+        Commands::Explore                => cmd_explore(debug),
+        Commands::Vision                 => cmd_vision(debug),
+        Commands::DeliveryIntents        => cmd_delivery_intents(debug),
+        Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
+        Commands::Domain                 => cmd_domain(debug),
+        Commands::Plan { intent }        => cmd_plan(intent, debug),
+        Commands::PlanConfirm { slug }   => cmd_plan_confirm(&slug),
+        Commands::PlanList               => cmd_plan_list(),
+        Commands::Scaffold               => cmd_scaffold(debug),
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let debug = cli.llm_debug;
     match cli.command {
-        Commands::Explore               => cmd_explore(debug),
-        Commands::Vision                => cmd_vision(debug),
-        Commands::DeliveryIntents       => cmd_delivery_intents(debug),
-        Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
+        Some(cmd) => dispatch(cmd, debug),
+        None => run_repl(debug),
     }
+}
+
+fn run_repl(debug: bool) -> Result<()> {
+    use std::io::{BufRead, Write};
+
+    println!("canopy  —  type a command or 'exit'");
+
+    // Roots: initialise and index the repository once for the whole session.
+    print!("Checking Roots index... ");
+    let _ = std::io::stdout().flush();
+    roots::ensure_indexed();
+    println!("ready");
+
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+
+    loop {
+        print!("\ncanopy> ");
+        let _ = std::io::stdout().flush();
+
+        line.clear();
+        if stdin.lock().read_line(&mut line)? == 0 {
+            break; // EOF
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        if matches!(trimmed, "exit" | "quit") { break; }
+
+        // Re-use clap to parse the typed command, prepending the binary name.
+        let mut args = vec!["canopy"];
+        if debug { args.push("--llm-debug"); }
+        args.extend(trimmed.split_whitespace());
+
+        match Cli::try_parse_from(args) {
+            Ok(cli) => {
+                if let Some(cmd) = cli.command {
+                    if let Err(e) = dispatch(cmd, debug) {
+                        eprintln!("  error: {e:#}");
+                    }
+                }
+            }
+            Err(e) => eprintln!("{e}"),
+        }
+    }
+
+    println!("bye");
+    Ok(())
 }
 
 fn cmd_explore(debug: bool) -> Result<()> {
@@ -158,5 +247,307 @@ fn cmd_architecture_principles(debug: bool) -> Result<()> {
         .context("failed to generate architecture principles")?;
     save_architecture_principles(&principles).context("failed to save architecture_principles.yaml")?;
     println!("Saved .canopy/architecture_principles.yaml");
+    Ok(())
+}
+
+fn cmd_domain(debug: bool) -> Result<()> {
+    let vision = load_vision()
+        .context("No vision.yaml found — run `canopy explore` first")?;
+    let intents = load_delivery_intents()
+        .context("No delivery_intents.yaml found — run `canopy explore` first")?;
+    let principles = load_architecture_principles()
+        .context("No architecture_principles.yaml found — run `canopy explore` first")?;
+
+    let client = build_client("domain", debug)?;
+
+    println!("Generating domain model...");
+    let domain = generate_domain_model(&client, &vision, &intents, &principles)
+        .context("failed to generate domain model")?;
+
+    save_domain(&domain).context("failed to save domain.yaml")?;
+    println!(
+        "Saved .canopy/domain.yaml  ({} entities, {} events, {} relationships)",
+        domain.entities.len(),
+        domain.events.len(),
+        domain.relationships.len()
+    );
+    Ok(())
+}
+
+fn cmd_plan(intent: Option<String>, debug: bool) -> Result<()> {
+    let theme = ColorfulTheme::default();
+
+    let vision = load_vision()
+        .context("No vision.yaml found — run `canopy explore` first")?;
+    let intents = load_delivery_intents()
+        .context("No delivery_intents.yaml found — run `canopy explore` first")?;
+    let principles = load_architecture_principles()
+        .context("No architecture_principles.yaml found — run `canopy explore` first")?;
+    // Entity vocabulary: Roots is authoritative when available (repository mode).
+    // Falls back to the accumulated domain_registry.yaml in greenfield mode.
+    let registry = match roots::entity_vocabulary() {
+        Some(names) => {
+            println!("  Using Roots index for entity vocabulary ({} symbols)", names.len());
+            DomainRegistry { entities: names, events: vec![] }
+        }
+        None => load_domain_registry().context("failed to load domain_registry.yaml")?,
+    };
+
+    // Ensure component architecture exists; generate and confirm if not.
+    let comp_arch = match load_component_architecture() {
+        Ok(a) => a,
+        Err(StorageError::NotFound(_)) => {
+            let client = build_client("architect", debug)?;
+            println!("Component architecture not found. Generating from principles...");
+            let arch = generate_component_architecture(&client, &vision, &intents, &principles, &registry)
+                .context("failed to generate component architecture")?;
+
+            let arch_yaml = serde_yaml::to_string(&arch)
+                .context("failed to serialize component architecture")?;
+            println!("\nProposed component architecture:\n{arch_yaml}");
+
+            let accepted = Confirm::with_theme(&theme)
+                .with_prompt("Accept this component architecture?")
+                .interact()
+                .context("failed to read confirmation")?;
+
+            if !accepted {
+                println!("Cancelled. Adjust .canopy/architecture_principles.yaml and retry.");
+                return Ok(());
+            }
+
+            save_component_architecture(&arch)
+                .context("failed to save component_architecture.yaml")?;
+            println!("Saved .canopy/component_architecture.yaml");
+
+            println!("Generating ADRs...");
+            let adrs = generate_adrs(&client, &arch, &principles)
+                .context("failed to generate ADRs")?;
+            for (i, adr) in adrs.iter().enumerate() {
+                let slug = intent_slug(&adr.title);
+                save_adr(i + 1, &slug, adr)
+                    .context("failed to save ADR")?;
+                println!("  Saved .canopy/decisions/adr-{:03}-{}.yaml", i + 1, slug);
+            }
+
+            arch
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    // Select delivery intent.
+    let selected_idx = match &intent {
+        Some(s) => {
+            if let Ok(idx) = s.parse::<usize>() {
+                if idx < intents.intents.len() {
+                    idx
+                } else {
+                    anyhow::bail!(
+                        "intent index {} out of range (valid: 0..{})",
+                        idx,
+                        intents.intents.len().saturating_sub(1)
+                    );
+                }
+            } else {
+                let s_lower = s.to_lowercase();
+                intents
+                    .intents
+                    .iter()
+                    .position(|i| i.title.to_lowercase().contains(&s_lower))
+                    .ok_or_else(|| anyhow::anyhow!("no intent matching '{}'", s))?
+            }
+        }
+        None => {
+            let titles: Vec<&str> = intents.intents.iter().map(|i| i.title.as_str()).collect();
+            Select::with_theme(&theme)
+                .with_prompt("Select a delivery intent to plan")
+                .items(&titles)
+                .default(0)
+                .interact()
+                .context("failed to read intent selection")?
+        }
+    };
+
+    let selected_intent = &intents.intents[selected_idx];
+    let slug = intent_slug(&selected_intent.title);
+
+    println!("\nPlanning: {}", selected_intent.title);
+
+    let client = build_client("planner", debug)?;
+
+    println!("Generating intent specification...");
+    let spec = generate_intent_spec(&client, selected_intent, &registry, &comp_arch)
+        .context("failed to generate intent specification")?;
+
+    // Collect answers to open questions.
+    let mut answered: Vec<AnsweredQuestion> = Vec::new();
+    if !spec.open_questions.is_empty() {
+        println!("\nOpen questions (press Enter to skip):\n");
+        for (i, q) in spec.open_questions.iter().enumerate() {
+            let answer: String = Input::with_theme(&theme)
+                .with_prompt(format!("[{}/{}] {}", i + 1, spec.open_questions.len(), q))
+                .allow_empty(true)
+                .interact_text()
+                .context("failed to read answer")?;
+            if !answer.trim().is_empty() {
+                answered.push(AnsweredQuestion { question: q.clone(), answer });
+            }
+        }
+    }
+
+    println!("\nGenerating implementation plan...");
+    let mut plan = generate_implementation_plan(
+        &client,
+        selected_intent,
+        selected_idx,
+        &spec,
+        &registry,
+        &comp_arch,
+        &intents,
+        &answered,
+    )
+    .context("failed to generate implementation plan")?;
+
+    plan.intent_index = selected_idx;
+    plan.status = "draft".to_string();
+    plan.generated_at = unix_timestamp();
+
+    save_intent_spec(&slug, &spec)
+        .context("failed to save spec.yaml")?;
+    println!("  Saved .canopy/plans/{}/spec.yaml", slug);
+
+    save_implementation_plan(&slug, &plan)
+        .context("failed to save plan.yaml")?;
+    println!("  Saved .canopy/plans/{}/plan.yaml", slug);
+
+    // Merge this intent's domain scope into the registry so future plans have the vocabulary.
+    let mut updated_registry = registry;
+    updated_registry.merge(&plan.domain_scope);
+    save_domain_registry(&updated_registry)
+        .context("failed to save domain_registry.yaml")?;
+    println!("  Updated .canopy/domain_registry.yaml ({} entities, {} events)",
+        updated_registry.entities.len(), updated_registry.events.len());
+
+    println!("\nPlan '{}' created (status: draft)", slug);
+    if plan.open_questions.iter().any(|q| q.blocking && q.answer.is_none()) {
+        println!("  WARNING: plan has unresolved blocking questions — review plan.yaml before confirming");
+    }
+    println!("Run `canopy plan-confirm {}` when ready.", slug);
+    Ok(())
+}
+
+fn cmd_plan_confirm(slug: &str) -> Result<()> {
+    let mut plan = load_implementation_plan(slug)
+        .with_context(|| format!("no plan '{slug}' found — run `canopy plan` first"))?;
+
+    if plan.status == "confirmed" {
+        println!("Plan '{slug}' is already confirmed.");
+        return Ok(());
+    }
+
+    plan.status = "confirmed".to_string();
+    save_implementation_plan(slug, &plan)
+        .with_context(|| format!("failed to save confirmed plan '{slug}'"))?;
+
+    println!("Plan '{slug}' confirmed — ready for implementation.");
+    Ok(())
+}
+
+fn cmd_plan_list() -> Result<()> {
+    let slugs = list_plans().context("failed to list plans")?;
+
+    if slugs.is_empty() {
+        println!("No plans found. Run `canopy plan` to create one.");
+        return Ok(());
+    }
+
+    println!("Plans:");
+    for slug in &slugs {
+        let status = match load_implementation_plan(slug) {
+            Ok(p) => p.status,
+            Err(_) => "unknown".to_string(),
+        };
+        println!("  {:<40}  [{}]", slug, status);
+    }
+    Ok(())
+}
+
+fn cmd_scaffold(debug: bool) -> Result<()> {
+    let theme = ColorfulTheme::default();
+
+    let comp_arch = load_component_architecture()
+        .context("No component_architecture.yaml — run `canopy plan` first")?;
+
+    let project_name = match load_vision() {
+        Ok(v) => v.project,
+        Err(_) => Input::with_theme(&theme)
+            .with_prompt("Project name")
+            .interact_text()
+            .context("failed to read project name")?,
+    };
+
+    let target_dir: String = Input::with_theme(&theme)
+        .with_prompt("Target directory (where to run scaffold commands)")
+        .default(".".into())
+        .interact_text()
+        .context("failed to read target directory")?;
+
+    let client = build_client("scaffold", debug)?;
+
+    println!("\nGenerating scaffold plan...");
+    let mut scaffold = generate_scaffold_plan(&client, &project_name, &comp_arch)
+        .context("failed to generate scaffold plan")?;
+    scaffold.generated_at = unix_timestamp();
+
+    println!("\nWill run the following scaffold commands in '{}':\n", target_dir);
+    for (i, cmd) in scaffold.commands.iter().enumerate() {
+        println!("  [{}] {}", i + 1, cmd.label);
+        println!("      $ {}", cmd.command);
+        if !cmd.creates.is_empty() {
+            println!("      → creates: {}", cmd.creates);
+        }
+        println!();
+    }
+
+    save_scaffold_plan(&scaffold).context("failed to save scaffold.yaml")?;
+    println!("Scaffold plan saved to .canopy/scaffold.yaml");
+
+    let proceed = Confirm::with_theme(&theme)
+        .with_prompt("Execute these scaffold commands?")
+        .interact()
+        .context("failed to read confirmation")?;
+
+    if !proceed {
+        println!("Not executed. Edit .canopy/scaffold.yaml and re-run, or run the commands manually.");
+        return Ok(());
+    }
+
+    let base = std::path::Path::new(&target_dir);
+    for cmd in &scaffold.commands {
+        let wd = if cmd.working_dir == "." {
+            base.to_path_buf()
+        } else {
+            base.join(&cmd.working_dir)
+        };
+
+        println!("\n$ {}", cmd.command);
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd.command)
+            .current_dir(&wd)
+            .status()
+            .with_context(|| format!("failed to launch: {}", cmd.command))?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "Command failed (exit {}): {}",
+                status.code().unwrap_or(-1),
+                cmd.command
+            );
+        }
+        println!("  Done → {}", cmd.creates);
+    }
+
+    println!("\nScaffolding complete.");
     Ok(())
 }

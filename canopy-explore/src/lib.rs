@@ -299,6 +299,440 @@ pub fn generate_architecture_principles(
     parse_architecture_principles(&raw)
 }
 
+fn domain_model_prompt(
+    vision: &Vision,
+    intents: &DeliveryIntents,
+    principles: &ArchitecturePrinciples,
+) -> String {
+    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
+    let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
+    let principles_yaml = serde_yaml::to_string(principles).unwrap_or_default();
+    format!(
+        r#"You are an experienced domain-driven design practitioner.
+
+Project vision:
+{vision_yaml}
+
+Delivery intents:
+{intents_yaml}
+
+Architecture principles:
+{principles_yaml}
+
+Model the complete domain for this system. Cover ALL entities required across ALL delivery intents.
+
+Return ONLY valid YAML:
+entities:
+  - <entity name, PascalCase>
+entities_detail:
+  - name: <entity name>
+    attributes:
+      - <fieldName>: <type and short description>
+events:
+  - <domain event, PascalCase past tense, e.g. UserRegistered>
+relationships:
+  - <plain English relationship, e.g. "User has many Orders">
+
+Rules:
+- Every entity in 'entities' must appear in 'entities_detail'
+- Attributes use map format: fieldName: type description
+- Event names are PascalCase past tense
+- Relationships use plain English
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown."#
+    )
+}
+
+pub fn generate_domain_model(
+    client: &LlmClient,
+    vision: &Vision,
+    intents: &DeliveryIntents,
+    principles: &ArchitecturePrinciples,
+) -> Result<DomainModel, ExploreError> {
+    let raw = client.complete(&domain_model_prompt(vision, intents, principles))?;
+    serde_yaml::from_str(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
+fn component_architecture_prompt(
+    vision: &Vision,
+    intents: &DeliveryIntents,
+    principles: &ArchitecturePrinciples,
+    registry: &DomainRegistry,
+) -> String {
+    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
+    let principles_yaml = serde_yaml::to_string(principles).unwrap_or_default();
+    let entities_summary = if registry.entities.is_empty() {
+        "(none yet — domain accumulates through planning)".to_string()
+    } else {
+        registry.entities.join(", ")
+    };
+    let intents_titles: Vec<String> = intents.intents.iter()
+        .map(|i| format!("- {}", i.title))
+        .collect();
+    let intents_summary = intents_titles.join("\n");
+    format!(
+        r#"You are an experienced software architect selecting concrete technologies.
+
+Project vision:
+{vision_yaml}
+
+Architecture principles (MUST be respected — constraints are non-negotiable):
+{principles_yaml}
+
+Domain entities: {entities_summary}
+
+Delivery intents:
+{intents_summary}
+
+Select concrete technologies for each system component. Your selections MUST satisfy ALL constraints and respect the structural commitments.
+
+Return ONLY valid YAML:
+frontend: <technology name, or "none" if this system has no frontend>
+backend: <technology name>
+database: <technology name>
+deployment: <technology name>
+reasoning:
+  - <one reason per major technology choice>
+
+The fields may be a simple string (e.g. "Next.js 14") or a structured object for multi-service systems. Match the structural complexity in the principles.
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown."#
+    )
+}
+
+pub fn generate_component_architecture(
+    client: &LlmClient,
+    vision: &Vision,
+    intents: &DeliveryIntents,
+    principles: &ArchitecturePrinciples,
+    registry: &DomainRegistry,
+) -> Result<ComponentArchitecture, ExploreError> {
+    let raw = client.complete(&component_architecture_prompt(vision, intents, principles, registry))?;
+    serde_yaml::from_str(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
+fn adrs_prompt(comp_arch: &ComponentArchitecture, principles: &ArchitecturePrinciples) -> String {
+    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
+    let principles_yaml = serde_yaml::to_string(principles).unwrap_or_default();
+    format!(
+        r#"You are an experienced software architect writing Architecture Decision Records.
+
+Component architecture:
+{arch_yaml}
+
+Architecture principles:
+{principles_yaml}
+
+Write one ADR for each major technology decision in the component architecture.
+
+Return ONLY a YAML list:
+- title: <decision title, e.g. "Use PostgreSQL as primary database">
+  decision: <the decision in one sentence>
+  reason: <why this technology was chosen>
+  alternatives:
+    - <alternative that was considered>
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown."#
+    )
+}
+
+pub fn generate_adrs(
+    client: &LlmClient,
+    comp_arch: &ComponentArchitecture,
+    principles: &ArchitecturePrinciples,
+) -> Result<Vec<Adr>, ExploreError> {
+    let raw = client.complete(&adrs_prompt(comp_arch, principles))?;
+    if let Ok(adrs) = serde_yaml::from_str::<Vec<Adr>>(&raw) {
+        return Ok(adrs);
+    }
+    // Fallback: LLM may wrap the list in a key
+    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
+    for key in &["adrs", "decisions", "records"] {
+        if let Some(inner) = value.get(*key) {
+            if let Ok(adrs) = serde_yaml::from_value::<Vec<Adr>>(inner.clone()) {
+                return Ok(adrs);
+            }
+        }
+    }
+    serde_yaml::from_str::<Vec<Adr>>(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
+fn intent_spec_prompt(
+    intent: &DeliveryIntent,
+    registry: &DomainRegistry,
+    comp_arch: &ComponentArchitecture,
+) -> String {
+    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
+    let known_entities = if registry.entities.is_empty() {
+        "(none yet — introduce what this intent requires)".to_string()
+    } else {
+        registry.entities.join(", ")
+    };
+    let known_events = if registry.events.is_empty() {
+        "(none yet)".to_string()
+    } else {
+        registry.events.join(", ")
+    };
+    format!(
+        r#"You are an experienced product and engineering lead writing a behavioral specification.
+
+Intent to specify:
+  title: {title}
+  description: {description}
+  value: {value}
+
+Known entities from prior plans (reuse these names — do not redefine, extend only if needed):
+{known_entities}
+
+Known events from prior plans:
+{known_events}
+
+Component architecture:
+{arch_yaml}
+
+Write a precise behavioral specification for this delivery intent.
+
+Return ONLY valid YAML:
+intent_ref: "{title}"
+scenarios:
+  - id: <short-slug-001>
+    name: <scenario name>
+    given:
+      - <precondition using entity names above where applicable>
+    when: <user action or system event>
+    then:
+      - <observable outcome>
+    constraints:
+      - <optional: measurable bound, e.g. "Response under 200ms at p99">
+out_of_scope:
+  - <what is explicitly NOT covered by this intent>
+open_questions:
+  - <ambiguity that must be resolved before or during implementation>
+
+Rules:
+- Reuse known entity names verbatim (User not "the user", Session not "auth token")
+- Introduce new entity names only when this intent genuinely requires a new concept
+- Each scenario covers ONE observable behavior
+- constraints list may be empty for scenarios with no measurable bounds
+- Be explicit about out_of_scope to prevent creep
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
+        title = intent.title,
+        description = intent.description,
+        value = intent.value,
+    )
+}
+
+pub fn generate_intent_spec(
+    client: &LlmClient,
+    intent: &DeliveryIntent,
+    registry: &DomainRegistry,
+    comp_arch: &ComponentArchitecture,
+) -> Result<IntentSpec, ExploreError> {
+    let raw = client.complete(&intent_spec_prompt(intent, registry, comp_arch))?;
+    if let Ok(spec) = serde_yaml::from_str::<IntentSpec>(&raw) {
+        return Ok(spec);
+    }
+    // Fallback for wrapped responses
+    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
+    for key in &["spec", "intent_spec", "specification"] {
+        if let Some(inner) = value.get(*key) {
+            if let Ok(spec) = serde_yaml::from_value::<IntentSpec>(inner.clone()) {
+                return Ok(spec);
+            }
+        }
+    }
+    serde_yaml::from_str::<IntentSpec>(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
+fn implementation_plan_prompt(
+    intent: &DeliveryIntent,
+    intent_index: usize,
+    spec: &IntentSpec,
+    registry: &DomainRegistry,
+    comp_arch: &ComponentArchitecture,
+    all_intents: &DeliveryIntents,
+    answered_questions: &[AnsweredQuestion],
+) -> String {
+    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
+    let known_entities = if registry.entities.is_empty() {
+        "(none yet)".to_string()
+    } else {
+        registry.entities.join(", ")
+    };
+    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
+    let all_intents_yaml = serde_yaml::to_string(all_intents).unwrap_or_default();
+    let qa = format_answers(answered_questions);
+    format!(
+        r#"You are an experienced software architect decomposing a delivery intent into implementation tasks.
+
+Delivery intent (index {intent_index}):
+  title: {title}
+  description: {description}
+
+Intent specification:
+{spec_yaml}
+
+Known entities from prior plans (reuse verbatim, extend only if this intent adds new ones):
+{known_entities}
+
+Component architecture:
+{arch_yaml}
+
+All delivery intents (for dependency analysis):
+{all_intents_yaml}
+
+Resolved open questions:
+{qa}
+
+Generate an implementation plan as YAML. Tasks must be ordered from foundational to dependent.
+
+Return ONLY valid YAML:
+intent_ref: "{title}"
+intent_index: {intent_index}
+status: draft
+depends_on_intents:
+  - <index of a prior delivery intent this depends on, or leave empty>
+domain_scope:
+  entities:
+    - <entity from domain model involved in this intent>
+  events:
+    - <event from domain model triggered in this intent>
+  relationships:
+    - <relationship relevant to this intent>
+tasks:
+  - id: task-001
+    title: <what to build — one logical thing>
+    task_type: <schema | api_contract | implementation | test | integration>
+    inputs:
+      - <task id or artifact this depends on, or leave empty>
+    outputs:
+      - <file path that will be created>
+    acceptance_criteria_refs:
+      - <scenario id from spec>
+    estimated_complexity: <low | medium | high>
+    blocking: <true if subsequent tasks cannot start until this completes>
+reasoning:
+  - <why tasks are ordered and scoped as they are>
+open_questions:
+  - question: <ambiguity>
+    blocking: <true if implementation cannot proceed without answer>
+    default_assumption: <assumption to use if not blocking>
+    answer: null
+
+Rules:
+- Each task does ONE logical thing (schema OR endpoint OR test — not both)
+- Schema and migration tasks are typically blocking
+- Test tasks reference the scenarios they verify via acceptance_criteria_refs
+- If a question is blocking, leave answer as null
+- depends_on_intents should list intent indices whose artifacts this intent requires
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
+        title = intent.title,
+        description = intent.description,
+        intent_index = intent_index,
+    )
+}
+
+pub fn generate_implementation_plan(
+    client: &LlmClient,
+    intent: &DeliveryIntent,
+    intent_index: usize,
+    spec: &IntentSpec,
+    registry: &DomainRegistry,
+    comp_arch: &ComponentArchitecture,
+    all_intents: &DeliveryIntents,
+    answered_questions: &[AnsweredQuestion],
+) -> Result<ImplementationPlan, ExploreError> {
+    let raw = client.complete(&implementation_plan_prompt(
+        intent, intent_index, spec, registry, comp_arch, all_intents, answered_questions,
+    ))?;
+    if let Ok(plan) = serde_yaml::from_str::<ImplementationPlan>(&raw) {
+        return Ok(plan);
+    }
+    // Fallback for wrapped responses
+    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
+    for key in &["implementation_plan", "plan"] {
+        if let Some(inner) = value.get(*key) {
+            if let Ok(plan) = serde_yaml::from_value::<ImplementationPlan>(inner.clone()) {
+                return Ok(plan);
+            }
+        }
+    }
+    serde_yaml::from_str::<ImplementationPlan>(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
+fn scaffold_plan_prompt(project_name: &str, comp_arch: &ComponentArchitecture) -> String {
+    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
+    format!(
+        r#"You are a software architect generating project scaffold commands.
+
+Project name: {project_name}
+Component architecture:
+{arch_yaml}
+
+Generate the exact scaffold commands to initialize each component. Use only official ecosystem tools:
+- JavaScript/TypeScript frontend: npx create-next-app@latest, npm create vite@latest
+- Java backend: mvn archetype:generate with -DinteractiveMode=false
+- Kotlin: gradle init
+- Rust: cargo new
+- .NET: dotnet new webapi
+- Python: no scaffold tool — list mkdir commands
+
+For each component in the architecture, produce one entry.
+
+Return ONLY valid YAML:
+commands:
+  - label: <human-readable component name, e.g. "storefront (Next.js)">
+    command: <exact command with all flags>
+    working_dir: <directory to run from, relative to project root, use "." for root>
+    creates: <directory or file the command creates, e.g. "storefront/">
+
+Rules:
+- Use exact current flag names (--typescript, --tailwind, --app for Next.js)
+- For mvn archetype:generate always include -DinteractiveMode=false
+- Derive artifactId from the component name and project name
+- Derive groupId from project name as reverse-domain (e.g. com.example.{slug})
+- If frontend is "none", omit it
+- The 'creates' value must be the actual directory/file name the command produces
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
+        project_name = project_name,
+        slug = project_name.to_lowercase().replace(' ', ""),
+    )
+}
+
+pub fn generate_scaffold_plan(
+    client: &LlmClient,
+    project_name: &str,
+    comp_arch: &ComponentArchitecture,
+) -> Result<ScaffoldPlan, ExploreError> {
+    let raw = client.complete(&scaffold_plan_prompt(project_name, comp_arch))?;
+    if let Ok(plan) = serde_yaml::from_str::<ScaffoldPlan>(&raw) {
+        return Ok(plan);
+    }
+    // Fallback for wrapped responses
+    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
+    for key in &["scaffold_plan", "scaffold"] {
+        if let Some(inner) = value.get(*key) {
+            if let Ok(plan) = serde_yaml::from_value::<ScaffoldPlan>(inner.clone()) {
+                return Ok(plan);
+            }
+        }
+    }
+    serde_yaml::from_str::<ScaffoldPlan>(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
 fn parse_architecture_principles(raw: &str) -> Result<ArchitecturePrinciples, ExploreError> {
     if let Ok(ap) = serde_yaml::from_str::<ArchitecturePrinciples>(raw) {
         return Ok(ap);

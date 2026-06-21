@@ -86,6 +86,9 @@ dependencies = [
  "canopy-storage",
  "clap",
  "dialoguer",
+ "serde",
+ "serde_json",
+ "serde_yaml",
 ]
 
 [[package]]

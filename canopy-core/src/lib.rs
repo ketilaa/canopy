@@ -101,6 +101,126 @@ pub struct Adr {
     pub alternatives: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Scenario {
+    pub id: String,
+    pub name: String,
+    pub given: Vec<String>,
+    pub when: String,
+    pub then: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentSpec {
+    pub intent_ref: String,
+    pub scenarios: Vec<Scenario>,
+    #[serde(default)]
+    pub out_of_scope: Vec<String>,
+    #[serde(default)]
+    pub open_questions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenQuestion {
+    pub question: String,
+    pub blocking: bool,
+    #[serde(default)]
+    pub default_assumption: Option<String>,
+    #[serde(default)]
+    pub answer: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplementationTask {
+    pub id: String,
+    pub title: String,
+    pub task_type: String,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    #[serde(default)]
+    pub acceptance_criteria_refs: Vec<String>,
+    pub estimated_complexity: String,
+    pub blocking: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DomainScope {
+    #[serde(default)]
+    pub entities: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<String>,
+    #[serde(default)]
+    pub relationships: Vec<String>,
+}
+
+/// Accumulated entity and event vocabulary across all planned delivery intents.
+/// Built incrementally by `canopy plan` — no upfront global modeling required.
+/// In repository mode, Roots is the authoritative source and supersedes this file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DomainRegistry {
+    #[serde(default)]
+    pub entities: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
+impl DomainRegistry {
+    pub fn merge(&mut self, scope: &DomainScope) {
+        for name in &scope.entities {
+            if !self.entities.contains(name) {
+                self.entities.push(name.clone());
+            }
+        }
+        for name in &scope.events {
+            if !self.events.contains(name) {
+                self.events.push(name.clone());
+            }
+        }
+    }
+}
+
+fn default_draft() -> String {
+    "draft".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplementationPlan {
+    pub intent_ref: String,
+    pub intent_index: usize,
+    #[serde(default)]
+    pub generated_at: String,
+    #[serde(default = "default_draft")]
+    pub status: String,
+    #[serde(default)]
+    pub depends_on_intents: Vec<usize>,
+    #[serde(default)]
+    pub domain_scope: DomainScope,
+    pub tasks: Vec<ImplementationTask>,
+    #[serde(default)]
+    pub reasoning: Vec<String>,
+    #[serde(default)]
+    pub open_questions: Vec<OpenQuestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaffoldCommand {
+    pub label: String,
+    pub command: String,
+    pub working_dir: String,
+    pub creates: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaffoldPlan {
+    #[serde(default)]
+    pub generated_at: String,
+    pub commands: Vec<ScaffoldCommand>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {
@@ -346,5 +466,141 @@ agents:
     fn canopy_config_for_agent_returns_none_when_no_match() {
         let cfg = CanopyConfig { default: None, agents: None };
         assert!(cfg.for_agent("explorer").is_none());
+    }
+
+    #[test]
+    fn canopy_config_full_with_base_url_parses() {
+        let yaml = "default:\n  provider: ollama\n  model: \"qwen2.5:32b\"\n\nagents:\n  explorer:\n    provider: ollama\n    model: \"qwen2.5:32b\"\n    base_url: \"http://localhost:11434\"\n";
+        let cfg: CanopyConfig = serde_yaml::from_str(yaml).unwrap();
+        let explorer = cfg.for_agent("explorer").unwrap();
+        assert_eq!(explorer.provider, LlmProvider::Ollama);
+        assert_eq!(explorer.model, "qwen2.5:32b");
+        assert_eq!(explorer.base_url.unwrap(), "http://localhost:11434");
+    }
+
+    #[test]
+    fn domain_registry_merge_deduplicates() {
+        let mut reg = DomainRegistry {
+            entities: vec!["User".into(), "Session".into()],
+            events: vec!["UserLoggedIn".into()],
+        };
+        let scope = DomainScope {
+            entities: vec!["Session".into(), "Order".into()],
+            events: vec!["UserLoggedIn".into(), "OrderPlaced".into()],
+            relationships: vec![],
+        };
+        reg.merge(&scope);
+        assert_eq!(reg.entities, vec!["User", "Session", "Order"]);
+        assert_eq!(reg.events, vec!["UserLoggedIn", "OrderPlaced"]);
+    }
+
+    #[test]
+    fn domain_registry_merge_empty_base() {
+        let mut reg = DomainRegistry::default();
+        let scope = DomainScope {
+            entities: vec!["Product".into()],
+            events: vec!["ProductCreated".into()],
+            relationships: vec![],
+        };
+        reg.merge(&scope);
+        assert_eq!(reg.entities, vec!["Product"]);
+        assert_eq!(reg.events, vec!["ProductCreated"]);
+    }
+
+    #[test]
+    fn intent_spec_yaml_round_trip() {
+        let spec = IntentSpec {
+            intent_ref: "User Authentication".into(),
+            scenarios: vec![Scenario {
+                id: "auth-001".into(),
+                name: "Successful login".into(),
+                given: vec!["A registered User exists".into()],
+                when: "The user submits valid credentials".into(),
+                then: vec!["A Session token is returned".into()],
+                constraints: vec!["Response under 300ms at p99".into()],
+            }],
+            out_of_scope: vec!["OAuth/SSO".into()],
+            open_questions: vec!["Is email case-sensitive?".into()],
+        };
+        let yaml = serde_yaml::to_string(&spec).unwrap();
+        let spec2: IntentSpec = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(spec.intent_ref, spec2.intent_ref);
+        assert_eq!(spec.scenarios.len(), spec2.scenarios.len());
+        assert_eq!(spec.scenarios[0].constraints, spec2.scenarios[0].constraints);
+        assert_eq!(spec.out_of_scope, spec2.out_of_scope);
+    }
+
+    #[test]
+    fn implementation_plan_yaml_round_trip() {
+        let plan = ImplementationPlan {
+            intent_ref: "User Authentication".into(),
+            intent_index: 0,
+            generated_at: "1750000000".into(),
+            status: "draft".into(),
+            depends_on_intents: vec![],
+            domain_scope: DomainScope {
+                entities: vec!["User".into(), "Session".into()],
+                events: vec!["UserLoggedIn".into()],
+                relationships: vec!["User has many Sessions".into()],
+            },
+            tasks: vec![ImplementationTask {
+                id: "task-001".into(),
+                title: "Define User schema".into(),
+                task_type: "schema".into(),
+                inputs: vec![],
+                outputs: vec!["migrations/001_users.sql".into()],
+                acceptance_criteria_refs: vec!["auth-001".into()],
+                estimated_complexity: "low".into(),
+                blocking: true,
+            }],
+            reasoning: vec!["Schema is a blocking prerequisite".into()],
+            open_questions: vec![OpenQuestion {
+                question: "Is email case-sensitive?".into(),
+                blocking: true,
+                default_assumption: None,
+                answer: None,
+            }],
+        };
+        let yaml = serde_yaml::to_string(&plan).unwrap();
+        let plan2: ImplementationPlan = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(plan.intent_ref, plan2.intent_ref);
+        assert_eq!(plan.tasks.len(), plan2.tasks.len());
+        assert_eq!(plan.tasks[0].blocking, plan2.tasks[0].blocking);
+        assert_eq!(plan.open_questions[0].blocking, plan2.open_questions[0].blocking);
+        assert_eq!(plan.status, plan2.status);
+    }
+
+    #[test]
+    fn implementation_plan_defaults_status_to_draft() {
+        let yaml = "intent_ref: Test\nintent_index: 0\ndomain_scope: {}\ntasks: []\n";
+        let plan: ImplementationPlan = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(plan.status, "draft");
+    }
+
+    #[test]
+    fn scaffold_plan_yaml_round_trip() {
+        let plan = ScaffoldPlan {
+            generated_at: "1750000000".into(),
+            commands: vec![ScaffoldCommand {
+                label: "storefront (Next.js)".into(),
+                command: "npx create-next-app@latest storefront --typescript --tailwind --app".into(),
+                working_dir: ".".into(),
+                creates: "storefront/".into(),
+            }],
+        };
+        let yaml = serde_yaml::to_string(&plan).unwrap();
+        let plan2: ScaffoldPlan = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(plan.commands.len(), plan2.commands.len());
+        assert_eq!(plan.commands[0].label, plan2.commands[0].label);
+        assert_eq!(plan.commands[0].creates, plan2.commands[0].creates);
+    }
+
+    #[test]
+    fn canopy_config_full_unquoted_parses() {
+        let yaml = "default:\n  provider: ollama\n  model: qwen2.5:32b\n\nagents:\n  explorer:\n    provider: ollama\n    model: qwen2.5:32b\n    base_url: http://localhost:11434\n";
+        let cfg: CanopyConfig = serde_yaml::from_str(yaml).unwrap();
+        let explorer = cfg.for_agent("explorer").unwrap();
+        assert_eq!(explorer.provider, LlmProvider::Ollama);
+        assert_eq!(explorer.model, "qwen2.5:32b");
     }
 }
