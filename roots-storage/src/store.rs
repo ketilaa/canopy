@@ -418,6 +418,26 @@ impl Store {
         )
     }
 
+    /// Returns the stored `indexed_at` timestamp for a file, or None if not yet indexed.
+    pub fn file_indexed_at(
+        &self,
+        workspace_id: &str,
+        project_id: i64,
+        path: &str,
+    ) -> Result<Option<String>, StorageError> {
+        let result = self.conn.query_row(
+            "SELECT indexed_at FROM files \
+             WHERE workspace_id = ?1 AND project_id = ?2 AND path = ?3",
+            params![workspace_id, project_id, path],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StorageError::Sqlite(e)),
+        }
+    }
+
     pub fn query_file_relationships(
         &self,
         workspace_id: &str,

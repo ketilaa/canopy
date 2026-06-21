@@ -641,6 +641,16 @@ fn cmd_implement(slug: &str, debug: bool) -> Result<()> {
         slug,
         updated_plan.status
     );
+
+    // Keep the Roots index current so the next LLM context query reflects the new files.
+    if std::path::Path::new(".roots/index.db").exists() {
+        use std::io::Write;
+        print!("Updating Roots index... ");
+        let _ = std::io::stdout().flush();
+        roots::reindex();
+        println!("done");
+    }
+
     println!("Run `canopy validate {slug}` to verify against spec scenarios.");
     Ok(())
 }

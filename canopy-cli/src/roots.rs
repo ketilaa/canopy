@@ -52,6 +52,18 @@ pub fn get_feature_context(goal: &str) -> Option<FeatureContextPacket> {
     feature_context(&store, &ws, goal).ok()
 }
 
+/// Re-runs `roots index` if an index already exists. No-ops when Roots is not set up.
+/// Call after writing new source files to keep the index current.
+pub fn reindex() {
+    if !std::path::Path::new(INDEX_PATH).exists() {
+        return;
+    }
+    if !binary_available() {
+        return;
+    }
+    let _ = std::process::Command::new("roots").arg("index").status();
+}
+
 fn binary_available() -> bool {
     std::process::Command::new("roots")
         .arg("--help")

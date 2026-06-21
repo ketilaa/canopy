@@ -29,7 +29,8 @@ pub fn run(workspace: Option<&str>, path: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut total_files = 0i64;
+    let mut total_parsed = 0i64;
+    let mut total_skipped = 0i64;
     let mut total_symbols = 0i64;
     let mut total_relationships = 0i64;
 
@@ -49,6 +50,18 @@ pub fn run(workspace: Option<&str>, path: &str) -> Result<(), String> {
                     .unwrap_or(file_path)
                     .to_string_lossy()
                     .to_string();
+
+                // Skip files whose mtime predates the stored indexed_at timestamp.
+                let mtime = file_mtime_iso(file_path);
+                let stored = store
+                    .file_indexed_at(&workspace_id, project_id, &relative)
+                    .unwrap_or(None);
+                if let (Some(m), Some(s)) = (&mtime, &stored) {
+                    if m.as_str() <= s.as_str() {
+                        total_skipped += 1;
+                        continue;
+                    }
+                }
 
                 // Dispatch by file extension so Java files in a Kotlin/Gradle project
                 // are parsed by the Java extractor, not the Kotlin one.
@@ -84,7 +97,7 @@ pub fn run(workspace: Option<&str>, path: &str) -> Result<(), String> {
                     .insert_relationships(&workspace_id, &relative, &parse_output.relationships)
                     .map_err(|e| e.to_string())?;
 
-                total_files += 1i64;
+                total_parsed += 1;
             }
         }
         Ok(())
@@ -96,7 +109,8 @@ pub fn run(workspace: Option<&str>, path: &str) -> Result<(), String> {
             output::json(&serde_json::json!({
                 "workspace": workspace_id,
                 "projects": projects.len(),
-                "files": total_files,
+                "parsed": total_parsed,
+                "skipped": total_skipped,
                 "symbols": total_symbols,
                 "relationships": total_relationships
             }));
@@ -107,6 +121,18 @@ pub fn run(workspace: Option<&str>, path: &str) -> Result<(), String> {
             Err(e)
         }
     }
+}
+
+fn file_mtime_iso(path: &Path) -> Option<String> {
+    let secs = std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let (y, mo, d, h, mi, s) = secs_to_parts(secs);
+    Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z"))
 }
 
 fn iso_now() -> String {
