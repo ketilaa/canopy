@@ -54,7 +54,11 @@ enum Commands {
     /// List all plans and their current status
     PlanList,
     /// Derive scaffold commands from component_architecture.yaml and run them
-    Scaffold,
+    Scaffold {
+        /// Directory to run scaffold commands in (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        dir: String,
+    },
     /// Implement all pending tasks in a confirmed plan
     Implement {
         /// Plan slug (directory name under .canopy/plans/)
@@ -104,7 +108,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Plan { intent }        => cmd_plan(intent, debug),
         Commands::PlanConfirm { slug }   => cmd_plan_confirm(&slug),
         Commands::PlanList               => cmd_plan_list(),
-        Commands::Scaffold               => cmd_scaffold(debug),
+        Commands::Scaffold { dir }       => cmd_scaffold(&dir, debug),
         Commands::Implement { slug }     => cmd_implement(&slug, debug),
         Commands::Validate { slug }      => cmd_validate(&slug, debug),
     }
@@ -485,7 +489,7 @@ fn cmd_plan_list() -> Result<()> {
     Ok(())
 }
 
-fn cmd_scaffold(debug: bool) -> Result<()> {
+fn cmd_scaffold(dir: &str, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
 
     let comp_arch = load_component_architecture()
@@ -499,11 +503,7 @@ fn cmd_scaffold(debug: bool) -> Result<()> {
             .context("failed to read project name")?,
     };
 
-    let target_dir: String = Input::with_theme(&theme)
-        .with_prompt("Target directory (where to run scaffold commands)")
-        .default(".".into())
-        .interact_text()
-        .context("failed to read target directory")?;
+    let target_dir = dir;
 
     let client = build_client("scaffold", debug)?;
 
