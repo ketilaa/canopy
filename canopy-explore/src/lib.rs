@@ -732,20 +732,33 @@ Vite (React, Vue, Svelte, etc. — NOT Angular):
   NOTE: flags MUST come after the bare "--" separator when using npm create
 
 Angular (use ng new, NOT Vite — Vite's Angular template is interactive and cannot be scripted):
-  npx @angular/cli@latest new <name> --style=css --routing --no-interactive
+  npx @angular/cli@latest new <name> --style=css --routing --skip-git --no-interactive
   Replace --style=css with --style=scss or --style=less if preferred
+  Always include --skip-git — the project is already inside a git repository
 
-Maven (Java):
+Spring Boot microservice (Java) — PREFERRED for any backend service or API:
+  curl -G https://start.spring.io/starter.tgz \
+    -d dependencies=web,actuator -d language=java -d type=maven-project \
+    -d bootVersion=3.4.1 \
+    -d groupId=<groupId> -d artifactId=<artifactId> -d name=<artifactId> \
+    | tar -xzvf - -C <artifactId>
+  Add dependencies as needed: web,actuator,data-jpa,postgresql,kafka,security,validation
+  Always mkdir <artifactId> first, then extract into it with -C <artifactId>
+
+Spring Boot microservice (Kotlin) — use instead of Java when project uses Kotlin:
+  curl -G https://start.spring.io/starter.tgz \
+    -d dependencies=web,actuator -d language=kotlin -d type=gradle-project \
+    -d bootVersion=3.4.1 \
+    -d groupId=<groupId> -d artifactId=<artifactId> -d name=<artifactId> \
+    | tar -xzvf - -C <artifactId>
+
+Maven plain Java library (NOT for microservices — only for shared libs with no framework):
   mvn archetype:generate -DgroupId=<groupId> -DartifactId=<artifactId> \
-    -DarchetypeArtifactId=maven-archetype-quickstart -DinteractiveMode=false
+    -DarchetypeArtifactId=maven-archetype-quickstart -DarchetypeVersion=1.4 \
+    -DinteractiveMode=false
 
 Gradle (Kotlin/Java):
   gradle init --type kotlin-application --dsl kotlin --no-incubating
-
-Spring Boot (Java/Kotlin):
-  curl -G https://start.spring.io/starter.tgz \
-    -d dependencies=web,data-jpa -d language=java -d type=maven-project \
-    -d groupId=<groupId> -d artifactId=<artifactId> | tar -xzvf -
 
 Rust:
   cargo new <name>
