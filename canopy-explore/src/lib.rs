@@ -787,7 +787,6 @@ Rules:
 
 Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
         project_name = project_name,
-        slug = project_name.to_lowercase().replace(' ', ""),
     )
 }
 
