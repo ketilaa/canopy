@@ -728,7 +728,7 @@ Vite (React, Vue, Svelte, Angular, etc.):
   npm create vite@latest <name> -- --template <template>
   Valid templates: vanilla, vanilla-ts, vue, vue-ts, react, react-ts, react-swc,
                    react-swc-ts, preact, preact-ts, lit, lit-ts, svelte, svelte-ts,
-                   solid, solid-ts, qwik, qwik-ts, angular, angular-swc
+                   solid, solid-ts, qwik, qwik-ts, angular
   NOTE: flags MUST come after the bare "--" separator when using npm create
 
 Maven (Java):
