@@ -717,30 +717,55 @@ Project name: {project_name}
 Component architecture:
 {arch_yaml}
 
-Generate the exact scaffold commands to initialize each component. Use only official ecosystem tools:
-- JavaScript/TypeScript frontend: npx create-next-app@latest, npm create vite@latest
-- Java backend: mvn archetype:generate with -DinteractiveMode=false
-- Kotlin: gradle init
-- Rust: cargo new
-- .NET: dotnet new webapi
-- Python: no scaffold tool — list mkdir commands
+Generate the exact scaffold commands to initialize each component. Use only official ecosystem tools.
+
+Exact syntax reference — copy these patterns, do not invent flags:
+
+Next.js:
+  npx create-next-app@latest <name> --typescript --tailwind --app --no-git
+
+Vite (React, Vue, Svelte, Angular, etc.):
+  npm create vite@latest <name> -- --template <template>
+  Valid templates: vanilla, vanilla-ts, vue, vue-ts, react, react-ts, react-swc,
+                   react-swc-ts, preact, preact-ts, lit, lit-ts, svelte, svelte-ts,
+                   solid, solid-ts, qwik, qwik-ts, angular, angular-swc
+  NOTE: flags MUST come after the bare "--" separator when using npm create
+
+Maven (Java):
+  mvn archetype:generate -DgroupId=<groupId> -DartifactId=<artifactId> \
+    -DarchetypeArtifactId=maven-archetype-quickstart -DinteractiveMode=false
+
+Gradle (Kotlin/Java):
+  gradle init --type kotlin-application --dsl kotlin --no-incubating
+
+Spring Boot (Java/Kotlin):
+  curl -G https://start.spring.io/starter.tgz \
+    -d dependencies=web,data-jpa -d language=java -d type=maven-project \
+    -d groupId=<groupId> -d artifactId=<artifactId> | tar -xzvf -
+
+Rust:
+  cargo new <name>
+
+.NET:
+  dotnet new webapi -n <name>
+
+Python:
+  mkdir -p <name> && touch <name>/main.py <name>/requirements.txt
 
 For each component in the architecture, produce one entry.
 
 Return ONLY valid YAML:
 commands:
   - label: <human-readable component name, e.g. "storefront (Next.js)">
-    command: <exact command with all flags>
+    command: <exact command with all flags — follow the syntax reference above exactly>
     working_dir: <directory to run from, relative to project root, use "." for root>
     creates: <directory or file the command creates, e.g. "storefront/">
 
 Rules:
-- Use exact current flag names (--typescript, --tailwind, --app for Next.js)
-- For mvn archetype:generate always include -DinteractiveMode=false
-- Derive artifactId from the component name and project name
-- Derive groupId from project name as reverse-domain (e.g. com.example.{slug})
-- If frontend is "none", omit it
+- Follow the syntax reference exactly — do not paraphrase or invent flags
+- Derive artifactId from the component name; derive groupId as com.example.{slug}
 - The 'creates' value must be the actual directory/file name the command produces
+- Omit components that have no scaffold tool (document them in a comment in the label instead)
 
 Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
         project_name = project_name,
