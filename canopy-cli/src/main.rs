@@ -58,6 +58,9 @@ enum Commands {
         /// Directory to run scaffold commands in (defaults to current directory)
         #[arg(long, default_value = ".")]
         dir: String,
+        /// Discard existing scaffold.yaml and regenerate from the LLM
+        #[arg(long)]
+        regenerate: bool,
     },
     /// Implement all pending tasks in a confirmed plan
     Implement {
@@ -108,7 +111,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Plan { intent }        => cmd_plan(intent, debug),
         Commands::PlanConfirm { slug }   => cmd_plan_confirm(&slug),
         Commands::PlanList               => cmd_plan_list(),
-        Commands::Scaffold { dir }       => cmd_scaffold(&dir, debug),
+        Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
         Commands::Implement { slug }     => cmd_implement(&slug, debug),
         Commands::Validate { slug }      => cmd_validate(&slug, debug),
     }
@@ -489,28 +492,38 @@ fn cmd_plan_list() -> Result<()> {
     Ok(())
 }
 
-fn cmd_scaffold(dir: &str, debug: bool) -> Result<()> {
+fn cmd_scaffold(dir: &str, regenerate: bool, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
-
-    let comp_arch = load_component_architecture()
-        .context("No component_architecture.yaml — run `canopy plan` first")?;
-
-    let project_name = match load_vision() {
-        Ok(v) => v.project,
-        Err(_) => Input::with_theme(&theme)
-            .with_prompt("Project name")
-            .interact_text()
-            .context("failed to read project name")?,
-    };
 
     let target_dir = dir;
 
-    let client = build_client("scaffold", debug)?;
+    let scaffold = match load_scaffold_plan() {
+        Ok(existing) if !regenerate => {
+            println!("Using existing .canopy/scaffold.yaml (pass --regenerate to discard and rebuild).");
+            existing
+        }
+        _ => {
+            let comp_arch = load_component_architecture()
+                .context("No component_architecture.yaml — run `canopy plan` first")?;
 
-    println!("\nGenerating scaffold plan...");
-    let mut scaffold = generate_scaffold_plan(&client, &project_name, &comp_arch)
-        .context("failed to generate scaffold plan")?;
-    scaffold.generated_at = unix_timestamp();
+            let project_name = match load_vision() {
+                Ok(v) => v.project,
+                Err(_) => Input::with_theme(&theme)
+                    .with_prompt("Project name")
+                    .interact_text()
+                    .context("failed to read project name")?,
+            };
+
+            let client = build_client("scaffold", debug)?;
+            println!("\nGenerating scaffold plan...");
+            let mut plan = generate_scaffold_plan(&client, &project_name, &comp_arch)
+                .context("failed to generate scaffold plan")?;
+            plan.generated_at = unix_timestamp();
+            save_scaffold_plan(&plan).context("failed to save scaffold.yaml")?;
+            println!("Scaffold plan saved to .canopy/scaffold.yaml");
+            plan
+        }
+    };
 
     println!("\nWill run the following scaffold commands in '{}':\n", target_dir);
     for (i, cmd) in scaffold.commands.iter().enumerate() {
@@ -521,9 +534,6 @@ fn cmd_scaffold(dir: &str, debug: bool) -> Result<()> {
         }
         println!();
     }
-
-    save_scaffold_plan(&scaffold).context("failed to save scaffold.yaml")?;
-    println!("Scaffold plan saved to .canopy/scaffold.yaml");
 
     let proceed = Confirm::with_theme(&theme)
         .with_prompt("Execute these scaffold commands?")
