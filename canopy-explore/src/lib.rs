@@ -376,12 +376,9 @@ fn component_architecture_prompt(
     } else {
         registry.entities.join(", ")
     };
-    let intents_titles: Vec<String> = intents.intents.iter()
-        .map(|i| format!("- {}", i.title))
-        .collect();
-    let intents_summary = intents_titles.join("\n");
+    let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
     format!(
-        r#"You are an experienced software architect selecting concrete technologies.
+        r#"You are an experienced software architect deriving a component architecture.
 
 Project vision:
 {vision_yaml}
@@ -389,22 +386,54 @@ Project vision:
 Architecture principles (MUST be respected — constraints are non-negotiable):
 {principles_yaml}
 
-Domain entities: {entities_summary}
+Domain entities known so far: {entities_summary}
 
-Delivery intents:
-{intents_summary}
+Delivery intents (full detail — use these to identify distinct components and services):
+{intents_yaml}
 
-Select concrete technologies for each system component. Your selections MUST satisfy ALL constraints and respect the structural commitments.
+Your task: identify every component this system requires and select a concrete technology for each.
 
-Return ONLY valid YAML:
-frontend: <technology name, or "none" if this system has no frontend>
-backend: <technology name>
-database: <technology name>
-deployment: <technology name>
+Step 1 — derive components from the delivery intents and structural commitments:
+- Read the structural_commitments carefully. If deployment_topology is microservices, name each service separately.
+- Each delivery intent that touches a distinct bounded context is a candidate for its own backend service.
+- If multiple intents describe separate user-facing surfaces (storefront vs backoffice), name each frontend app separately.
+- Distinguish data stores (relational DBs, document stores) from messaging infrastructure (event buses, queues).
+- Do not merge conceptually distinct things into one component to keep the list short.
+
+Step 2 — select technologies:
+- Every selection MUST satisfy ALL constraints and respect the structural commitments.
+- Use current stable versions. Do not name specific version numbers for the deployment platform unless certain they are current.
+- Apply domain entities as hints for where data lives.
+
+Return ONLY valid YAML shaped to match the actual system — do not use a fixed template.
+Use these categories as top-level keys (omit any that do not apply):
+
+frontend_apps:
+  - name: <app name, e.g. storefront>
+    technology: <framework and version>
+    purpose: <one line>
+
+backend_services:
+  - name: <service name derived from bounded context>
+    technology: <runtime and framework>
+    purpose: <one line>
+
+data_stores:
+  - name: <store name>
+    technology: <database and version>
+    owned_by: <service name(s)>
+
+messaging:
+  - name: <broker or bus name>
+    technology: <technology and version>
+    purpose: <one line>
+
+deployment:
+  platform: <orchestration platform>
+  strategy: <one line describing how services are deployed>
+
 reasoning:
-  - <one reason per major technology choice>
-
-The fields may be a simple string (e.g. "Next.js 14") or a structured object for multi-service systems. Match the structural complexity in the principles.
+  - <one entry per significant technology decision, citing the principle or constraint it satisfies>
 
 Return ONLY valid YAML. No explanation. No code fences. No markdown."#
     )
