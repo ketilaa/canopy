@@ -84,14 +84,11 @@ pub struct ArchitecturePrinciples {
     pub structural_commitments: StructuralCommitments,
 }
 
+/// Accepts any YAML shape the LLM produces — no fixed field schema.
+/// Always used as a serialization blob; no fields are accessed individually.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComponentArchitecture {
-    pub frontend: serde_yaml::Value,
-    pub backend: serde_yaml::Value,
-    pub database: serde_yaml::Value,
-    pub deployment: serde_yaml::Value,
-    pub reasoning: Vec<serde_yaml::Value>,
-}
+#[serde(transparent)]
+pub struct ComponentArchitecture(pub serde_yaml::Value);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Adr {
@@ -398,47 +395,59 @@ mod tests {
 
     #[test]
     fn component_architecture_yaml_round_trip() {
-        let a = ComponentArchitecture {
-            frontend: serde_yaml::Value::String("React".into()),
-            backend: serde_yaml::Value::String("Axum".into()),
-            database: serde_yaml::Value::String("PostgreSQL".into()),
-            deployment: serde_yaml::Value::String("AWS".into()),
-            reasoning: vec![serde_yaml::Value::String("Strong ecosystem".into())],
-        };
-        let yaml = serde_yaml::to_string(&a).unwrap();
-        let a2: ComponentArchitecture = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(a.database, a2.database);
-        assert_eq!(a.reasoning, a2.reasoning);
+        let yaml = r#"
+frontend_apps:
+  - name: storefront
+    technology: React
+backend_services:
+  - name: api
+    technology: Axum
+data_stores:
+  - name: primary
+    technology: PostgreSQL
+deployment:
+  platform: AWS
+reasoning:
+  - Strong ecosystem
+"#;
+        let a: ComponentArchitecture = serde_yaml::from_str(yaml).unwrap();
+        let reserialized = serde_yaml::to_string(&a).unwrap();
+        let a2: ComponentArchitecture = serde_yaml::from_str(&reserialized).unwrap();
+        assert_eq!(a.0, a2.0);
     }
 
     #[test]
     fn component_architecture_rich_fields_parse() {
         let yaml = r#"
-frontend:
-  framework: Next.js 14
-  ui_library: Tailwind CSS
-backend:
-  services:
-    api: Axum
-    worker: Tokio
-database:
-  catalogue_service:
-    engine: PostgreSQL 16
-    port: 5433
-  cart_service:
-    engine: Redis 7
-    port: 6379
+frontend_apps:
+  - name: storefront
+    technology: Next.js 14
+  - name: backoffice
+    technology: Next.js 14
+backend_services:
+  - name: auth-service
+    technology: Node.js / Express
+  - name: product-service
+    technology: Python / Django REST
+data_stores:
+  - name: primary-db
+    technology: PostgreSQL 15
+    owned_by: product-service
+messaging:
+  - name: event-bus
+    technology: RedPanda
 deployment:
-  platform: AWS ECS
-  regions:
-    - eu-west-1
+  platform: Kubernetes
+  strategy: one deployment per service
 reasoning:
   - Strong ecosystem
 "#;
         let a: ComponentArchitecture = serde_yaml::from_str(yaml).unwrap();
-        assert!(matches!(a.database, serde_yaml::Value::Mapping(_)));
-        assert!(matches!(a.deployment, serde_yaml::Value::Mapping(_)));
-        assert_eq!(a.reasoning.len(), 1);
+        assert!(matches!(a.0, serde_yaml::Value::Mapping(_)));
+        let map = a.0.as_mapping().unwrap();
+        assert!(map.contains_key("frontend_apps"));
+        assert!(map.contains_key("backend_services"));
+        assert!(map.contains_key("messaging"));
     }
 
     #[test]
