@@ -7,8 +7,9 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use canopy_core::*;
 use canopy_explore::{
     generate_adrs, generate_architecture_principles, generate_component_architecture,
-    generate_delivery_intents, generate_domain_model, generate_implementation_plan,
-    generate_intent_spec, generate_questions, generate_scaffold_plan, generate_vision, LlmClient,
+    generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
+    generate_intent_spec, generate_questions, generate_scaffold_plan, generate_vision,
+    validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -54,6 +55,16 @@ enum Commands {
     PlanList,
     /// Derive scaffold commands from component_architecture.yaml and run them
     Scaffold,
+    /// Implement all pending tasks in a confirmed plan
+    Implement {
+        /// Plan slug (directory name under .canopy/plans/)
+        slug: String,
+    },
+    /// Validate generated files against spec scenarios
+    Validate {
+        /// Plan slug (directory name under .canopy/plans/)
+        slug: String,
+    },
 }
 
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
@@ -94,6 +105,8 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::PlanConfirm { slug }   => cmd_plan_confirm(&slug),
         Commands::PlanList               => cmd_plan_list(),
         Commands::Scaffold               => cmd_scaffold(debug),
+        Commands::Implement { slug }     => cmd_implement(&slug, debug),
+        Commands::Validate { slug }      => cmd_validate(&slug, debug),
     }
 }
 
@@ -549,5 +562,158 @@ fn cmd_scaffold(debug: bool) -> Result<()> {
     }
 
     println!("\nScaffolding complete.");
+    Ok(())
+}
+
+fn cmd_implement(slug: &str, debug: bool) -> Result<()> {
+    let plan = load_implementation_plan(slug)
+        .with_context(|| format!("no plan '{slug}' — run `canopy plan` first"))?;
+
+    if plan.status != "confirmed" {
+        anyhow::bail!(
+            "plan '{slug}' is '{}' — run `canopy plan-confirm {slug}` first",
+            plan.status
+        );
+    }
+
+    let pending: Vec<_> = plan.tasks.iter().filter(|t| !t.completed).collect();
+    if pending.is_empty() {
+        println!("All tasks in '{slug}' are already complete.");
+        return Ok(());
+    }
+
+    let spec = load_intent_spec(slug)
+        .with_context(|| format!("no spec for '{slug}'"))?;
+    let comp_arch = load_component_architecture()
+        .context("no component_architecture.yaml — run `canopy plan` first")?;
+    let intents = load_delivery_intents()
+        .context("no delivery_intents.yaml — run `canopy explore` first")?;
+    let intent = intents.intents.get(plan.intent_index)
+        .ok_or_else(|| anyhow::anyhow!("intent index {} out of range", plan.intent_index))?;
+
+    // Roots context for repository mode; None in greenfield.
+    let roots_ctx = roots::get_feature_context(&intent.title)
+        .map(|p| serde_json::to_string(&p).unwrap_or_default());
+    if roots_ctx.is_some() {
+        println!("Using Roots context for '{}'", intent.title);
+    }
+
+    let client = build_client("developer", debug)?;
+
+    println!("\nImplementing {} pending task(s) for '{slug}'...", pending.len());
+    let output = generate_files(&client, intent, &spec, &plan, &comp_arch, roots_ctx.as_deref())
+        .context("developer LLM call failed")?;
+
+    // Write files to disk.
+    for file in &output.files {
+        let dest = std::path::Path::new(&file.path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory for {}", file.path))?;
+        }
+        std::fs::write(dest, &file.content)
+            .with_context(|| format!("failed to write {}", file.path))?;
+        println!("  wrote  {}", file.path);
+    }
+
+    // Mark tasks whose declared outputs were generated as completed.
+    let generated_paths: std::collections::HashSet<&str> =
+        output.files.iter().map(|f| f.path.as_str()).collect();
+
+    let mut updated_plan = plan;
+    for task in updated_plan.tasks.iter_mut() {
+        if !task.completed && task.outputs.iter().any(|o| generated_paths.contains(o.as_str())) {
+            task.completed = true;
+        }
+    }
+    updated_plan.status = if updated_plan.tasks.iter().all(|t| t.completed) {
+        "complete".to_string()
+    } else {
+        "in_progress".to_string()
+    };
+
+    save_implementation_plan(slug, &updated_plan)
+        .context("failed to save updated plan")?;
+
+    println!(
+        "\n{} file(s) written. Plan '{}' status: {}",
+        output.files.len(),
+        slug,
+        updated_plan.status
+    );
+    println!("Run `canopy validate {slug}` to verify against spec scenarios.");
+    Ok(())
+}
+
+fn cmd_validate(slug: &str, debug: bool) -> Result<()> {
+    let plan = load_implementation_plan(slug)
+        .with_context(|| format!("no plan '{slug}' — run `canopy plan` first"))?;
+
+    if matches!(plan.status.as_str(), "draft" | "confirmed") {
+        anyhow::bail!(
+            "plan '{slug}' has not been implemented yet (status: {})",
+            plan.status
+        );
+    }
+
+    let spec = load_intent_spec(slug)
+        .with_context(|| format!("no spec for '{slug}'"))?;
+    let intents = load_delivery_intents()
+        .context("no delivery_intents.yaml — run `canopy explore` first")?;
+    let intent = intents.intents.get(plan.intent_index)
+        .ok_or_else(|| anyhow::anyhow!("intent index {} out of range", plan.intent_index))?;
+
+    // Collect all output files from tasks.
+    let mut generated_files: Vec<(String, String)> = Vec::new();
+    for task in &plan.tasks {
+        for output_path in &task.outputs {
+            let p = std::path::Path::new(output_path);
+            if p.exists() {
+                match std::fs::read_to_string(p) {
+                    Ok(content) => generated_files.push((output_path.clone(), content)),
+                    Err(e) => eprintln!("  warning: could not read {output_path}: {e}"),
+                }
+            }
+        }
+    }
+
+    if generated_files.is_empty() {
+        anyhow::bail!(
+            "no output files found for '{slug}' — run `canopy implement {slug}` first"
+        );
+    }
+
+    let client = build_client("validator", debug)?;
+
+    println!("Validating {slug} ({} files, {} scenarios)...",
+        generated_files.len(), spec.scenarios.len());
+
+    let report = validate_spec(&client, intent, &spec, &generated_files)
+        .context("validator LLM call failed")?;
+
+    save_validation_report(slug, &report)
+        .context("failed to save validation report")?;
+
+    println!("\nValidation results for '{slug}':");
+    println!("  {}/{} scenarios passed\n", report.passed, report.total);
+    for result in &report.results {
+        let icon = if result.passed { "✓" } else { "✗" };
+        println!("  {icon} [{}] {}", result.scenario_id, result.scenario_name);
+        if !result.passed {
+            println!("    reason: {}", result.reasoning);
+            for issue in &result.issues {
+                println!("    issue:  {issue}");
+            }
+        }
+    }
+
+    println!("\nReport saved to .canopy/plans/{slug}/validation.yaml");
+
+    if report.passed < report.total {
+        anyhow::bail!(
+            "{} scenario(s) failed — fix the implementation and re-run `canopy validate {slug}`",
+            report.total - report.passed
+        );
+    }
     Ok(())
 }

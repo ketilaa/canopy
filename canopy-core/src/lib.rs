@@ -145,6 +145,44 @@ pub struct ImplementationTask {
     pub acceptance_criteria_refs: Vec<String>,
     pub estimated_complexity: String,
     pub blocking: bool,
+    #[serde(default)]
+    pub completed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneratedFile {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeveloperOutput {
+    pub files: Vec<GeneratedFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationResult {
+    pub scenario_id: String,
+    pub scenario_name: String,
+    pub passed: bool,
+    pub reasoning: String,
+    #[serde(default)]
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationReport {
+    pub intent_ref: String,
+    pub passed: usize,
+    pub total: usize,
+    pub results: Vec<ValidationResult>,
+}
+
+impl ValidationReport {
+    pub fn recompute_totals(&mut self) {
+        self.total = self.results.len();
+        self.passed = self.results.iter().filter(|r| r.passed).count();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -552,6 +590,7 @@ agents:
                 acceptance_criteria_refs: vec!["auth-001".into()],
                 estimated_complexity: "low".into(),
                 blocking: true,
+                completed: false,
             }],
             reasoning: vec!["Schema is a blocking prerequisite".into()],
             open_questions: vec![OpenQuestion {

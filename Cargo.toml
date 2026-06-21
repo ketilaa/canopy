@@ -1,8 +1,20 @@
 [workspace]
 members = [
-    "canopy-cli",
+    # Roots — repository intelligence engine
+    "roots-core",
+    "roots-parser",
+    "roots-storage",
+    "roots-context",
+    "roots-cli",
+    # Canopy — planning and implementation orchestrator
     "canopy-core",
-    "canopy-explore",
     "canopy-storage",
+    "canopy-explore",
+    "canopy-cli",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror  = "2"

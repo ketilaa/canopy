@@ -1,0 +1,9 @@
+[package]
+name    = "roots-context"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roots-storage = { path = "../roots-storage" }
+serde         = { workspace = true }
+thiserror     = { workspace = true }

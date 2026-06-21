@@ -144,6 +144,14 @@ pub fn load_scaffold_plan() -> Result<ScaffoldPlan, StorageError> {
     load("scaffold.yaml")
 }
 
+pub fn save_validation_report(slug: &str, report: &ValidationReport) -> Result<(), StorageError> {
+    save(&format!("plans/{}/validation.yaml", slug), report)
+}
+
+pub fn load_validation_report(slug: &str) -> Result<ValidationReport, StorageError> {
+    load(&format!("plans/{}/validation.yaml", slug))
+}
+
 pub fn list_adrs() -> Result<Vec<PathBuf>, StorageError> {
     let dir = storage_dir().join("decisions");
     if !dir.exists() {
@@ -275,6 +283,7 @@ mod tests {
                     acceptance_criteria_refs: vec!["auth-001".into()],
                     estimated_complexity: "low".into(),
                     blocking: true,
+                    completed: false,
                 }],
                 reasoning: vec!["Schema blocks all other tasks".into()],
                 open_questions: vec![],

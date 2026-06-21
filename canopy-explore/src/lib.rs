@@ -59,6 +59,15 @@ impl LlmClient {
     }
 
     pub fn complete(&self, prompt: &str) -> Result<String, ExploreError> {
+        self.complete_with_max_tokens(prompt, 4096)
+    }
+
+    /// Use for code generation where output can be significantly larger than planning artifacts.
+    pub fn complete_large(&self, prompt: &str) -> Result<String, ExploreError> {
+        self.complete_with_max_tokens(prompt, 8192)
+    }
+
+    fn complete_with_max_tokens(&self, prompt: &str, max_tokens: u32) -> Result<String, ExploreError> {
         if self.debug {
             eprintln!("\n╔══ LLM INPUT ═══════════════════════════════════════════╗");
             eprintln!("{prompt}");
@@ -66,7 +75,7 @@ impl LlmClient {
         }
 
         let (text, json) = match self.provider {
-            LlmProvider::Anthropic => self.call_anthropic(prompt)?,
+            LlmProvider::Anthropic => self.call_anthropic(prompt, max_tokens)?,
             LlmProvider::Ollama => self.call_openai_compatible(prompt)?,
         };
 
@@ -92,10 +101,10 @@ impl LlmClient {
         Ok(text)
     }
 
-    fn call_anthropic(&self, prompt: &str) -> Result<(String, serde_json::Value), ExploreError> {
+    fn call_anthropic(&self, prompt: &str, max_tokens: u32) -> Result<(String, serde_json::Value), ExploreError> {
         let body = serde_json::json!({
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}]
         });
         let url = format!("{}/v1/messages", self.base_url);
@@ -731,6 +740,157 @@ pub fn generate_scaffold_plan(
     }
     serde_yaml::from_str::<ScaffoldPlan>(&raw)
         .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
+fn developer_prompt(
+    intent: &DeliveryIntent,
+    spec: &IntentSpec,
+    plan: &ImplementationPlan,
+    comp_arch: &ComponentArchitecture,
+    roots_context: Option<&str>,
+) -> String {
+    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
+    let plan_yaml = serde_yaml::to_string(plan).unwrap_or_default();
+    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
+    let roots_section = match roots_context {
+        Some(ctx) => format!("\nRepository context from Roots:\n{ctx}\n"),
+        None => String::new(),
+    };
+    // Build pending task list (not yet completed)
+    let pending: Vec<String> = plan.tasks.iter()
+        .filter(|t| !t.completed)
+        .map(|t| format!("  - [{}] {} (outputs: {})", t.id, t.title, t.outputs.join(", ")))
+        .collect();
+    let pending_summary = if pending.is_empty() {
+        "  (all tasks completed)".to_string()
+    } else {
+        pending.join("\n")
+    };
+    format!(
+        r#"You are an expert software developer implementing a delivery intent.
+
+Intent: {title}
+Description: {description}
+{roots_section}
+Component architecture:
+{arch_yaml}
+
+Behavioral specification:
+{spec_yaml}
+
+Implementation plan:
+{plan_yaml}
+
+Pending tasks to implement:
+{pending_summary}
+
+Generate ALL files required to implement the pending tasks. This is a greenfield implementation — write complete, production-quality file contents.
+
+Return ONLY a JSON object. No explanation. No code fences. No markdown:
+{{"files": [{{"path": "relative/path/to/file.ext", "content": "full file content"}}]}}
+
+Rules:
+- Use the technology stack from the component architecture
+- Each file must be complete and syntactically correct — no stubs, no TODOs
+- path is relative to the project root
+- Implement exactly what the specification scenarios describe
+- Do not generate files for tasks that are already completed
+- Include tests in a separate file when the plan has test tasks
+- Follow idiomatic conventions for the chosen technology"#,
+        title = intent.title,
+        description = intent.description,
+    )
+}
+
+pub fn generate_files(
+    client: &LlmClient,
+    intent: &DeliveryIntent,
+    spec: &IntentSpec,
+    plan: &ImplementationPlan,
+    comp_arch: &ComponentArchitecture,
+    roots_context: Option<&str>,
+) -> Result<DeveloperOutput, ExploreError> {
+    let prompt = developer_prompt(intent, spec, plan, comp_arch, roots_context);
+    let raw = client.complete_large(&prompt)?;
+    // Try direct parse first
+    if let Ok(output) = serde_json::from_str::<DeveloperOutput>(&raw) {
+        return Ok(output);
+    }
+    // Strip possible markdown code fences
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str::<DeveloperOutput>(stripped)
+        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
+}
+
+fn validator_prompt(
+    intent: &DeliveryIntent,
+    spec: &IntentSpec,
+    generated_files: &[(String, String)],
+) -> String {
+    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
+    let files_section: String = generated_files.iter()
+        .map(|(path, content)| format!("### {path}\n```\n{content}\n```"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    format!(
+        r#"You are a rigorous QA engineer validating an implementation against its behavioral specification.
+
+Intent: {title}
+
+Behavioral specification:
+{spec_yaml}
+
+Implemented files:
+{files_section}
+
+For EACH scenario in the specification, determine whether the implementation satisfies it.
+
+Return ONLY a JSON object. No explanation. No code fences. No markdown:
+{{
+  "intent_ref": "{title}",
+  "results": [
+    {{
+      "scenario_id": "<scenario id>",
+      "scenario_name": "<scenario name>",
+      "passed": true,
+      "reasoning": "<why this scenario passes or fails>",
+      "issues": ["<specific issue if failed>"]
+    }}
+  ]
+}}
+
+Rules:
+- passed is true only if the implementation fully satisfies ALL given/when/then conditions and constraints
+- reasoning must cite specific code evidence (file name, line context) when marking passed
+- issues must list exactly what is missing or wrong when passed is false
+- Cover every scenario — no omissions"#,
+        title = intent.title,
+    )
+}
+
+pub fn validate_spec(
+    client: &LlmClient,
+    intent: &DeliveryIntent,
+    spec: &IntentSpec,
+    generated_files: &[(String, String)],
+) -> Result<ValidationReport, ExploreError> {
+    let prompt = validator_prompt(intent, spec, generated_files);
+    let raw = client.complete(&prompt)?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let mut report: ValidationReport = serde_json::from_str(stripped)
+        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))?;
+    report.recompute_totals();
+    Ok(report)
 }
 
 fn parse_architecture_principles(raw: &str) -> Result<ArchitecturePrinciples, ExploreError> {
