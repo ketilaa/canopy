@@ -726,11 +726,13 @@ Next.js:
   npx create-next-app@latest <name> --typescript --tailwind --app --no-git
 
 Vite (React, Vue, Svelte, etc. — NOT Angular):
-  npm create vite@latest <name> -- --template <template>
+  printf 'n\n' | npm create vite@latest <name> -- --template <template>
   Valid templates: vanilla, vanilla-ts, vue, vue-ts, react, react-ts, react-swc,
                    react-swc-ts, preact, preact-ts, lit, lit-ts, svelte, svelte-ts,
                    solid, solid-ts, qwik, qwik-ts
   NOTE: flags MUST come after the bare "--" separator when using npm create
+  NOTE: Vite 8 prompts "Install with npm and start now?" — the printf 'n\n' answers No,
+        preventing the dev server from starting mid-scaffold
 
 Angular (use ng new, NOT Vite — Vite's Angular template is interactive and cannot be scripted):
   npx @angular/cli@latest new <name> --style=css --routing --skip-git --no-interactive
