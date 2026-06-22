@@ -87,8 +87,7 @@ fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
             })?;
             Ok(LlmClient::from_agent_config(&agent_cfg, debug))
         }
-        None => LlmClient::from_env(debug)
-            .context("ANTHROPIC_API_KEY must be set when no .canopy/config.yaml exists"),
+        None => Ok(LlmClient::default_local(debug)),
     }
 }
 

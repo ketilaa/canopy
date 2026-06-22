@@ -28,16 +28,14 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
-    pub fn from_env(debug: bool) -> Result<Self, ExploreError> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| ExploreError::MissingApiKey)?;
-        Ok(Self {
-            api_key,
-            model: "claude-sonnet-4-6".to_string(),
+    pub fn default_local(debug: bool) -> Self {
+        Self {
+            api_key: String::new(),
+            model: "qwen2.5:32b".to_string(),
             debug,
-            provider: LlmProvider::Anthropic,
-            base_url: "https://api.anthropic.com".to_string(),
-        })
+            provider: LlmProvider::Ollama,
+            base_url: "http://localhost:11434".to_string(),
+        }
     }
 
     pub fn from_agent_config(cfg: &AgentLlmConfig, debug: bool) -> Self {
