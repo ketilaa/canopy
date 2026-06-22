@@ -732,8 +732,8 @@ pub fn generate_scaffold_plan_static(group_id: &str, comp_arch: &ComponentArchit
     let value = &comp_arch.0;
 
     for (section_key, working_dir) in &[
-        ("frontend_apps", "frontend_apps"),
-        ("backend_services", "backend_services"),
+        ("frontend_apps", "frontend"),
+        ("backend_services", "services"),
     ] {
         if let Some(seq) = value.get(*section_key).and_then(|v| v.as_sequence()) {
             for component in seq {
