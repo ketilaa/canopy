@@ -706,6 +706,66 @@ pub fn generate_implementation_plan(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
+fn user_stories_prompt(
+    vision: &Vision,
+    domain: Option<&DomainRegistry>,
+    comp_arch: Option<&ComponentArchitecture>,
+) -> String {
+    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
+    let domain_section = domain
+        .map(|d| format!("Domain vocabulary:\n{}", serde_yaml::to_string(d).unwrap_or_default()))
+        .unwrap_or_default();
+    let arch_section = comp_arch
+        .map(|a| format!("Component architecture:\n{}", serde_yaml::to_string(a).unwrap_or_default()))
+        .unwrap_or_default();
+    format!(
+        r#"You are an experienced product strategist writing user stories for a software project.
+
+Vision:
+{vision_yaml}
+
+{domain_section}
+
+{arch_section}
+
+Generate a complete set of user stories covering the core functionality implied by the vision.
+
+Rules:
+- Assign each story a short, stable ID using a domain-area prefix and zero-padded number, e.g. auth-001, catalog-002, cart-001
+- Use only actors that appear in the vision's users list
+- The "so_that" must state a concrete business or user benefit — never a technical detail
+- depends_on lists IDs of stories that must exist before this story can be built
+- Order stories from foundational (no dependencies) to differentiating (many dependencies)
+- Omit stories for infrastructure, deployment, or internal tooling
+
+Return ONLY valid YAML in this exact shape. No explanation. No code fences. No markdown.
+
+stories:
+  - id: <area-NNN>
+    as_a: <role from vision users>
+    want: <capability>
+    so_that: <concrete benefit>
+    depends_on: []"#,
+        vision_yaml = vision_yaml,
+        domain_section = domain_section,
+        arch_section = arch_section,
+    )
+}
+
+pub fn generate_user_stories(
+    client: &LlmClient,
+    vision: &Vision,
+    domain: Option<&DomainRegistry>,
+    comp_arch: Option<&ComponentArchitecture>,
+) -> Result<UserStories, ExploreError> {
+    let raw = client.complete_large(&user_stories_prompt(vision, domain, comp_arch))?;
+    if let Ok(stories) = serde_yaml::from_str::<UserStories>(&raw) {
+        return Ok(stories);
+    }
+    serde_yaml::from_str::<UserStories>(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
 pub fn arch_needs_jvm(comp_arch: &ComponentArchitecture) -> bool {
     let value = &comp_arch.0;
     for section in &["frontend_apps", "backend_services"] {

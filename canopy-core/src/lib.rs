@@ -256,6 +256,21 @@ pub struct ScaffoldPlan {
     pub commands: Vec<ScaffoldCommand>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserStory {
+    pub id: String,
+    pub as_a: String,
+    pub want: String,
+    pub so_that: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserStories {
+    pub stories: Vec<UserStory>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {

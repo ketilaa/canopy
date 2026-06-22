@@ -8,8 +8,8 @@ use canopy_core::*;
 use canopy_explore::{
     arch_needs_jvm, generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
-    generate_intent_spec, generate_questions, generate_scaffold_plan_static, generate_vision,
-    validate_spec, LlmClient,
+    generate_intent_spec, generate_questions, generate_scaffold_plan_static, generate_user_stories,
+    generate_vision, validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -72,6 +72,12 @@ enum Commands {
         /// Plan slug (directory name under .canopy/plans/)
         slug: String,
     },
+    /// Generate user stories from vision, domain model, and component architecture
+    Stories {
+        /// Discard existing stories.yaml and regenerate
+        #[arg(long)]
+        regenerate: bool,
+    },
 }
 
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
@@ -113,6 +119,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
         Commands::Implement { slug }     => cmd_implement(&slug, debug),
         Commands::Validate { slug }      => cmd_validate(&slug, debug),
+        Commands::Stories { regenerate } => cmd_stories(regenerate, debug),
     }
 }
 
@@ -740,5 +747,46 @@ fn cmd_validate(slug: &str, debug: bool) -> Result<()> {
             report.total - report.passed
         );
     }
+    Ok(())
+}
+
+fn cmd_stories(regenerate: bool, debug: bool) -> Result<()> {
+    let stories = match load_user_stories() {
+        Ok(existing) if !regenerate => {
+            println!("Using existing .canopy/stories.yaml (pass --regenerate to rebuild).");
+            existing
+        }
+        _ => {
+            let vision = load_vision()
+                .context("No vision.yaml — run `canopy explore` first")?;
+            let domain = load_domain_registry().ok();
+            let comp_arch = load_component_architecture().ok();
+
+            let client = build_client("explorer", debug)?;
+            println!("\nGenerating user stories...");
+            let stories = generate_user_stories(
+                &client,
+                &vision,
+                domain.as_ref(),
+                comp_arch.as_ref(),
+            ).context("failed to generate user stories")?;
+
+            save_user_stories(&stories).context("failed to save stories.yaml")?;
+            println!("Saved .canopy/stories.yaml\n");
+            stories
+        }
+    };
+
+    println!("{} user stories:\n", stories.stories.len());
+    for s in &stories.stories {
+        println!("  [{}] As a {}, I want {}", s.id, s.as_a, s.want);
+        println!("        so that {}", s.so_that);
+        if !s.depends_on.is_empty() {
+            println!("        depends on: {}", s.depends_on.join(", "));
+        }
+        println!();
+    }
+
+    println!("To add more stories, edit .canopy/stories.yaml directly.");
     Ok(())
 }

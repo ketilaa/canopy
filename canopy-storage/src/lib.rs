@@ -144,6 +144,9 @@ pub fn load_scaffold_plan() -> Result<ScaffoldPlan, StorageError> {
     load("scaffold.yaml")
 }
 
+pub fn save_user_stories(s: &UserStories) -> Result<(), StorageError> { save("stories.yaml", s) }
+pub fn load_user_stories() -> Result<UserStories, StorageError>       { load("stories.yaml") }
+
 pub fn save_validation_report(slug: &str, report: &ValidationReport) -> Result<(), StorageError> {
     save(&format!("plans/{}/validation.yaml", slug), report)
 }
