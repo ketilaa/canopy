@@ -772,6 +772,10 @@ Rust:
 .NET:
   dotnet new webapi -n <name>
 
+Node.js (Express or any backend Node service — there is NO npm init scaffolder for Express):
+  mkdir -p <name> && npm init -y --prefix <name> && npm install express --prefix <name> && touch <name>/index.js
+  Do NOT use npm init <anything> for Node.js services — no such scaffolders exist on npm.
+
 Python:
   mkdir -p <name> && touch <name>/main.py <name>/requirements.txt
 
