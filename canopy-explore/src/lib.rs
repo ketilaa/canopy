@@ -708,119 +708,162 @@ pub fn generate_implementation_plan(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
-fn scaffold_plan_prompt(project_name: &str, group_id: &str, comp_arch: &ComponentArchitecture) -> String {
-    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
-    format!(
-        r#"You are a software architect generating project scaffold commands.
-
-Project name: {project_name}
-Java groupId / package: {group_id}
-Component architecture:
-{arch_yaml}
-
-Generate the exact scaffold commands to initialize each component. Use only official ecosystem tools.
-
-Exact syntax reference — copy these patterns, do not invent flags:
-
-Next.js:
-  npx create-next-app@latest <name> --typescript --tailwind --app --no-git
-
-Vite (React, Vue, Svelte, etc. — NOT Angular):
-  printf 'n\n' | npm create vite@latest <name> -- --template <template>
-  Valid templates: vanilla, vanilla-ts, vue, vue-ts, react, react-ts, react-swc,
-                   react-swc-ts, preact, preact-ts, lit, lit-ts, svelte, svelte-ts,
-                   solid, solid-ts, qwik, qwik-ts
-  NOTE: flags MUST come after the bare "--" separator when using npm create
-  NOTE: Vite 8 prompts "Install with npm and start now?" — the printf 'n\n' answers No,
-        preventing the dev server from starting mid-scaffold
-
-Angular (use ng new, NOT Vite — Vite's Angular template is interactive and cannot be scripted):
-  npx @angular/cli@latest new <name> --directory=<output-dir> --style=css --routing --skip-git --no-interactive
-  Replace --style=css with --style=scss or --style=less if preferred
-  Always include --skip-git — the project is already inside a git repository
-  IMPORTANT: <name> must be the bare component name only (no slashes, e.g. "backoffice").
-             Use --directory=<output-dir> to control where the project is created
-             (e.g. --directory=frontend_apps/backoffice). Angular rejects slashes in the name.
-
-Spring Boot microservice (Java) — PREFERRED for any backend service or API:
-  curl -G https://start.spring.io/starter.tgz \
-    -d dependencies=web,actuator -d language=java -d type=maven-project \
-    -d bootVersion=4.1.0 \
-    -d groupId=<groupId> -d artifactId=<artifactId> -d name=<artifactId> \
-    | tar -xzvf - -C <artifactId>
-  Add dependencies as needed: web,actuator,data-jpa,postgresql,kafka,security,validation
-  Always mkdir <artifactId> first, then extract into it with -C <artifactId>
-
-Spring Boot microservice (Kotlin) — use instead of Java when project uses Kotlin:
-  curl -G https://start.spring.io/starter.tgz \
-    -d dependencies=web,actuator -d language=kotlin -d type=gradle-project \
-    -d bootVersion=4.1.0 \
-    -d groupId=<groupId> -d artifactId=<artifactId> -d name=<artifactId> \
-    | tar -xzvf - -C <artifactId>
-
-Maven plain Java library (NOT for microservices — only for shared libs with no framework):
-  mvn archetype:generate -DgroupId=<groupId> -DartifactId=<artifactId> \
-    -DarchetypeArtifactId=maven-archetype-quickstart -DarchetypeVersion=1.4 \
-    -DinteractiveMode=false
-
-Gradle (Kotlin/Java):
-  gradle init --type kotlin-application --dsl kotlin --no-incubating
-
-Rust:
-  cargo new <name>
-
-.NET:
-  dotnet new webapi -n <name>
-
-Node.js (Express or any backend Node service — there is NO npm init scaffolder for Express):
-  mkdir -p <name> && npm init -y --prefix <name> && npm install express --prefix <name> && touch <name>/index.js
-  Do NOT use npm init <anything> for Node.js services — no such scaffolders exist on npm.
-
-Python:
-  mkdir -p <name> && touch <name>/main.py <name>/requirements.txt
-
-For each component in the architecture, produce one entry.
-
-Return ONLY valid YAML:
-commands:
-  - label: <human-readable component name, e.g. "storefront (Next.js)">
-    command: <exact command with all flags — follow the syntax reference above exactly>
-    working_dir: <directory to run from, relative to project root, use "." for root>
-    creates: <directory or file the command creates, e.g. "storefront/">
-
-Rules:
-- Follow the syntax reference exactly — do not paraphrase or invent flags
-- Use the provided groupId for all Java/Kotlin components; derive artifactId from the component name
-- The 'creates' value must be the actual directory/file name the command produces
-- Omit components that have no scaffold tool (document them in a comment in the label instead)
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        project_name = project_name,
-    )
-}
-
-pub fn generate_scaffold_plan(
-    client: &LlmClient,
-    project_name: &str,
-    group_id: &str,
-    comp_arch: &ComponentArchitecture,
-) -> Result<ScaffoldPlan, ExploreError> {
-    let raw = client.complete(&scaffold_plan_prompt(project_name, group_id, comp_arch))?;
-    if let Ok(plan) = serde_yaml::from_str::<ScaffoldPlan>(&raw) {
-        return Ok(plan);
-    }
-    // Fallback for wrapped responses
-    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
-    for key in &["scaffold_plan", "scaffold"] {
-        if let Some(inner) = value.get(*key) {
-            if let Ok(plan) = serde_yaml::from_value::<ScaffoldPlan>(inner.clone()) {
-                return Ok(plan);
+pub fn arch_needs_jvm(comp_arch: &ComponentArchitecture) -> bool {
+    let value = &comp_arch.0;
+    for section in &["frontend_apps", "backend_services"] {
+        if let Some(seq) = value.get(*section).and_then(|v| v.as_sequence()) {
+            for component in seq {
+                if let Some(tech) = component.get("technology").and_then(|v| v.as_str()) {
+                    let t = tech.to_lowercase();
+                    if t.contains("spring") || t.contains("java") || t.contains("kotlin")
+                        || t.contains("maven") || t.contains("gradle")
+                    {
+                        return true;
+                    }
+                }
             }
         }
     }
-    serde_yaml::from_str::<ScaffoldPlan>(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
+    false
+}
+
+pub fn generate_scaffold_plan_static(group_id: &str, comp_arch: &ComponentArchitecture) -> ScaffoldPlan {
+    let mut commands = Vec::new();
+    let value = &comp_arch.0;
+
+    for (section_key, working_dir) in &[
+        ("frontend_apps", "frontend_apps"),
+        ("backend_services", "backend_services"),
+    ] {
+        if let Some(seq) = value.get(*section_key).and_then(|v| v.as_sequence()) {
+            for component in seq {
+                let name = component.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+                let technology = component.get("technology").and_then(|v| v.as_str()).unwrap_or_default();
+                if name.is_empty() || technology.is_empty() {
+                    continue;
+                }
+                match technology_to_command(name, technology, group_id, working_dir) {
+                    Some(cmd) => commands.push(cmd),
+                    None => eprintln!("  (skipping '{name}': no scaffold template for '{technology}')"),
+                }
+            }
+        }
+    }
+
+    ScaffoldPlan { generated_at: String::new(), commands }
+}
+
+fn technology_to_command(
+    name: &str,
+    technology: &str,
+    group_id: &str,
+    working_dir: &str,
+) -> Option<ScaffoldCommand> {
+    let t = technology.to_lowercase();
+    let artifact_id = name.to_lowercase().replace(' ', "-");
+
+    let (command, creates) = if t.contains("next.js") || t.contains("nextjs") {
+        (
+            format!("npx create-next-app@latest {name} --typescript --tailwind --app --no-git"),
+            format!("{name}/"),
+        )
+    } else if t.contains("angular") {
+        (
+            format!("npx @angular/cli@latest new {name} --directory={name} --style=css --routing --skip-git --no-interactive"),
+            format!("{name}/"),
+        )
+    } else if t.contains("vite")
+        || t.contains("react")
+        || t.contains("vue")
+        || t.contains("svelte")
+        || t.contains("solid")
+        || t.contains("preact")
+        || t.contains("lit")
+    {
+        let template = vite_template_for(&t);
+        (
+            format!("printf 'n\\n' | npm create vite@latest {name} -- --template {template}"),
+            format!("{name}/"),
+        )
+    } else if t.contains("spring boot") || t.contains("spring-boot") {
+        let (lang, proj_type) = if t.contains("kotlin") {
+            ("kotlin", "gradle-project")
+        } else {
+            ("java", "maven-project")
+        };
+        (
+            format!(
+                "mkdir -p {artifact_id} && curl -G https://start.spring.io/starter.tgz \
+\n  -d dependencies=web,actuator -d language={lang} -d type={proj_type} \
+\n  -d bootVersion=4.1.0 \
+\n  -d groupId={group_id} -d artifactId={artifact_id} -d name={artifact_id} \
+\n  | tar -xzvf - -C {artifact_id}"
+            ),
+            format!("{artifact_id}/"),
+        )
+    } else if t.contains("node") || t.contains("express") || t.contains("fastify")
+        || t.contains("koa") || t.contains("hapi")
+    {
+        (
+            format!("mkdir -p {name} && npm init -y --prefix {name} && npm install express --prefix {name} && touch {name}/index.js"),
+            format!("{name}/"),
+        )
+    } else if t.contains("python") || t.contains("django") || t.contains("flask") || t.contains("fastapi") {
+        (
+            format!("mkdir -p {name} && touch {name}/main.py {name}/requirements.txt"),
+            format!("{name}/"),
+        )
+    } else if t.contains("rust") || t.contains("axum") || t.contains("actix") || t.contains("rocket") {
+        (
+            format!("cargo new {name}"),
+            format!("{name}/"),
+        )
+    } else if t.contains(".net") || t.contains("dotnet") || t.contains("asp.net") || t.contains("c#") {
+        (
+            format!("dotnet new webapi -n {name}"),
+            format!("{name}/"),
+        )
+    } else if t.contains("spring") || t.contains("java") || t.contains("maven") {
+        (
+            format!("mvn archetype:generate -DgroupId={group_id} -DartifactId={artifact_id} -DarchetypeArtifactId=maven-archetype-quickstart -DarchetypeVersion=1.4 -DinteractiveMode=false"),
+            format!("{artifact_id}/"),
+        )
+    } else if t.contains("kotlin") || t.contains("gradle") {
+        (
+            format!("gradle init --type kotlin-application --dsl kotlin --no-incubating"),
+            format!("{name}/"),
+        )
+    } else {
+        return None;
+    };
+
+    Some(ScaffoldCommand {
+        label: format!("{name} ({technology})"),
+        command,
+        working_dir: working_dir.to_string(),
+        creates,
+    })
+}
+
+fn vite_template_for(tech_lower: &str) -> &'static str {
+    let ts = tech_lower.contains("ts") || tech_lower.contains("typescript");
+    if tech_lower.contains("react") && tech_lower.contains("swc") {
+        if ts { "react-swc-ts" } else { "react-swc" }
+    } else if tech_lower.contains("react") {
+        if ts { "react-ts" } else { "react" }
+    } else if tech_lower.contains("vue") {
+        if ts { "vue-ts" } else { "vue" }
+    } else if tech_lower.contains("svelte") {
+        if ts { "svelte-ts" } else { "svelte" }
+    } else if tech_lower.contains("solid") {
+        if ts { "solid-ts" } else { "solid" }
+    } else if tech_lower.contains("preact") {
+        if ts { "preact-ts" } else { "preact" }
+    } else if tech_lower.contains("lit") {
+        if ts { "lit-ts" } else { "lit" }
+    } else {
+        "vanilla-ts"
+    }
 }
 
 fn developer_prompt(

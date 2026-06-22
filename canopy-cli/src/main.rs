@@ -6,9 +6,9 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 
 use canopy_core::*;
 use canopy_explore::{
-    generate_adrs, generate_architecture_principles, generate_component_architecture,
+    arch_needs_jvm, generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
-    generate_intent_spec, generate_questions, generate_scaffold_plan, generate_vision,
+    generate_intent_spec, generate_questions, generate_scaffold_plan_static, generate_vision,
     validate_spec, LlmClient,
 };
 use canopy_storage::*;
@@ -492,7 +492,7 @@ fn cmd_plan_list() -> Result<()> {
     Ok(())
 }
 
-fn cmd_scaffold(dir: &str, regenerate: bool, debug: bool) -> Result<()> {
+fn cmd_scaffold(dir: &str, regenerate: bool, _debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
 
     let target_dir = dir;
@@ -506,25 +506,21 @@ fn cmd_scaffold(dir: &str, regenerate: bool, debug: bool) -> Result<()> {
             let comp_arch = load_component_architecture()
                 .context("No component_architecture.yaml — run `canopy plan` first")?;
 
-            let project_name = match load_vision() {
-                Ok(v) => v.project,
-                Err(_) => Input::with_theme(&theme)
-                    .with_prompt("Project name")
+            let group_id: String = if arch_needs_jvm(&comp_arch) {
+                let slug = load_vision()
+                    .map(|v| v.project.to_lowercase().replace(' ', ""))
+                    .unwrap_or_else(|_| String::from("app"));
+                Input::with_theme(&theme)
+                    .with_prompt("Java groupId / base package")
+                    .default(format!("com.example.{slug}"))
                     .interact_text()
-                    .context("failed to read project name")?,
+                    .context("failed to read groupId")?
+            } else {
+                String::new()
             };
 
-            let slug = project_name.to_lowercase().replace(' ', "");
-            let group_id: String = Input::with_theme(&theme)
-                .with_prompt("Java groupId / base package (used for Spring Boot and Maven components)")
-                .default(format!("com.example.{slug}"))
-                .interact_text()
-                .context("failed to read groupId")?;
-
-            let client = build_client("scaffold", debug)?;
             println!("\nGenerating scaffold plan...");
-            let mut plan = generate_scaffold_plan(&client, &project_name, &group_id, &comp_arch)
-                .context("failed to generate scaffold plan")?;
+            let mut plan = generate_scaffold_plan_static(&group_id, &comp_arch);
             plan.generated_at = unix_timestamp();
             save_scaffold_plan(&plan).context("failed to save scaffold.yaml")?;
             println!("Scaffold plan saved to .canopy/scaffold.yaml");
