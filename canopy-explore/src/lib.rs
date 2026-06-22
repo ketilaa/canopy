@@ -793,11 +793,7 @@ fn technology_to_command(
         };
         (
             format!(
-                "mkdir -p {artifact_id} && curl -G https://start.spring.io/starter.tgz \
-\n  -d dependencies=web,actuator -d language={lang} -d type={proj_type} \
-\n  -d bootVersion=4.1.0 \
-\n  -d groupId={group_id} -d artifactId={artifact_id} -d name={artifact_id} \
-\n  | tar -xzvf - -C {artifact_id}"
+                "mkdir -p {artifact_id} && curl -G https://start.spring.io/starter.tgz \\\n  -d dependencies=web,actuator -d language={lang} -d type={proj_type} \\\n  -d bootVersion=4.1.0 \\\n  -d groupId={group_id} -d artifactId={artifact_id} -d name={artifact_id} \\\n  | tar -xzvf - -C {artifact_id}"
             ),
             format!("{artifact_id}/"),
         )
@@ -805,7 +801,7 @@ fn technology_to_command(
         || t.contains("koa") || t.contains("hapi")
     {
         (
-            format!("mkdir -p {name} && npm init -y --prefix {name} && npm install express --prefix {name} && touch {name}/index.js"),
+            format!("mkdir -p {name} && cd {name} && npm init -y && npm install express && touch index.js"),
             format!("{name}/"),
         )
     } else if t.contains("python") || t.contains("django") || t.contains("flask") || t.contains("fastapi") {
@@ -846,21 +842,22 @@ fn technology_to_command(
 }
 
 fn vite_template_for(tech_lower: &str) -> &'static str {
-    let ts = tech_lower.contains("ts") || tech_lower.contains("typescript");
+    // Always use TypeScript variants — avoids the variant-selection prompt in Vite 8
+    // when a plain JS template is specified (which interprets 'n' as cancel).
     if tech_lower.contains("react") && tech_lower.contains("swc") {
-        if ts { "react-swc-ts" } else { "react-swc" }
+        "react-swc-ts"
     } else if tech_lower.contains("react") {
-        if ts { "react-ts" } else { "react" }
+        "react-ts"
     } else if tech_lower.contains("vue") {
-        if ts { "vue-ts" } else { "vue" }
+        "vue-ts"
     } else if tech_lower.contains("svelte") {
-        if ts { "svelte-ts" } else { "svelte" }
+        "svelte-ts"
     } else if tech_lower.contains("solid") {
-        if ts { "solid-ts" } else { "solid" }
+        "solid-ts"
     } else if tech_lower.contains("preact") {
-        if ts { "preact-ts" } else { "preact" }
+        "preact-ts"
     } else if tech_lower.contains("lit") {
-        if ts { "lit-ts" } else { "lit" }
+        "lit-ts"
     } else {
         "vanilla-ts"
     }
