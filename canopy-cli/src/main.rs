@@ -560,6 +560,9 @@ fn cmd_scaffold(dir: &str, regenerate: bool, debug: bool) -> Result<()> {
             base.join(&cmd.working_dir)
         };
 
+        std::fs::create_dir_all(&wd)
+            .with_context(|| format!("failed to create working directory: {}", wd.display()))?;
+
         println!("\n$ {}", cmd.command);
         let status = std::process::Command::new("sh")
             .arg("-c")
