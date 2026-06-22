@@ -735,9 +735,12 @@ Vite (React, Vue, Svelte, etc. — NOT Angular):
         preventing the dev server from starting mid-scaffold
 
 Angular (use ng new, NOT Vite — Vite's Angular template is interactive and cannot be scripted):
-  npx @angular/cli@latest new <name> --style=css --routing --skip-git --no-interactive
+  npx @angular/cli@latest new <name> --directory=<output-dir> --style=css --routing --skip-git --no-interactive
   Replace --style=css with --style=scss or --style=less if preferred
   Always include --skip-git — the project is already inside a git repository
+  IMPORTANT: <name> must be the bare component name only (no slashes, e.g. "backoffice").
+             Use --directory=<output-dir> to control where the project is created
+             (e.g. --directory=frontend_apps/backoffice). Angular rejects slashes in the name.
 
 Spring Boot microservice (Java) — PREFERRED for any backend service or API:
   curl -G https://start.spring.io/starter.tgz \
