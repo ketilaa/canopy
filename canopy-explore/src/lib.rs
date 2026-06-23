@@ -879,11 +879,19 @@ Entities: the core business objects — Aggregates, Entities, or Value Objects i
 
 Events: things that happened to a specific entity, named in past tense.
   Naming rule — strictly enforced: every event name MUST start with the name of the entity it belongs to.
-    Correct:   ProductCreated, ProductUpdated, ProductImageAdded, OrderPlaced, CustomerRegistered
-    Wrong:     ImageUploaded (must be ProductImageAdded), DescriptionSet (must be ProductDescriptionUpdated)
-  Use precise domain verbs, not generic CRUD: Created, Updated, Activated, Deactivated,
-    Promoted, Published, Placed, Shipped, Cancelled — not Added, Changed, Modified, Done.
-  Only include events clearly implied — do not invent events not suggested by the stories.
+
+  Two kinds of events only:
+  1. Lifecycle events — created, updated, deleted:
+       ProductCreated, ProductUpdated, ProductDeleted
+     Any field-level change (uploading an image, editing a description, changing a price)
+     is just ProductUpdated — do NOT create a separate event per field.
+  2. Business operation events — meaningful state transitions or domain actions:
+       ProductPromotedToCatalog, ProductActivated, ProductDeactivated,
+       OrderPlaced, OrderShipped, OrderCancelled, CustomerRegistered
+     Only include these when the story describes a named business operation,
+     not when it describes editing or populating data.
+
+  Only include events clearly implied by the stories — do not invent events not suggested by the stories.
 
 Return ONLY valid YAML — no prose, no code fences:
 
