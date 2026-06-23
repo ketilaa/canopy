@@ -892,7 +892,11 @@ Events: things that happened to a specific entity, named in past tense.
      Only include these when the story describes a named business operation,
      not when it describes editing or populating data.
 
-  Only include events clearly implied by the stories — do not invent events not suggested by the stories.
+  Extract only events directly implied by an operation described in the want statements.
+  One event per operation described — do not add anticipatory events.
+  If a story describes registering/creating: extract only the Created event.
+  If a story describes updating/editing: extract only the Updated event.
+  Never add Updated just because Created is present, or vice versa.
 
 Return ONLY valid YAML — no prose, no code fences:
 
