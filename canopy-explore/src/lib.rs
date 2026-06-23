@@ -165,10 +165,15 @@ The developer described this idea:
 {description}
 
 Ask at most 3 questions — only what is needed to write a clear vision statement.
-Focus ONLY on: who the users are, what core problem is being solved, what the system's boundaries are.
+
+One question MUST ask: "Who are the end users of the system being built?" — meaning the people
+who will use the finished product, not the developers building it.
+
+Focus ONLY on: who the end users of the system are, what core problem the system solves for them,
+and where the system's boundaries are.
 
 DO NOT ask about: technology stack, security, compliance, integrations, performance, scalability,
-deployment, architecture, payment processing, or anything that would be an architecture decision.
+deployment, architecture, or anything that would be an architecture decision.
 Those emerge later through the design process.
 
 Return ONLY a JSON object. No explanation. No code fences. Exact format:
@@ -191,8 +196,8 @@ Write a project vision as YAML with this exact structure:
 project: <short project name, 1-4 words>
 problem: <the core problem being solved, 1-2 sentences>
 users:
-  - <primary user type>
-  - <secondary user type if applicable>
+  - <primary end user of the finished system, e.g. "customer", "merchant", "administrator">
+  - <secondary end user if applicable>
 goals:
   - <key goal 1>
   - <key goal 2>
