@@ -8,7 +8,7 @@ use canopy_core::*;
 use canopy_explore::{
     generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
-    generate_intent_spec, generate_questions, generate_scaffold_from_services,
+    generate_intent_spec, generate_scaffold_from_services,
     generate_stories_from_intent, generate_story_spec, generate_vision,
     identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
 };
@@ -204,28 +204,8 @@ fn cmd_explore(debug: bool) -> Result<()> {
 
     let client = build_client("explorer", debug)?;
 
-    println!("\nGenerating clarifying questions...");
-    let questions = generate_questions(&client, &idea)
-        .context("failed to generate questions from LLM")?;
-
-    println!("\nPlease answer these questions. Press Enter to skip any question.\n");
-    let mut answers: Vec<AnsweredQuestion> = Vec::new();
-    for (i, question) in questions.questions.iter().enumerate() {
-        let answer: String = Input::with_theme(&theme)
-            .with_prompt(format!("[{}/{}] {}", i + 1, questions.questions.len(), question))
-            .allow_empty(true)
-            .interact_text()
-            .context("failed to read answer from terminal")?;
-        if !answer.trim().is_empty() {
-            answers.push(AnsweredQuestion {
-                question: question.clone(),
-                answer,
-            });
-        }
-    }
-
-    println!("\nGenerating vision...");
-    let vision = generate_vision(&client, &idea, &answers)
+    println!("Generating vision...");
+    let vision = generate_vision(&client, &idea, &[])
         .context("failed to generate vision")?;
     save_vision(&vision).context("failed to save vision.yaml")?;
     println!("  Saved .canopy/vision.yaml");
