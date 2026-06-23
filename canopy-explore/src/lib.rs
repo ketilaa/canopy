@@ -891,15 +891,25 @@ Include ALL of:
    through which they act. Ask what UI delivers this capability and propose it as a new service if not yet decided.
 3. Tech stack questions — for any new service or frontend introduced, what technology should it be built with?
    Suggest the most pragmatic and common choice, but a human will decide before accepting.
+4. Infrastructure questions — if not yet decided:
+   - Persistent storage: what database does each service use to store its data?
+     Propose one per service that owns data. Suggest the most appropriate type (relational, document, etc.)
+   - Event infrastructure: if the story involves publishing or subscribing to events,
+     what event broker/bus is used? Propose it if not yet decided.
 
 Naming rules — strictly enforced:
-- Use kebab-case for all service names: product-registry, catalog-service, backoffice, storefront
-- Never use PascalCase, never append "Service" as a suffix
+- Use kebab-case for all names: product-registry, catalog-service, backoffice, storefront, redpanda, postgresql
+- Never use PascalCase, never append "Service", "DB", or "Database" as a suffix
 
 For tech stack proposals:
-- Set technology to the canonical technology name used for project scaffolding
-  (e.g. "Spring Boot", "Angular", "React", "Vue", "Next.js", "Node.js", "Micronaut")
-- Set component_type to "frontend" for browser UIs, "service" for backend services
+- Set technology to the canonical technology name (e.g. "Spring Boot", "Angular", "React",
+  "Vue", "Next.js", "Node.js", "PostgreSQL", "MongoDB", "Redpanda", "Kafka")
+- Set component_type to:
+  - "frontend"        — browser UI
+  - "service"         — backend application service
+  - "infrastructure"  — shared infrastructure (database, event broker, cache)
+
+Infrastructure components are shared — propose them once, not once per service.
 
 Return ONLY valid YAML — no prose, no code fences:
 
@@ -914,7 +924,7 @@ proposals:
     service_responsibilities:
       - "<responsibility>"
     technology: "<technology name or null>"
-    component_type: "<frontend | service | null>"
+    component_type: "<frontend | service | infrastructure | null>"
 "#,
         as_a = story.as_a,
         want = story.want,
@@ -1062,12 +1072,20 @@ pub fn services_need_jvm(services: &ServicesRegistry) -> bool {
     services
         .services
         .iter()
+        .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
         .any(|s| s.technology.as_deref().map(is_jvm_technology).unwrap_or(false))
 }
 
 pub fn generate_scaffold_from_services(services: &ServicesRegistry, group_id: &str) -> ScaffoldPlan {
     let mut commands = Vec::new();
     for service in &services.services {
+        if service.component_type.as_deref() == Some("infrastructure") {
+            eprintln!(
+                "  (skipping '{}': infrastructure component — managed via docker-compose or similar)",
+                service.name
+            );
+            continue;
+        }
         if let Some(ref tech) = service.technology {
             let working_dir = service
                 .component_type
