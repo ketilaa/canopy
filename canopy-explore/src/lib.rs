@@ -191,12 +191,15 @@ Q&A context:
 {qa}
 
 Write a project vision as YAML with this exact structure:
-project: <short project name, 1-4 words>
+project: <short readable name, 2-4 plain words, no abbreviations, no CamelCase concatenation — e.g. "Merchant Shop" not "MerchantProxyEcomm">
 problem: <the core problem being solved, 1-2 sentences>
 goals:
-  - <key goal 1>
-  - <key goal 2>
-  - <key goal 3>
+  - <high-level outcome the system should achieve — not a feature, not an implementation detail>
+  - <another outcome>
+  - <another outcome>
+
+Goals must be durable, high-level outcomes — still valid even if specific features change.
+Do not pre-commit to specific features, technologies, or integrations in goals.
 
 Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
         description = idea.description,
@@ -804,7 +807,7 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
 - Choose the prefix from the domain area the story belongs to, not from the intent wording
 - The next ID number must be higher than any existing ID with the same prefix
 - Reuse a known role if it fits; introduce a new role only when genuinely needed
-- "so_that" must state a concrete business or user benefit — never a technical detail
+- "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
 - "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
 - Reason explicitly about dependencies within this batch: if story B requires story A to exist
   first (because it operates on something A creates), then B must list A in depends_on
@@ -862,7 +865,10 @@ Extract the domain objects implied by these stories.
 
 Entities: the core business objects that are created, read, updated, or deleted.
   Use PascalCase singular nouns (Product, Order, Customer).
-  Include only objects central to the stories — not infrastructure, services, or UI concepts.
+  Include only real-world domain concepts — things that exist in the business domain.
+  Never include: service names (ProductRegistry, CatalogService), infrastructure (Database, EventBus),
+  UI concepts (Form, Page), or technical constructs. If it ends in "Service", "Registry",
+  "Repository", "Manager", or "Handler" it is not a domain entity.
 
 Events: things that happen to those objects, named in past tense.
   Use PascalCase (ProductCreated, ImageUploaded, OrderPlaced).
