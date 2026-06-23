@@ -37,9 +37,10 @@ There is no step that generates architecture, domain model, or component structu
 ## Workflow
 
 ```
-canopy explore
+canopy init
   └─ one question: "What are you building?"
-  └─ saves: idea.yaml, vision.yaml
+  └─ saves: idea.yaml
+  └─ project name derived from git remote or folder name — no vision generated
 
 canopy intent "<behavioral statement>"   (repeat per requirement)
   └─ LLM derives user stories

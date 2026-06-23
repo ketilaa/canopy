@@ -31,8 +31,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Interactively explore a new idea and generate all artifacts
-    Explore,
+    /// Initialise a new project — describe what you are building
+    Init,
     /// Regenerate vision.yaml from saved idea
     Vision,
     /// Regenerate delivery_intents.yaml from saved idea and vision
@@ -116,7 +116,7 @@ fn unix_timestamp() -> String {
 
 fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
     match cmd {
-        Commands::Explore                => cmd_explore(debug),
+        Commands::Init                   => cmd_init(),
         Commands::Vision                 => cmd_vision(debug),
         Commands::DeliveryIntents        => cmd_delivery_intents(debug),
         Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
@@ -190,7 +190,28 @@ fn run_repl(debug: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_explore(debug: bool) -> Result<()> {
+fn project_name() -> String {
+    // Try git remote name first
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+    {
+        let url = String::from_utf8_lossy(&output.stdout);
+        let name = url.trim().trim_end_matches(".git");
+        if let Some(part) = name.rsplit('/').next() {
+            if !part.is_empty() {
+                return part.to_string();
+            }
+        }
+    }
+    // Fall back to current directory name
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "project".to_string())
+}
+
+fn cmd_init() -> Result<()> {
     let theme = ColorfulTheme::default();
 
     let description: String = Input::with_theme(&theme)
@@ -198,20 +219,13 @@ fn cmd_explore(debug: bool) -> Result<()> {
         .interact_text()
         .context("failed to read idea description from terminal")?;
 
+    ensure_storage_dir().context("failed to create .canopy/ directory")?;
     let idea = Idea { description };
     save_idea(&idea).context("failed to save idea.yaml")?;
+
     println!("Saved .canopy/idea.yaml");
-
-    let client = build_client("explorer", debug)?;
-
-    println!("Generating vision...");
-    let vision = generate_vision(&client, &idea, &[])
-        .context("failed to generate vision")?;
-    save_vision(&vision).context("failed to save vision.yaml")?;
-    println!("  Saved .canopy/vision.yaml");
-
-    println!("\nExploration complete.");
-    println!("Next: run `canopy intent` to start building your story backlog one behavioral requirement at a time.");
+    println!("Project: {}", project_name());
+    println!("Next: run `canopy intent` to add your first behavioral requirement.");
     Ok(())
 }
 
@@ -486,9 +500,7 @@ fn cmd_scaffold(dir: &str, regenerate: bool, _debug: bool) -> Result<()> {
             }
 
             let group_id: String = if services_need_jvm(&services) {
-                let slug = load_vision()
-                    .map(|v| v.project.to_lowercase().replace(' ', ""))
-                    .unwrap_or_else(|_| String::from("app"));
+                let slug = project_name().to_lowercase().replace([' ', '-'], "");
                 Input::with_theme(&theme)
                     .with_prompt("Java groupId / base package")
                     .default(format!("com.example.{slug}"))
