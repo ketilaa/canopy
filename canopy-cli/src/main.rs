@@ -8,8 +8,8 @@ use canopy_core::*;
 use canopy_explore::{
     arch_needs_jvm, generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
-    generate_intent_spec, generate_questions, generate_scaffold_plan_static, generate_user_stories,
-    generate_vision, validate_spec, LlmClient,
+    generate_intent_spec, generate_questions, generate_scaffold_plan_static,
+    generate_stories_from_intent, generate_user_stories, generate_vision, validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -78,6 +78,12 @@ enum Commands {
         #[arg(long)]
         regenerate: bool,
     },
+    /// Derive user stories from a behavioral intent statement
+    Intent {
+        /// The behavioral statement (e.g. "Products must be promoted to be available in the store").
+        /// Prompts interactively if omitted.
+        statement: Option<String>,
+    },
 }
 
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
@@ -120,6 +126,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Implement { slug }     => cmd_implement(&slug, debug),
         Commands::Validate { slug }      => cmd_validate(&slug, debug),
         Commands::Stories { regenerate } => cmd_stories(regenerate, debug),
+        Commands::Intent { statement }   => cmd_intent(statement, debug),
     }
 }
 
@@ -750,43 +757,99 @@ fn cmd_validate(slug: &str, debug: bool) -> Result<()> {
     Ok(())
 }
 
+fn print_stories_section(label: &str, stories: &[&canopy_core::UserStory]) {
+    if stories.is_empty() { return; }
+    println!("  {label} ({})", stories.len());
+    for s in stories {
+        println!("    [{}] As a {}, I want {}", s.id, s.as_a, s.want);
+        println!("          so that {}", s.so_that);
+        if !s.depends_on.is_empty() {
+            println!("          depends on: {}", s.depends_on.join(", "));
+        }
+    }
+    println!();
+}
+
 fn cmd_stories(regenerate: bool, debug: bool) -> Result<()> {
-    let stories = match load_user_stories() {
-        Ok(existing) if !regenerate => {
-            println!("Using existing .canopy/stories.yaml (pass --regenerate to rebuild).");
-            existing
-        }
-        _ => {
-            let vision = load_vision()
-                .context("No vision.yaml — run `canopy explore` first")?;
-            let domain = load_domain_registry().ok();
-            let comp_arch = load_component_architecture().ok();
-
-            let client = build_client("explorer", debug)?;
-            println!("\nGenerating user stories...");
-            let stories = generate_user_stories(
-                &client,
-                &vision,
-                domain.as_ref(),
-                comp_arch.as_ref(),
-            ).context("failed to generate user stories")?;
-
-            save_user_stories(&stories).context("failed to save stories.yaml")?;
-            println!("Saved .canopy/stories.yaml\n");
-            stories
-        }
+    let stories = if regenerate {
+        let vision = load_vision()
+            .context("No vision.yaml — run `canopy explore` first")?;
+        let domain = load_domain_registry().ok();
+        let comp_arch = load_component_architecture().ok();
+        let client = build_client("explorer", debug)?;
+        println!("\nGenerating user stories...");
+        let s = generate_user_stories(&client, &vision, domain.as_ref(), comp_arch.as_ref())
+            .context("failed to generate user stories")?;
+        save_user_stories(&s).context("failed to save stories.yaml")?;
+        println!("Saved .canopy/stories.yaml\n");
+        s
+    } else {
+        load_user_stories().context("failed to load stories.yaml")?
     };
 
-    println!("{} user stories:\n", stories.stories.len());
-    for s in &stories.stories {
-        println!("  [{}] As a {}, I want {}", s.id, s.as_a, s.want);
-        println!("        so that {}", s.so_that);
-        if !s.depends_on.is_empty() {
-            println!("        depends on: {}", s.depends_on.join(", "));
-        }
-        println!();
-    }
+    let accepted: Vec<_> = stories.stories.iter()
+        .filter(|s| s.status == canopy_core::StoryStatus::Accepted).collect();
+    let draft: Vec<_> = stories.stories.iter()
+        .filter(|s| s.status == canopy_core::StoryStatus::Draft).collect();
+    let rejected: Vec<_> = stories.stories.iter()
+        .filter(|s| s.status == canopy_core::StoryStatus::Rejected).collect();
 
-    println!("To add more stories, edit .canopy/stories.yaml directly.");
+    println!("{} user stories:\n", stories.stories.len());
+    print_stories_section("Accepted", &accepted);
+    print_stories_section("Draft", &draft);
+    print_stories_section("Rejected", &rejected);
+
+    println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
+    Ok(())
+}
+
+fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
+    let theme = ColorfulTheme::default();
+
+    let statement = match statement {
+        Some(s) => s,
+        None => Input::with_theme(&theme)
+            .with_prompt("Behavioral intent")
+            .interact_text()
+            .context("failed to read intent statement")?,
+    };
+
+    let context = load_idea()
+        .map(|i| i.description)
+        .unwrap_or_else(|_| String::from("No context available."));
+
+    let mut existing = load_user_stories().context("failed to load stories")?;
+    let roles = load_roles_registry().context("failed to load roles")?;
+
+    let client = build_client("explorer", debug)?;
+    println!("\nDeriving stories from intent...");
+    let new_stories = generate_stories_from_intent(
+        &client, &statement, &context, &existing, &roles,
+    ).context("failed to generate stories from intent")?;
+
+    // Merge new stories (skip any whose ID already exists)
+    let existing_ids: std::collections::HashSet<String> =
+        existing.stories.iter().map(|s| s.id.clone()).collect();
+    let mut added = 0;
+    for story in new_stories.stories {
+        if !existing_ids.contains(&story.id) {
+            existing.stories.push(story);
+            added += 1;
+        }
+    }
+    save_user_stories(&existing).context("failed to save stories.yaml")?;
+
+    // Update roles registry with new as_a values from accepted+draft stories
+    let mut roles = load_roles_registry().context("failed to load roles")?;
+    for story in &existing.stories {
+        let role = story.as_a.trim().to_string();
+        if !roles.roles.iter().any(|r| r.eq_ignore_ascii_case(&role)) {
+            roles.roles.push(role);
+        }
+    }
+    save_roles_registry(&roles).context("failed to save roles.yaml")?;
+
+    println!("Added {added} new stories. Run `canopy stories` to review.");
+    println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
     Ok(())
 }

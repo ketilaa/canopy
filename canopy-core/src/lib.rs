@@ -256,6 +256,15 @@ pub struct ScaffoldPlan {
     pub commands: Vec<ScaffoldCommand>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StoryStatus {
+    #[default]
+    Draft,
+    Accepted,
+    Rejected,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserStory {
     pub id: String,
@@ -264,11 +273,19 @@ pub struct UserStory {
     pub so_that: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub status: StoryStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserStories {
     pub stories: Vec<UserStory>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RolesRegistry {
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

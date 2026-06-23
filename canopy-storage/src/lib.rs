@@ -145,7 +145,22 @@ pub fn load_scaffold_plan() -> Result<ScaffoldPlan, StorageError> {
 }
 
 pub fn save_user_stories(s: &UserStories) -> Result<(), StorageError> { save("stories.yaml", s) }
-pub fn load_user_stories() -> Result<UserStories, StorageError>       { load("stories.yaml") }
+pub fn load_user_stories() -> Result<UserStories, StorageError> {
+    match load::<UserStories>("stories.yaml") {
+        Ok(s) => Ok(s),
+        Err(StorageError::NotFound(_)) => Ok(UserStories::default()),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn save_roles_registry(r: &RolesRegistry) -> Result<(), StorageError> { save("roles.yaml", r) }
+pub fn load_roles_registry() -> Result<RolesRegistry, StorageError> {
+    match load::<RolesRegistry>("roles.yaml") {
+        Ok(r) => Ok(r),
+        Err(StorageError::NotFound(_)) => Ok(RolesRegistry::default()),
+        Err(e) => Err(e),
+    }
+}
 
 pub fn save_validation_report(slug: &str, report: &ValidationReport) -> Result<(), StorageError> {
     save(&format!("plans/{}/validation.yaml", slug), report)

@@ -766,6 +766,75 @@ pub fn generate_user_stories(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
+fn stories_from_intent_prompt(
+    intent: &str,
+    context: &str,
+    existing_stories: &UserStories,
+    roles: &RolesRegistry,
+) -> String {
+    let existing_ids: Vec<&str> = existing_stories.stories.iter().map(|s| s.id.as_str()).collect();
+    let existing_ids_str = if existing_ids.is_empty() {
+        "none".to_string()
+    } else {
+        existing_ids.join(", ")
+    };
+    let existing_roles = if roles.roles.is_empty() {
+        "none yet".to_string()
+    } else {
+        roles.roles.join(", ")
+    };
+    format!(
+        r#"You are an experienced product strategist decomposing a behavioral requirement into user stories.
+
+Business context:
+{context}
+
+Behavioral intent:
+{intent}
+
+Existing story IDs (do not reuse these): {existing_ids_str}
+Known roles: {existing_roles}
+
+Derive the minimal set of user stories that fully cover this intent. Rules:
+- Assign each story a short stable ID: use a lowercase domain-area prefix and zero-padded number (e.g. catalog-001, product-003)
+- Choose the prefix from the domain area the story belongs to, not from the intent wording
+- The next ID number must be higher than any existing ID with the same prefix
+- Reuse a known role if it fits; introduce a new role only when genuinely needed
+- "so_that" must state a concrete business or user benefit — never a technical detail
+- "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
+- Do not duplicate existing stories
+- status must be "draft"
+
+Return ONLY valid YAML. No explanation. No code fences. No markdown.
+
+stories:
+  - id: <area-NNN>
+    as_a: <role>
+    want: <capability>
+    so_that: <concrete benefit>
+    depends_on: []
+    status: draft"#,
+        context = context,
+        intent = intent,
+        existing_ids_str = existing_ids_str,
+        existing_roles = existing_roles,
+    )
+}
+
+pub fn generate_stories_from_intent(
+    client: &LlmClient,
+    intent: &str,
+    context: &str,
+    existing_stories: &UserStories,
+    roles: &RolesRegistry,
+) -> Result<UserStories, ExploreError> {
+    let raw = client.complete_large(&stories_from_intent_prompt(
+        intent, context, existing_stories, roles,
+    ))?;
+    serde_yaml::from_str::<UserStories>(&raw)
+        .map_err(|source| ExploreError::YamlParse { source, raw })
+}
+
 pub fn arch_needs_jvm(comp_arch: &ComponentArchitecture) -> bool {
     let value = &comp_arch.0;
     for section in &["frontend_apps", "backend_services"] {
