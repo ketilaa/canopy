@@ -885,10 +885,16 @@ Known Services and Responsibilities:
 
 Identify ALL architectural questions that MUST be answered before a specification can be written for this story.
 
-Include BOTH:
+Include ALL of:
 1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
-2. Tech stack questions — for any new service introduced, what technology should it be built with?
+2. UI questions — if the story has a human actor performing an action, there must be a frontend component
+   through which they act. Ask what UI delivers this capability and propose it as a new service if not yet decided.
+3. Tech stack questions — for any new service or frontend introduced, what technology should it be built with?
    Suggest the most pragmatic and common choice, but a human will decide before accepting.
+
+Naming rules — strictly enforced:
+- Use kebab-case for all service names: product-registry, catalog-service, backoffice, storefront
+- Never use PascalCase, never append "Service" as a suffix
 
 For tech stack proposals:
 - Set technology to the canonical technology name used for project scaffolding
@@ -904,7 +910,7 @@ proposals:
     reason: "<why this is the right decision>"
     alternatives:
       - "<alternative considered>"
-    service: "<service name or null>"
+    service: "<kebab-case-name or null>"
     service_responsibilities:
       - "<responsibility>"
     technology: "<technology name or null>"
@@ -941,24 +947,31 @@ fn story_spec_prompt(
     services: &ServicesRegistry,
     domain: &DomainRegistry,
 ) -> String {
-    let adrs_summary = adrs
-        .iter()
-        .map(|a| format!("- {}: {}", a.title, a.decision))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let services_summary = services
-        .services
-        .iter()
-        .map(|s| format!("- {}: {}", s.name, s.responsibilities.join(", ")))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let entities = domain.entities.join(", ");
-    let events = domain.events.join(", ");
+    let adrs_summary = if adrs.is_empty() {
+        "None yet.".to_string()
+    } else {
+        adrs.iter()
+            .map(|a| format!("- {}: {}", a.title, a.decision))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let services_summary = if services.services.is_empty() {
+        "None yet.".to_string()
+    } else {
+        services
+            .services
+            .iter()
+            .map(|s| format!("- {}: {}", s.name, s.responsibilities.join(", ")))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let entities = if domain.entities.is_empty() { "none yet".to_string() } else { domain.entities.join(", ") };
+    let events = if domain.events.is_empty() { "none yet".to_string() } else { domain.events.join(", ") };
     format!(
         r#"You are a BDD expert writing acceptance criteria for a user story.
 
-User Story:
-  As a {as_a}, I want {want}, so that {so_that}
+Story ID: {story_id}
+User Story: As a {as_a}, I want {want}, so that {so_that}
 
 Architecture Decisions in Effect:
 {adrs_summary}
@@ -969,21 +982,27 @@ Services and Responsibilities:
 Domain Entities: {entities}
 Domain Events: {events}
 
-Write BDD scenarios (Given/When/Then) that serve as acceptance criteria for this story.
-Each scenario must be concrete, testable, and grounded in the architecture decisions above.
-Use the exact service names and domain terms defined above.
+Write BDD scenarios (Given/When/Then) as acceptance criteria. Rules:
+- Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
+  HTTP verbs, JSON payloads, or implementation details
+- Given describes the world state before the action
+- When describes what the user or system does (e.g. "the product manager submits a new product form")
+- Then describes what the user observes or what state has changed
+- Use the exact kebab-case service names defined above
+- intent_ref must be exactly: {story_id}
+- Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
 
 Return ONLY valid YAML — no prose, no code fences:
 
-intent_ref: "<story id>"
+intent_ref: {story_id}
 scenarios:
-  - id: "<story-id>-<seq>"
+  - id: "{story_id}-01"
     name: "<scenario name>"
     given:
-      - "<precondition>"
-    when: "<triggering action>"
+      - "<world state precondition>"
+    when: "<user or system action>"
     then:
-      - "<expected outcome>"
+      - "<observable outcome>"
     constraints:
       - "<constraint or empty list>"
 out_of_scope:
@@ -991,6 +1010,7 @@ out_of_scope:
 open_questions:
   - "<unresolved question if any>"
 "#,
+        story_id = story.id,
         as_a = story.as_a,
         want = story.want,
         so_that = story.so_that,
