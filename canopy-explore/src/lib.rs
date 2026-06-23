@@ -809,6 +809,8 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
 - Reuse a known role if it fits; introduce a new role only when genuinely needed
 - Use DDD and domain language in the "want" field — prefer domain verbs (register, activate, promote,
   publish, place, ship) over CRUD verbs (add, create, update, delete)
+- "want" must describe a capability, not a location or component — do not name services, bounded
+  contexts, or architectural components (avoid: "in the catalog", "via the API", "in the registry")
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
 - Do not split stories that populate the same domain object:
   a creation story covers only the mandatory attributes needed for the object to exist.
@@ -855,19 +857,18 @@ pub fn generate_stories_from_intent(
 fn domain_extraction_prompt(stories: &[UserStory]) -> String {
     let stories_text = stories
         .iter()
-        .map(|s| format!(
-            "- As a {}, I want {}, so that {}",
-            s.as_a, s.want, s.so_that
-        ))
+        .map(|s| format!("- {}", s.want))
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        r#"You are identifying domain vocabulary from a set of user stories.
+        r#"You are identifying domain vocabulary from a set of story want-statements.
 
-Stories:
+Wants (what the actor directly operates on):
 {stories_text}
 
-Extract the domain objects implied by these stories using DDD vocabulary.
+Extract only domain objects that are directly created, read, updated, or deleted by these actions.
+Do NOT extract actors, beneficiaries, or concepts only implied by purpose or benefit.
+Use DDD vocabulary.
 
 Entities: the core business objects — Aggregates, Entities, or Value Objects in the domain model.
   Use PascalCase singular nouns (Product, Order, Customer, Money, Address).
