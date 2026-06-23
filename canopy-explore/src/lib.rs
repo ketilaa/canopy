@@ -856,8 +856,9 @@ fn architectural_questions_prompt(
             .services
             .iter()
             .map(|s| {
+                let tech = s.technology.as_deref().unwrap_or("unknown");
                 let resp = s.responsibilities.join(", ");
-                format!("- {}: {}", s.name, resp)
+                format!("- {} [{}]: {}", s.name, tech, resp)
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -874,10 +875,17 @@ Existing Architecture Decisions:
 Known Services and Responsibilities:
 {services_summary}
 
-Identify the architectural questions that MUST be answered before a specification can be written for this story.
-Focus on: service ownership, data responsibility, integration contracts, event design, API boundaries.
+Identify ALL architectural questions that MUST be answered before a specification can be written for this story.
 
-For each question, if the answer introduces a new service or expands an existing service, include the service name and its responsibilities.
+Include BOTH:
+1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
+2. Tech stack questions — for any new service introduced, what technology should it be built with?
+   Suggest the most pragmatic and common choice, but a human will decide before accepting.
+
+For tech stack proposals:
+- Set technology to the canonical technology name used for project scaffolding
+  (e.g. "Spring Boot", "Angular", "React", "Vue", "Next.js", "Node.js", "Micronaut")
+- Set component_type to "frontend" for browser UIs, "service" for backend services
 
 Return ONLY valid YAML — no prose, no code fences:
 
@@ -891,6 +899,8 @@ proposals:
     service: "<service name or null>"
     service_responsibilities:
       - "<responsibility>"
+    technology: "<technology name or null>"
+    component_type: "<frontend | service | null>"
 "#,
         as_a = story.as_a,
         want = story.want,
@@ -999,6 +1009,58 @@ pub fn generate_story_spec(
         .trim();
     serde_yaml::from_str::<IntentSpec>(stripped)
         .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+}
+
+fn is_jvm_technology(tech: &str) -> bool {
+    let t = tech.to_lowercase();
+    t.contains("spring") || t.contains("java") || t.contains("kotlin")
+        || t.contains("maven") || t.contains("gradle") || t.contains("micronaut")
+        || t.contains("quarkus")
+}
+
+fn infer_working_dir(technology: &str) -> &'static str {
+    let t = technology.to_lowercase();
+    if t.contains("angular") || t.contains("react") || t.contains("vue")
+        || t.contains("next") || t.contains("vite") || t.contains("svelte")
+        || t.contains("nuxt")
+    {
+        "frontend"
+    } else {
+        "services"
+    }
+}
+
+pub fn services_need_jvm(services: &ServicesRegistry) -> bool {
+    services
+        .services
+        .iter()
+        .any(|s| s.technology.as_deref().map(is_jvm_technology).unwrap_or(false))
+}
+
+pub fn generate_scaffold_from_services(services: &ServicesRegistry, group_id: &str) -> ScaffoldPlan {
+    let mut commands = Vec::new();
+    for service in &services.services {
+        if let Some(ref tech) = service.technology {
+            let working_dir = service
+                .component_type
+                .as_deref()
+                .map(|ct| if ct == "frontend" { "frontend" } else { "services" })
+                .unwrap_or_else(|| infer_working_dir(tech));
+            match technology_to_command(&service.name, tech, group_id, working_dir) {
+                Some(cmd) => commands.push(cmd),
+                None => eprintln!(
+                    "  (skipping '{}': no scaffold template for '{}')",
+                    service.name, tech
+                ),
+            }
+        } else {
+            eprintln!(
+                "  (skipping '{}': no technology decided — run `canopy spec` to resolve tech stack ADRs)",
+                service.name
+            );
+        }
+    }
+    ScaffoldPlan { generated_at: String::new(), commands }
 }
 
 pub fn arch_needs_jvm(comp_arch: &ComponentArchitecture) -> bool {

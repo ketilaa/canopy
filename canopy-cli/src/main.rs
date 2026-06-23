@@ -6,11 +6,11 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 
 use canopy_core::*;
 use canopy_explore::{
-    arch_needs_jvm, generate_adrs, generate_architecture_principles, generate_component_architecture,
+    generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
-    generate_intent_spec, generate_questions, generate_scaffold_plan_static,
+    generate_intent_spec, generate_questions, generate_scaffold_from_services,
     generate_stories_from_intent, generate_story_spec, generate_user_stories, generate_vision,
-    identify_architectural_questions, validate_spec, LlmClient,
+    identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -234,19 +234,8 @@ fn cmd_explore(debug: bool) -> Result<()> {
     save_vision(&vision).context("failed to save vision.yaml")?;
     println!("  Saved .canopy/vision.yaml");
 
-    println!("Generating delivery intents...");
-    let intents = generate_delivery_intents(&client, &idea, &vision, &answers)
-        .context("failed to generate delivery intents")?;
-    save_delivery_intents(&intents).context("failed to save delivery_intents.yaml")?;
-    println!("  Saved .canopy/delivery_intents.yaml");
-
-    println!("Generating architecture principles...");
-    let principles = generate_architecture_principles(&client, &vision, &intents, &answers)
-        .context("failed to generate architecture principles")?;
-    save_architecture_principles(&principles).context("failed to save architecture_principles.yaml")?;
-    println!("  Saved .canopy/architecture_principles.yaml");
-
-    println!("\nExploration complete. All artifacts saved to .canopy/");
+    println!("\nExploration complete.");
+    println!("Next: run `canopy stories` to generate the initial backlog, then `canopy intent` to add behavioral requirements.");
     Ok(())
 }
 
@@ -523,10 +512,27 @@ fn cmd_scaffold(dir: &str, regenerate: bool, _debug: bool) -> Result<()> {
             existing
         }
         _ => {
-            let comp_arch = load_component_architecture()
-                .context("No component_architecture.yaml — run `canopy plan` first")?;
+            let services = load_services_registry()
+                .context("failed to load .canopy/services.yaml")?;
 
-            let group_id: String = if arch_needs_jvm(&comp_arch) {
+            let ready: Vec<_> = services.services.iter().filter(|s| s.technology.is_some()).collect();
+            let pending: Vec<_> = services.services.iter().filter(|s| s.technology.is_none()).collect();
+
+            if ready.is_empty() {
+                anyhow::bail!(
+                    "No services with a decided technology stack found in .canopy/services.yaml.\n\
+                     Run `canopy spec <story-id>` to accept tech stack ADRs for each service first."
+                );
+            }
+
+            if !pending.is_empty() {
+                println!("Warning: the following services have no technology decided and will be skipped:");
+                for s in &pending {
+                    println!("  - {} (run `canopy spec` to resolve)", s.name);
+                }
+            }
+
+            let group_id: String = if services_need_jvm(&services) {
                 let slug = load_vision()
                     .map(|v| v.project.to_lowercase().replace(' ', ""))
                     .unwrap_or_else(|_| String::from("app"));
@@ -539,8 +545,8 @@ fn cmd_scaffold(dir: &str, regenerate: bool, _debug: bool) -> Result<()> {
                 String::new()
             };
 
-            println!("\nGenerating scaffold plan...");
-            let mut plan = generate_scaffold_plan_static(&group_id, &comp_arch);
+            println!("\nGenerating scaffold plan from services registry...");
+            let mut plan = generate_scaffold_from_services(&services, &group_id);
             plan.generated_at = unix_timestamp();
             save_scaffold_plan(&plan).context("failed to save scaffold.yaml")?;
             println!("Scaffold plan saved to .canopy/scaffold.yaml");
@@ -872,10 +878,18 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
                     entry.responsibilities.push(r.clone());
                 }
             }
+            if entry.technology.is_none() {
+                entry.technology = proposal.technology.clone();
+            }
+            if entry.component_type.is_none() {
+                entry.component_type = proposal.component_type.clone();
+            }
         } else {
             services.services.push(ServiceEntry {
                 name: name.clone(),
                 responsibilities: proposal.service_responsibilities.clone(),
+                technology: proposal.technology.clone(),
+                component_type: proposal.component_type.clone(),
             });
         }
     }
@@ -930,6 +944,12 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
             if let Some(ref svc) = proposal.service {
                 if !svc.is_empty() {
                     println!("Service  : {}", svc);
+                    if let Some(ref tech) = proposal.technology {
+                        if !tech.is_empty() {
+                            let ct = proposal.component_type.as_deref().unwrap_or("service");
+                            println!("  Technology: {} ({})", tech, ct);
+                        }
+                    }
                     if !proposal.service_responsibilities.is_empty() {
                         println!("  Responsibilities: {}", proposal.service_responsibilities.join(", "));
                     }

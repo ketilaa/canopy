@@ -293,6 +293,12 @@ pub struct ServiceEntry {
     pub name: String,
     #[serde(default)]
     pub responsibilities: Vec<String>,
+    /// Technology stack decided via ADR (e.g. "Spring Boot 4.1.0", "Angular", "React + Vite")
+    #[serde(default)]
+    pub technology: Option<String>,
+    /// "frontend" | "service" — drives scaffold working directory
+    #[serde(default)]
+    pub component_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -313,6 +319,12 @@ pub struct ProposedAdr {
     pub service: Option<String>,
     #[serde(default)]
     pub service_responsibilities: Vec<String>,
+    /// For tech-stack ADRs: the canonical technology identifier used for scaffold dispatch
+    #[serde(default)]
+    pub technology: Option<String>,
+    /// For tech-stack ADRs: "frontend" | "service"
+    #[serde(default)]
+    pub component_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

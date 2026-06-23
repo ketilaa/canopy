@@ -117,16 +117,18 @@ Reasoning artifacts are first-class outputs.
 
 No repository exists.
 
-Canopy creates:
+Greenfield flow:
 
-* vision
-* architecture
-* domain model
-* user stories (via `canopy stories` + `canopy intent`)
-* scaffold
+1. `canopy explore` — captures idea and generates vision only
+2. `canopy stories` — generates initial backlog from vision
+3. `canopy intent "<statement>"` — adds stories from behavioral requirements (repeat)
+4. Edit `.canopy/stories.yaml` — set `status: accepted | rejected`
+5. `canopy spec <story-id>` — ADR gating per story; tech stack ADRs decided here
+6. `canopy scaffold` — runs after enough ADRs are accepted; reads services registry,
+   not an upfront component architecture
 
-Before specification. Specifications are generated story by story via `canopy spec <story-id>`,
-gating on ADRs before producing BDD scenarios. Code generation follows specification.
+Architecture, domain, and tech stack emerge story by story through `canopy spec`.
+There is no big-bang upfront architecture phase.
 
 ### Repository Mode
 
