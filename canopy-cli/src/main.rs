@@ -9,7 +9,8 @@ use canopy_explore::{
     arch_needs_jvm, generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
     generate_intent_spec, generate_questions, generate_scaffold_plan_static,
-    generate_stories_from_intent, generate_user_stories, generate_vision, validate_spec, LlmClient,
+    generate_stories_from_intent, generate_story_spec, generate_user_stories, generate_vision,
+    identify_architectural_questions, validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -84,6 +85,11 @@ enum Commands {
         /// Prompts interactively if omitted.
         statement: Option<String>,
     },
+    /// Generate BDD spec for an accepted story, with interactive ADR gating
+    Spec {
+        /// Story ID to specify (must have status: accepted)
+        story_id: String,
+    },
 }
 
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
@@ -127,6 +133,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Validate { slug }      => cmd_validate(&slug, debug),
         Commands::Stories { regenerate } => cmd_stories(regenerate, debug),
         Commands::Intent { statement }   => cmd_intent(statement, debug),
+        Commands::Spec { story_id }      => cmd_spec(&story_id, debug),
     }
 }
 
@@ -851,5 +858,164 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
 
     println!("Added {added} new stories. Run `canopy stories` to review.");
     println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
+    Ok(())
+}
+
+fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &ProposedAdr) {
+    if let Some(ref name) = proposal.service {
+        if name.is_empty() {
+            return;
+        }
+        if let Some(entry) = services.services.iter_mut().find(|s| s.name == *name) {
+            for r in &proposal.service_responsibilities {
+                if !entry.responsibilities.contains(r) {
+                    entry.responsibilities.push(r.clone());
+                }
+            }
+        } else {
+            services.services.push(ServiceEntry {
+                name: name.clone(),
+                responsibilities: proposal.service_responsibilities.clone(),
+            });
+        }
+    }
+}
+
+fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
+    use dialoguer::{Select, theme::ColorfulTheme};
+
+    let theme = ColorfulTheme::default();
+
+    let stories = load_user_stories().context("failed to load stories.yaml")?;
+    let story = stories
+        .stories
+        .iter()
+        .find(|s| s.id == story_id)
+        .ok_or_else(|| anyhow::anyhow!("story '{}' not found", story_id))?;
+
+    if story.status != StoryStatus::Accepted {
+        anyhow::bail!(
+            "story '{}' has status '{:?}' — only accepted stories can be specified",
+            story_id,
+            story.status
+        );
+    }
+
+    println!("\nStory: As a {}, I want {}, so that {}", story.as_a, story.want, story.so_that);
+
+    let mut existing_adrs = load_all_adrs().context("failed to load ADRs")?;
+    let mut services = load_services_registry().context("failed to load services registry")?;
+    let domain = load_domain_registry().context("failed to load domain registry")?;
+
+    let client = build_client("architect", debug)?;
+
+    println!("\nIdentifying architectural questions...");
+    let proposed = identify_architectural_questions(&client, story, &existing_adrs, &services)
+        .context("failed to identify architectural questions")?;
+
+    if proposed.proposals.is_empty() {
+        println!("No architectural questions identified — proceeding to spec generation.");
+    } else {
+        println!("\n{} architectural question(s) to address:\n", proposed.proposals.len());
+
+        for (i, proposal) in proposed.proposals.iter().enumerate() {
+            println!("--- Question {} of {} ---", i + 1, proposed.proposals.len());
+            println!("Question : {}", proposal.question);
+            println!("Proposed : {}", proposal.title);
+            println!("Decision : {}", proposal.decision);
+            println!("Reason   : {}", proposal.reason);
+            if !proposal.alternatives.is_empty() {
+                println!("Alternatives: {}", proposal.alternatives.join(", "));
+            }
+            if let Some(ref svc) = proposal.service {
+                if !svc.is_empty() {
+                    println!("Service  : {}", svc);
+                    if !proposal.service_responsibilities.is_empty() {
+                        println!("  Responsibilities: {}", proposal.service_responsibilities.join(", "));
+                    }
+                }
+            }
+
+            let choice = Select::with_theme(&theme)
+                .with_prompt("Accept this ADR?")
+                .items(&["Accept", "Modify decision text", "Reject"])
+                .default(0)
+                .interact()
+                .context("failed to read ADR choice")?;
+
+            match choice {
+                0 => {
+                    // Accept
+                    let adr = Adr {
+                        title: proposal.title.clone(),
+                        decision: proposal.decision.clone(),
+                        reason: proposal.reason.clone(),
+                        alternatives: proposal.alternatives.clone(),
+                    };
+                    let index = existing_adrs.len() + 1;
+                    let slug = canopy_storage::intent_slug(&proposal.title);
+                    save_adr(index, &slug, &adr).context("failed to save ADR")?;
+                    println!("  Saved: adr-{:03}-{}.yaml", index, slug);
+                    existing_adrs.push(adr);
+                    update_services_from_proposal(&mut services, proposal);
+                }
+                1 => {
+                    // Modify
+                    let modified: String = dialoguer::Input::with_theme(&theme)
+                        .with_prompt("Enter revised decision text")
+                        .with_initial_text(&proposal.decision)
+                        .interact_text()
+                        .context("failed to read modified decision")?;
+                    let adr = Adr {
+                        title: proposal.title.clone(),
+                        decision: modified,
+                        reason: proposal.reason.clone(),
+                        alternatives: proposal.alternatives.clone(),
+                    };
+                    let index = existing_adrs.len() + 1;
+                    let slug = canopy_storage::intent_slug(&proposal.title);
+                    save_adr(index, &slug, &adr).context("failed to save ADR")?;
+                    println!("  Saved: adr-{:03}-{}.yaml", index, slug);
+                    existing_adrs.push(adr);
+                    update_services_from_proposal(&mut services, proposal);
+                }
+                _ => {
+                    println!("  Rejected — skipping.");
+                }
+            }
+        }
+
+        save_services_registry(&services).context("failed to save services registry")?;
+    }
+
+    println!("\nGenerating BDD spec for story '{}'...", story_id);
+    let spec =
+        generate_story_spec(&client, story, &existing_adrs, &services, &domain)
+            .context("failed to generate story spec")?;
+
+    save_story_spec(story_id, &spec).context("failed to save story spec")?;
+
+    println!("\nSpec saved to .canopy/stories/{}/spec.yaml", story_id);
+    println!("\nScenarios:");
+    for s in &spec.scenarios {
+        println!("  [{}] {}", s.id, s.name);
+        for g in &s.given {
+            println!("    Given {}", g);
+        }
+        println!("    When  {}", s.when);
+        for t in &s.then {
+            println!("    Then  {}", t);
+        }
+        if !s.constraints.is_empty() {
+            println!("    Constraints: {}", s.constraints.join("; "));
+        }
+    }
+    if !spec.out_of_scope.is_empty() {
+        println!("\nOut of scope: {}", spec.out_of_scope.join(", "));
+    }
+    if !spec.open_questions.is_empty() {
+        println!("Open questions: {}", spec.open_questions.join("; "));
+    }
+
     Ok(())
 }

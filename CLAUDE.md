@@ -32,20 +32,23 @@ Good:
 
 ---
 
-### 2. Planning Before Coding
+### 2. Intent Before Coding
 
-Every implementation begins with planning.
+Every implementation begins with intent and specification.
 
 Required workflow:
 
-Feature
-→ Impact Analysis
-→ Plan
-→ Tasks
-→ Implementation
-→ Validation
+Intent (behavioral statement authored by human)
+→ Stories (LLM derives; human curates → accepted | rejected)
+→ Spec (accepted story → ADR gating → BDD scenarios as acceptance criteria)
+→ Implementation (story-scoped)
+→ Validation (scenarios as test oracle)
 
-Direct feature-to-code generation should be avoided.
+Architecture decisions emerge story by story — never big-bang up front.
+Each `canopy spec <story-id>` run proposes ADRs and blocks until resolved.
+Accepted ADRs accumulate in `.canopy/decisions/` and feed the services registry.
+
+Direct feature-to-code generation must be avoided.
 
 ---
 
@@ -119,10 +122,11 @@ Canopy creates:
 * vision
 * architecture
 * domain model
-* backlog
+* user stories (via `canopy stories` + `canopy intent`)
 * scaffold
 
-before code generation.
+Before specification. Specifications are generated story by story via `canopy spec <story-id>`,
+gating on ADRs before producing BDD scenarios. Code generation follows specification.
 
 ### Repository Mode
 

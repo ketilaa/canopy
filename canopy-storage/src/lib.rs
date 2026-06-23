@@ -162,6 +162,35 @@ pub fn load_roles_registry() -> Result<RolesRegistry, StorageError> {
     }
 }
 
+pub fn save_services_registry(r: &ServicesRegistry) -> Result<(), StorageError> { save("services.yaml", r) }
+pub fn load_services_registry() -> Result<ServicesRegistry, StorageError> {
+    match load::<ServicesRegistry>("services.yaml") {
+        Ok(r) => Ok(r),
+        Err(StorageError::NotFound(_)) => Ok(ServicesRegistry::default()),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn save_story_spec(story_id: &str, spec: &IntentSpec) -> Result<(), StorageError> {
+    save(&format!("stories/{}/spec.yaml", story_id), spec)
+}
+
+pub fn load_story_spec(story_id: &str) -> Result<IntentSpec, StorageError> {
+    load(&format!("stories/{}/spec.yaml", story_id))
+}
+
+pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {
+    let paths = list_adrs()?;
+    let mut adrs = Vec::new();
+    for path in paths {
+        let content = std::fs::read_to_string(&path)?;
+        if let Ok(adr) = serde_yaml::from_str::<Adr>(&content) {
+            adrs.push(adr);
+        }
+    }
+    Ok(adrs)
+}
+
 pub fn save_validation_report(slug: &str, report: &ValidationReport) -> Result<(), StorageError> {
     save(&format!("plans/{}/validation.yaml", slug), report)
 }

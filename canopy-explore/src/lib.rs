@@ -835,6 +835,172 @@ pub fn generate_stories_from_intent(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
+fn architectural_questions_prompt(
+    story: &UserStory,
+    existing_adrs: &[Adr],
+    services: &ServicesRegistry,
+) -> String {
+    let adrs_summary = if existing_adrs.is_empty() {
+        "None yet.".to_string()
+    } else {
+        existing_adrs
+            .iter()
+            .map(|a| format!("- {}: {}", a.title, a.decision))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let services_summary = if services.services.is_empty() {
+        "None yet.".to_string()
+    } else {
+        services
+            .services
+            .iter()
+            .map(|s| {
+                let resp = s.responsibilities.join(", ");
+                format!("- {}: {}", s.name, resp)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        r#"You are an experienced software architect applying Domain-Driven Design and event-driven architecture principles.
+
+A team is about to write a BDD specification for this user story:
+  As a {as_a}, I want {want}, so that {so_that}
+
+Existing Architecture Decisions:
+{adrs_summary}
+
+Known Services and Responsibilities:
+{services_summary}
+
+Identify the architectural questions that MUST be answered before a specification can be written for this story.
+Focus on: service ownership, data responsibility, integration contracts, event design, API boundaries.
+
+For each question, if the answer introduces a new service or expands an existing service, include the service name and its responsibilities.
+
+Return ONLY valid YAML — no prose, no code fences:
+
+proposals:
+  - question: "<the architectural question>"
+    title: "<short ADR title>"
+    decision: "<recommended decision>"
+    reason: "<why this is the right decision>"
+    alternatives:
+      - "<alternative considered>"
+    service: "<service name or null>"
+    service_responsibilities:
+      - "<responsibility>"
+"#,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        adrs_summary = adrs_summary,
+        services_summary = services_summary,
+    )
+}
+
+pub fn identify_architectural_questions(
+    client: &LlmClient,
+    story: &UserStory,
+    existing_adrs: &[Adr],
+    services: &ServicesRegistry,
+) -> Result<ProposedAdrs, ExploreError> {
+    let raw = client.complete_large(&architectural_questions_prompt(story, existing_adrs, services))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_yaml::from_str::<ProposedAdrs>(stripped)
+        .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+}
+
+fn story_spec_prompt(
+    story: &UserStory,
+    adrs: &[Adr],
+    services: &ServicesRegistry,
+    domain: &DomainRegistry,
+) -> String {
+    let adrs_summary = adrs
+        .iter()
+        .map(|a| format!("- {}: {}", a.title, a.decision))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let services_summary = services
+        .services
+        .iter()
+        .map(|s| format!("- {}: {}", s.name, s.responsibilities.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let entities = domain.entities.join(", ");
+    let events = domain.events.join(", ");
+    format!(
+        r#"You are a BDD expert writing acceptance criteria for a user story.
+
+User Story:
+  As a {as_a}, I want {want}, so that {so_that}
+
+Architecture Decisions in Effect:
+{adrs_summary}
+
+Services and Responsibilities:
+{services_summary}
+
+Domain Entities: {entities}
+Domain Events: {events}
+
+Write BDD scenarios (Given/When/Then) that serve as acceptance criteria for this story.
+Each scenario must be concrete, testable, and grounded in the architecture decisions above.
+Use the exact service names and domain terms defined above.
+
+Return ONLY valid YAML — no prose, no code fences:
+
+intent_ref: "<story id>"
+scenarios:
+  - id: "<story-id>-<seq>"
+    name: "<scenario name>"
+    given:
+      - "<precondition>"
+    when: "<triggering action>"
+    then:
+      - "<expected outcome>"
+    constraints:
+      - "<constraint or empty list>"
+out_of_scope:
+  - "<explicitly excluded concern>"
+open_questions:
+  - "<unresolved question if any>"
+"#,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        adrs_summary = adrs_summary,
+        services_summary = services_summary,
+        entities = entities,
+        events = events,
+    )
+}
+
+pub fn generate_story_spec(
+    client: &LlmClient,
+    story: &UserStory,
+    adrs: &[Adr],
+    services: &ServicesRegistry,
+    domain: &DomainRegistry,
+) -> Result<IntentSpec, ExploreError> {
+    let raw = client.complete_large(&story_spec_prompt(story, adrs, services, domain))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_yaml::from_str::<IntentSpec>(stripped)
+        .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+}
+
 pub fn arch_needs_jvm(comp_arch: &ComponentArchitecture) -> bool {
     let value = &comp_arch.0;
     for section in &["frontend_apps", "backend_services"] {

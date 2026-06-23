@@ -288,6 +288,39 @@ pub struct RolesRegistry {
     pub roles: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceEntry {
+    pub name: String,
+    #[serde(default)]
+    pub responsibilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServicesRegistry {
+    #[serde(default)]
+    pub services: Vec<ServiceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposedAdr {
+    pub question: String,
+    pub title: String,
+    pub decision: String,
+    pub reason: String,
+    #[serde(default)]
+    pub alternatives: Vec<String>,
+    #[serde(default)]
+    pub service: Option<String>,
+    #[serde(default)]
+    pub service_responsibilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProposedAdrs {
+    #[serde(default)]
+    pub proposals: Vec<ProposedAdr>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {
