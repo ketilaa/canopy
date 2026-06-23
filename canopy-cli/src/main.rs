@@ -235,7 +235,7 @@ fn cmd_explore(debug: bool) -> Result<()> {
     println!("  Saved .canopy/vision.yaml");
 
     println!("\nExploration complete.");
-    println!("Next: run `canopy stories` to generate the initial backlog, then `canopy intent` to add behavioral requirements.");
+    println!("Next: run `canopy stories` to generate the initial backlog from your vision.");
     Ok(())
 }
 
@@ -784,20 +784,19 @@ fn print_stories_section(label: &str, stories: &[&canopy_core::UserStory]) {
 }
 
 fn cmd_stories(regenerate: bool, debug: bool) -> Result<()> {
-    let stories = if regenerate {
+    let existing = load_user_stories().context("failed to load stories.yaml")?;
+    let stories = if regenerate || existing.stories.is_empty() {
         let vision = load_vision()
             .context("No vision.yaml — run `canopy explore` first")?;
-        let domain = load_domain_registry().ok();
-        let comp_arch = load_component_architecture().ok();
         let client = build_client("explorer", debug)?;
-        println!("\nGenerating user stories...");
-        let s = generate_user_stories(&client, &vision, domain.as_ref(), comp_arch.as_ref())
+        println!("\nGenerating user stories from vision...");
+        let s = generate_user_stories(&client, &vision, None, None)
             .context("failed to generate user stories")?;
         save_user_stories(&s).context("failed to save stories.yaml")?;
         println!("Saved .canopy/stories.yaml\n");
         s
     } else {
-        load_user_stories().context("failed to load stories.yaml")?
+        existing
     };
 
     let accepted: Vec<_> = stories.stories.iter()
@@ -812,7 +811,9 @@ fn cmd_stories(regenerate: bool, debug: bool) -> Result<()> {
     print_stories_section("Draft", &draft);
     print_stories_section("Rejected", &rejected);
 
-    println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
+    println!("Edit .canopy/stories.yaml to curate: set status to accepted | rejected.");
+    println!("Use `canopy intent` to add more stories from behavioral requirements.");
+    println!("Use `canopy spec <story-id>` to specify an accepted story.");
     Ok(())
 }
 
