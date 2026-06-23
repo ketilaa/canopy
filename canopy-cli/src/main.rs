@@ -9,7 +9,7 @@ use canopy_explore::{
     generate_adrs, generate_architecture_principles, generate_component_architecture,
     generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
     generate_intent_spec, generate_questions, generate_scaffold_from_services,
-    generate_stories_from_intent, generate_story_spec, generate_user_stories, generate_vision,
+    generate_stories_from_intent, generate_story_spec, generate_vision,
     identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
 };
 use canopy_storage::*;
@@ -73,12 +73,8 @@ enum Commands {
         /// Plan slug (directory name under .canopy/plans/)
         slug: String,
     },
-    /// Generate user stories from vision, domain model, and component architecture
-    Stories {
-        /// Discard existing stories.yaml and regenerate
-        #[arg(long)]
-        regenerate: bool,
-    },
+    /// List all user stories and their current status
+    Stories,
     /// Derive user stories from a behavioral intent statement
     Intent {
         /// The behavioral statement (e.g. "Products must be promoted to be available in the store").
@@ -131,7 +127,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
         Commands::Implement { slug }     => cmd_implement(&slug, debug),
         Commands::Validate { slug }      => cmd_validate(&slug, debug),
-        Commands::Stories { regenerate } => cmd_stories(regenerate, debug),
+        Commands::Stories               => cmd_stories(),
         Commands::Intent { statement }   => cmd_intent(statement, debug),
         Commands::Spec { story_id }      => cmd_spec(&story_id, debug),
     }
@@ -235,7 +231,7 @@ fn cmd_explore(debug: bool) -> Result<()> {
     println!("  Saved .canopy/vision.yaml");
 
     println!("\nExploration complete.");
-    println!("Next: run `canopy stories` to generate the initial backlog from your vision.");
+    println!("Next: run `canopy intent` to start building your story backlog one behavioral requirement at a time.");
     Ok(())
 }
 
@@ -783,21 +779,8 @@ fn print_stories_section(label: &str, stories: &[&canopy_core::UserStory]) {
     println!();
 }
 
-fn cmd_stories(regenerate: bool, debug: bool) -> Result<()> {
-    let existing = load_user_stories().context("failed to load stories.yaml")?;
-    let stories = if regenerate || existing.stories.is_empty() {
-        let vision = load_vision()
-            .context("No vision.yaml — run `canopy explore` first")?;
-        let client = build_client("explorer", debug)?;
-        println!("\nGenerating user stories from vision...");
-        let s = generate_user_stories(&client, &vision, None, None)
-            .context("failed to generate user stories")?;
-        save_user_stories(&s).context("failed to save stories.yaml")?;
-        println!("Saved .canopy/stories.yaml\n");
-        s
-    } else {
-        existing
-    };
+fn cmd_stories() -> Result<()> {
+    let stories = load_user_stories().context("failed to load stories.yaml")?;
 
     let accepted: Vec<_> = stories.stories.iter()
         .filter(|s| s.status == canopy_core::StoryStatus::Accepted).collect();
@@ -811,9 +794,12 @@ fn cmd_stories(regenerate: bool, debug: bool) -> Result<()> {
     print_stories_section("Draft", &draft);
     print_stories_section("Rejected", &rejected);
 
-    println!("Edit .canopy/stories.yaml to curate: set status to accepted | rejected.");
-    println!("Use `canopy intent` to add more stories from behavioral requirements.");
-    println!("Use `canopy spec <story-id>` to specify an accepted story.");
+    if stories.stories.is_empty() {
+        println!("No stories yet. Run `canopy intent` to add your first behavioral requirement.");
+    } else {
+        println!("Edit .canopy/stories.yaml to curate: set status to accepted | rejected.");
+        println!("Run `canopy intent` to add more stories, `canopy spec <id>` to specify an accepted story.");
+    }
     Ok(())
 }
 
