@@ -807,7 +807,13 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
 - Choose the prefix from the domain area the story belongs to, not from the intent wording
 - The next ID number must be higher than any existing ID with the same prefix
 - Reuse a known role if it fits; introduce a new role only when genuinely needed
+- Use DDD and domain language in the "want" field — prefer domain verbs (register, activate, promote,
+  publish, place, ship) over CRUD verbs (add, create, update, delete)
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
+- Do not split stories that populate the same domain object:
+  a creation story covers only the mandatory attributes needed for the object to exist.
+  Optional attributes, images, descriptions, and enrichment data belong to a separate update story.
+  Only generate an update story when the intent explicitly asks for enrichment or editing.
 - "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
 - Reason explicitly about dependencies within this batch: if story B requires story A to exist
   first (because it operates on something A creates), then B must list A in depends_on
@@ -861,17 +867,22 @@ fn domain_extraction_prompt(stories: &[UserStory]) -> String {
 Stories:
 {stories_text}
 
-Extract the domain objects implied by these stories.
+Extract the domain objects implied by these stories using DDD vocabulary.
 
-Entities: the core business objects that are created, read, updated, or deleted.
-  Use PascalCase singular nouns (Product, Order, Customer).
+Entities: the core business objects — Aggregates, Entities, or Value Objects in the domain model.
+  Use PascalCase singular nouns (Product, Order, Customer, Money, Address).
   Include only real-world domain concepts — things that exist in the business domain.
   Never include: service names (ProductRegistry, CatalogService), infrastructure (Database, EventBus),
   UI concepts (Form, Page), or technical constructs. If it ends in "Service", "Registry",
   "Repository", "Manager", or "Handler" it is not a domain entity.
+  Prefer domain language over CRUD language: "Order" not "OrderRecord", "Product" not "ProductItem".
 
-Events: things that happen to those objects, named in past tense.
-  Use PascalCase (ProductCreated, ImageUploaded, OrderPlaced).
+Events: things that happened to a specific entity, named in past tense.
+  Naming rule — strictly enforced: every event name MUST start with the name of the entity it belongs to.
+    Correct:   ProductCreated, ProductUpdated, ProductImageAdded, OrderPlaced, CustomerRegistered
+    Wrong:     ImageUploaded (must be ProductImageAdded), DescriptionSet (must be ProductDescriptionUpdated)
+  Use precise domain verbs, not generic CRUD: Created, Updated, Activated, Deactivated,
+    Promoted, Published, Placed, Shipped, Cancelled — not Added, Changed, Modified, Done.
   Only include events clearly implied — do not invent events not suggested by the stories.
 
 Return ONLY valid YAML — no prose, no code fences:
