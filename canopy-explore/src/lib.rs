@@ -806,6 +806,10 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
 - Reuse a known role if it fits; introduce a new role only when genuinely needed
 - "so_that" must state a concrete business or user benefit — never a technical detail
 - "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
+- Reason explicitly about dependencies within this batch: if story B requires story A to exist
+  first (because it operates on something A creates), then B must list A in depends_on
+- A story that creates a resource has no depends_on; a story that reads, updates, or deletes
+  that resource depends on the story that creates it
 - Do not duplicate existing stories
 - status must be "draft"
 
