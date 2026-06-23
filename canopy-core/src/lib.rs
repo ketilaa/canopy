@@ -34,6 +34,7 @@ pub struct AnsweredQuestion {
 pub struct Vision {
     pub project: String,
     pub problem: String,
+    #[serde(default)]
     pub users: Vec<String>,
     pub goals: Vec<String>,
 }
