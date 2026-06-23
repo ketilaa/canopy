@@ -843,6 +843,60 @@ pub fn generate_stories_from_intent(
         .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
+fn domain_extraction_prompt(stories: &[UserStory]) -> String {
+    let stories_text = stories
+        .iter()
+        .map(|s| format!(
+            "- As a {}, I want {}, so that {}",
+            s.as_a, s.want, s.so_that
+        ))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"You are identifying domain vocabulary from a set of user stories.
+
+Stories:
+{stories_text}
+
+Extract the domain objects implied by these stories.
+
+Entities: the core business objects that are created, read, updated, or deleted.
+  Use PascalCase singular nouns (Product, Order, Customer).
+  Include only objects central to the stories — not infrastructure, services, or UI concepts.
+
+Events: things that happen to those objects, named in past tense.
+  Use PascalCase (ProductCreated, ImageUploaded, OrderPlaced).
+  Only include events clearly implied — do not invent events not suggested by the stories.
+
+Return ONLY valid YAML — no prose, no code fences:
+
+entities:
+  - <EntityName>
+events:
+  - <EventName>
+"#,
+        stories_text = stories_text,
+    )
+}
+
+pub fn extract_domain_from_stories(
+    client: &LlmClient,
+    stories: &[UserStory],
+) -> Result<DomainRegistry, ExploreError> {
+    if stories.is_empty() {
+        return Ok(DomainRegistry::default());
+    }
+    let raw = client.complete(&domain_extraction_prompt(stories))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_yaml::from_str::<DomainRegistry>(stripped)
+        .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+}
+
 fn architectural_questions_prompt(
     story: &UserStory,
     existing_adrs: &[Adr],

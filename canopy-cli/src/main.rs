@@ -6,11 +6,11 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 
 use canopy_core::*;
 use canopy_explore::{
-    generate_adrs, generate_architecture_principles, generate_component_architecture,
-    generate_delivery_intents, generate_domain_model, generate_files, generate_implementation_plan,
-    generate_intent_spec, generate_scaffold_from_services,
-    generate_stories_from_intent, generate_story_spec, generate_vision,
-    identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
+    extract_domain_from_stories, generate_adrs, generate_architecture_principles,
+    generate_component_architecture, generate_delivery_intents, generate_domain_model,
+    generate_files, generate_implementation_plan, generate_intent_spec,
+    generate_scaffold_from_services, generate_stories_from_intent, generate_story_spec,
+    generate_vision, identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -828,6 +828,37 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
         }
     }
     save_roles_registry(&roles).context("failed to save roles.yaml")?;
+
+    // Extract domain vocabulary from the new stories
+    let new_story_slice: Vec<_> = existing.stories.iter()
+        .filter(|s| !existing_ids.contains(&s.id))
+        .cloned()
+        .collect();
+    if !new_story_slice.is_empty() {
+        print!("Extracting domain vocabulary...");
+        match extract_domain_from_stories(&client, &new_story_slice) {
+            Ok(extracted) => {
+                let mut domain = load_domain_registry().context("failed to load domain registry")?;
+                let mut added_entities = 0usize;
+                let mut added_events = 0usize;
+                for e in &extracted.entities {
+                    if !domain.entities.iter().any(|x| x.eq_ignore_ascii_case(e)) {
+                        domain.entities.push(e.clone());
+                        added_entities += 1;
+                    }
+                }
+                for e in &extracted.events {
+                    if !domain.events.iter().any(|x| x.eq_ignore_ascii_case(e)) {
+                        domain.events.push(e.clone());
+                        added_events += 1;
+                    }
+                }
+                save_domain_registry(&domain).context("failed to save domain_registry.yaml")?;
+                println!(" +{added_entities} entities, +{added_events} events → .canopy/domain_registry.yaml");
+            }
+            Err(e) => println!(" (skipped: {e})"),
+        }
+    }
 
     println!("Added {added} new stories. Run `canopy stories` to review.");
     println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
