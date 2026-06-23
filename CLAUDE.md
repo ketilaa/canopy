@@ -105,6 +105,8 @@ but skipped by `canopy scaffold` — they belong in docker-compose or equivalent
 
 ## Codebase Structure
 
+### Canopy (planning and implementation engine)
+
 ```
 canopy-core/       data types (structs, enums, serde)
 canopy-explore/    LLM prompt functions and generation logic
@@ -113,6 +115,25 @@ canopy-cli/        CLI commands (clap), interactive prompts (dialoguer)
 ```
 
 When adding a new capability: type in core → storage helpers → explore prompt/function → cli command.
+
+### Roots (repository intelligence engine)
+
+Roots indexes a repository into a structured graph and answers queries about it.
+Canopy uses Roots in repository mode to get context packets instead of reading raw files.
+
+```
+roots-core/        graph types: Workspace, Project, Module, File, Symbol, Relationship
+roots-parser/      language parsers that populate the graph (Java, Kotlin, TypeScript)
+roots-context/     context packet assembly, impact analysis, fact extraction
+roots-storage/     SQLite-backed graph persistence
+roots-cli/         `roots` CLI: index, query, discover, impact
+```
+
+The graph hierarchy: Workspace → Project → Module → File → Symbol.
+
+Roots is the authoritative source of truth in repository mode.
+`canopy-cli` calls into `roots-context` to get context packets rather than reading files directly.
+When Roots is available, prefer `roots-context` over `canopy-storage` for symbol and relationship queries.
 
 ---
 
