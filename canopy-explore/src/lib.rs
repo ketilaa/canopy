@@ -159,13 +159,17 @@ fn format_answers(answers: &[AnsweredQuestion]) -> String {
 
 fn questions_prompt(idea: &Idea) -> String {
     format!(
-        r#"You are an experienced software architect helping a developer explore a new software idea.
+        r#"You are helping to capture the vision behind a new software idea.
 
 The developer described this idea:
 {description}
 
-Generate 3 to 10 targeted follow-up questions that will reveal the most important unknowns.
-Focus on: scope boundaries, target users, key constraints, non-functional requirements, and critical technical decisions.
+Ask at most 3 questions — only what is needed to write a clear vision statement.
+Focus ONLY on: who the users are, what core problem is being solved, what the system's boundaries are.
+
+DO NOT ask about: technology stack, security, compliance, integrations, performance, scalability,
+deployment, architecture, payment processing, or anything that would be an architecture decision.
+Those emerge later through the design process.
 
 Return ONLY a JSON object. No explanation. No code fences. Exact format:
 {{"questions": ["question 1", "question 2", "question 3"]}}"#,
