@@ -164,14 +164,15 @@ fn questions_prompt(idea: &Idea) -> String {
 The developer described this idea:
 {description}
 
-Ask at most 2 questions — only what is needed to write a clear vision statement.
+Ask only the questions genuinely needed to write a clear vision statement.
+If the description is already clear enough, return an empty list.
+Maximum 2 questions.
 
-Focus ONLY on: what core problem the system solves, and where the system's boundaries are.
+Focus ONLY on: what core problem the system solves for its users, and what the system is meant to do.
 
-DO NOT ask about: who the users are, user types or roles, technology stack, security, compliance,
-integrations, performance, scalability, deployment, or architecture.
-User roles emerge naturally from behavioral requirements. Everything else is an architecture decision.
-Those all come later.
+DO NOT ask about: who specific user types or roles are, system boundaries, technology stack,
+security, compliance, integrations, performance, scalability, deployment, or architecture.
+All of those emerge later through behavioral requirements and architecture decisions.
 
 Return ONLY a JSON object. No explanation. No code fences. Exact format:
 {{"questions": ["question 1", "question 2", "question 3"]}}"#,
