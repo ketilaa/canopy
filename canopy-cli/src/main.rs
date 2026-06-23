@@ -7,7 +7,7 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use canopy_core::*;
 use canopy_explore::{
     extract_domain_from_stories, generate_adrs, generate_architecture_principles,
-    generate_component_architecture, generate_delivery_intents, generate_domain_model,
+    generate_component_architecture, generate_delivery_intents,
     generate_files, generate_implementation_plan, generate_intent_spec,
     generate_scaffold_from_services, generate_stories_from_intent, generate_story_spec,
     generate_vision, identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
@@ -39,7 +39,7 @@ enum Commands {
     DeliveryIntents,
     /// Regenerate architecture_principles.yaml from saved vision and delivery intents
     ArchitecturePrinciples,
-    /// Generate domain.yaml — optional upfront entity model (domain accumulates automatically via `canopy plan`)
+    /// Show the accumulated domain vocabulary (entities and events)
     Domain,
     /// Generate spec.yaml and plan.yaml for a delivery intent
     Plan {
@@ -120,7 +120,7 @@ fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
         Commands::Vision                 => cmd_vision(debug),
         Commands::DeliveryIntents        => cmd_delivery_intents(debug),
         Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
-        Commands::Domain                 => cmd_domain(debug),
+        Commands::Domain                 => cmd_domain_show(),
         Commands::Plan { intent }        => cmd_plan(intent, debug),
         Commands::PlanConfirm { slug }   => cmd_plan_confirm(&slug),
         Commands::PlanList               => cmd_plan_list(),
@@ -255,29 +255,6 @@ fn cmd_architecture_principles(debug: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_domain(debug: bool) -> Result<()> {
-    let vision = load_vision()
-        .context("No vision.yaml found — run `canopy explore` first")?;
-    let intents = load_delivery_intents()
-        .context("No delivery_intents.yaml found — run `canopy explore` first")?;
-    let principles = load_architecture_principles()
-        .context("No architecture_principles.yaml found — run `canopy explore` first")?;
-
-    let client = build_client("domain", debug)?;
-
-    println!("Generating domain model...");
-    let domain = generate_domain_model(&client, &vision, &intents, &principles)
-        .context("failed to generate domain model")?;
-
-    save_domain(&domain).context("failed to save domain.yaml")?;
-    println!(
-        "Saved .canopy/domain.yaml  ({} entities, {} events, {} relationships)",
-        domain.entities.len(),
-        domain.events.len(),
-        domain.relationships.len()
-    );
-    Ok(())
-}
 
 fn cmd_plan(intent: Option<String>, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
@@ -862,6 +839,29 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
 
     println!("Added {added} new stories. Run `canopy stories` to review.");
     println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
+    Ok(())
+}
+
+fn cmd_domain_show() -> Result<()> {
+    let domain = load_domain_registry().context("failed to load domain registry")?;
+
+    if domain.entities.is_empty() && domain.events.is_empty() {
+        println!("No domain vocabulary yet.");
+        println!("Run `canopy intent` to start building stories — entities and events are extracted automatically.");
+        return Ok(());
+    }
+
+    println!("Entities ({}):", domain.entities.len());
+    for e in &domain.entities {
+        println!("  {}", e);
+    }
+
+    println!("\nEvents ({}):", domain.events.len());
+    for e in &domain.events {
+        println!("  {}", e);
+    }
+
+    println!("\nEdit .canopy/domain_registry.yaml to add, rename, or remove entries.");
     Ok(())
 }
 
