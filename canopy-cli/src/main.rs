@@ -1123,7 +1123,7 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     let client = build_client("architect", debug)?;
 
     println!("\nIdentifying architectural questions...");
-    let proposed = identify_architectural_questions(&client, story, &existing_adrs, &services)
+    let mut proposed = identify_architectural_questions(&client, story, &existing_adrs, &services)
         .context("failed to identify architectural questions")?;
 
     if proposed.proposals.is_empty() {
@@ -1131,7 +1131,8 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     } else {
         println!("\n{} architectural question(s) to address:\n", proposed.proposals.len());
 
-        for (i, proposal) in proposed.proposals.iter().enumerate() {
+        for i in 0..proposed.proposals.len() {
+            let proposal = proposed.proposals[i].clone();
             println!("--- Question {} of {} ---", i + 1, proposed.proposals.len());
             println!("Question : {}", proposal.question);
             println!("Proposed : {}", proposal.title);
@@ -1176,27 +1177,53 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                     save_adr(index, &slug, &adr).context("failed to save ADR")?;
                     println!("  Saved: adr-{:03}-{}.yaml", index, slug);
                     existing_adrs.push(adr);
-                    update_services_from_proposal(&mut services, proposal);
+                    update_services_from_proposal(&mut services, &proposal);
                 }
                 1 => {
                     // Modify
-                    let modified: String = dialoguer::Input::with_theme(&theme)
+                    let modified_decision: String = dialoguer::Input::with_theme(&theme)
                         .with_prompt("Enter revised decision text")
                         .with_initial_text(&proposal.decision)
                         .interact_text()
                         .context("failed to read modified decision")?;
+
+                    let mut modified_proposal = proposal.clone();
+                    modified_proposal.decision = modified_decision;
+
+                    // If this proposal names a service, let the user rename it so subsequent
+                    // proposals (e.g. the database ADR) reference the correct name.
+                    if let Some(ref old_name) = proposal.service {
+                        if !old_name.is_empty() {
+                            let new_name: String = dialoguer::Input::with_theme(&theme)
+                                .with_prompt("Service name (leave unchanged to keep current)")
+                                .with_initial_text(old_name)
+                                .interact_text()
+                                .context("failed to read modified service name")?;
+                            let new_name = new_name.trim().to_string();
+                            if !new_name.is_empty() && &new_name != old_name {
+                                // Propagate the rename to all remaining proposals in this batch.
+                                for later in proposed.proposals[i + 1..].iter_mut() {
+                                    if later.service.as_deref() == Some(old_name) {
+                                        later.service = Some(new_name.clone());
+                                    }
+                                }
+                                modified_proposal.service = Some(new_name);
+                            }
+                        }
+                    }
+
                     let adr = Adr {
-                        title: proposal.title.clone(),
-                        decision: modified,
-                        reason: proposal.reason.clone(),
-                        alternatives: proposal.alternatives.clone(),
+                        title: modified_proposal.title.clone(),
+                        decision: modified_proposal.decision.clone(),
+                        reason: modified_proposal.reason.clone(),
+                        alternatives: modified_proposal.alternatives.clone(),
                     };
                     let index = existing_adrs.len() + 1;
-                    let slug = canopy_storage::intent_slug(&proposal.title);
+                    let slug = canopy_storage::intent_slug(&modified_proposal.title);
                     save_adr(index, &slug, &adr).context("failed to save ADR")?;
                     println!("  Saved: adr-{:03}-{}.yaml", index, slug);
                     existing_adrs.push(adr);
-                    update_services_from_proposal(&mut services, proposal);
+                    update_services_from_proposal(&mut services, &modified_proposal);
                 }
                 _ => {
                     println!("  Rejected — skipping.");
