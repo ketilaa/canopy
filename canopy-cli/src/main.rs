@@ -949,21 +949,79 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
         &client, &statement, &context, &existing, &roles,
     ).context("failed to generate stories from intent")?;
 
-    // Merge new stories (skip any whose ID already exists)
+    // Gate each new story interactively before saving.
     let existing_ids: std::collections::HashSet<String> =
         existing.stories.iter().map(|s| s.id.clone()).collect();
-    let mut added = 0;
-    for story in new_stories.stories {
-        if !existing_ids.contains(&story.id) {
-            existing.stories.push(story);
-            added += 1;
+
+    let fresh: Vec<_> = new_stories.stories.into_iter()
+        .filter(|s| !existing_ids.contains(&s.id))
+        .collect();
+
+    if fresh.is_empty() {
+        println!("No new stories generated.");
+        return Ok(());
+    }
+
+    println!("\n{} new story/stories to review:\n", fresh.len());
+
+    let mut accepted_count = 0;
+    let mut rejected_count = 0;
+    let mut curated: Vec<UserStory> = Vec::new();
+
+    for (i, mut story) in fresh.into_iter().enumerate() {
+        println!("--- Story {} ---", i + 1);
+        println!("As a   : {}", story.as_a);
+        println!("I want : {}", story.want);
+        println!("So that: {}", story.so_that);
+
+        let choice = Select::with_theme(&theme)
+            .with_prompt("Accept this story?")
+            .items(&["Accept", "Accept with edit", "Reject"])
+            .default(0)
+            .interact()
+            .context("failed to read story choice")?;
+
+        match choice {
+            0 => {
+                story.status = StoryStatus::Accepted;
+                accepted_count += 1;
+                println!("  Accepted.");
+            }
+            1 => {
+                let want: String = Input::with_theme(&theme)
+                    .with_prompt("I want")
+                    .with_initial_text(&story.want)
+                    .interact_text()
+                    .context("failed to read edited want")?;
+                let so_that: String = Input::with_theme(&theme)
+                    .with_prompt("So that")
+                    .with_initial_text(&story.so_that)
+                    .interact_text()
+                    .context("failed to read edited so_that")?;
+                story.want = want;
+                story.so_that = so_that;
+                story.status = StoryStatus::Accepted;
+                accepted_count += 1;
+                println!("  Accepted with edits.");
+            }
+            _ => {
+                story.status = StoryStatus::Rejected;
+                rejected_count += 1;
+                println!("  Rejected.");
+            }
         }
+
+        curated.push(story);
+    }
+
+    for story in &curated {
+        existing.stories.push(story.clone());
     }
     save_user_stories(&existing).context("failed to save stories.yaml")?;
 
-    // Update roles registry with new as_a values from accepted+draft stories
+    // Update roles registry from accepted stories only.
     let mut roles = load_roles_registry().context("failed to load roles")?;
-    for story in &existing.stories {
+    for story in curated.iter().filter(|s| s.status == StoryStatus::Accepted) {
         let role = story.as_a.trim().to_string();
         if !roles.roles.iter().any(|r| r.name().eq_ignore_ascii_case(&role)) {
             roles.roles.push(Role::Simple(role));
@@ -971,14 +1029,14 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
     }
     save_roles_registry(&roles).context("failed to save roles.yaml")?;
 
-    // Extract domain vocabulary from the new stories
-    let new_story_slice: Vec<_> = existing.stories.iter()
-        .filter(|s| !existing_ids.contains(&s.id))
+    // Extract domain vocabulary from accepted stories only.
+    let accepted_stories: Vec<_> = curated.iter()
+        .filter(|s| s.status == StoryStatus::Accepted)
         .cloned()
         .collect();
-    if !new_story_slice.is_empty() {
+    if !accepted_stories.is_empty() {
         print!("Extracting domain vocabulary...");
-        match extract_domain_from_stories(&client, &new_story_slice) {
+        match extract_domain_from_stories(&client, &accepted_stories) {
             Ok(extracted) => {
                 let mut domain = load_domain_registry().context("failed to load domain registry")?;
                 let mut added_entities = 0usize;
@@ -1002,8 +1060,7 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
         }
     }
 
-    println!("Added {added} new stories. Run `canopy stories` to review.");
-    println!("Edit .canopy/stories.yaml to set status: accepted | rejected.");
+    println!("\n{accepted_count} accepted, {rejected_count} rejected. Run `canopy stories` to view backlog.");
     Ok(())
 }
 
