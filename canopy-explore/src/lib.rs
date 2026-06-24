@@ -967,12 +967,14 @@ Existing Architecture Decisions:
 Known Services and Responsibilities:
 {services_summary}
 
-SKIP a question entirely if its answer is already captured above. Check each category before proposing:
-- Service ownership: skip if the service already appears in Known Services.
-- UI/frontend: skip if a frontend service already appears in Known Services.
-- Tech stack: skip if the service already has a decided technology in Known Services.
-- Database infrastructure: skip if a database infrastructure entry already appears in Known Services.
-- Event broker infrastructure: skip if an event broker entry already appears in Known Services.
+SKIP a question entirely if its answer is already captured above. Check precisely before proposing:
+- Service ownership: skip if the specific service that should own THIS story's domain is already in Known Services.
+- UI/frontend: skip if a frontend that serves THIS actor's interaction for THIS capability is already in Known Services.
+  Do NOT skip just because some other frontend exists for a different actor or purpose.
+- Tech stack: skip if the specific service already has a decided technology in Known Services.
+- Database infrastructure: skip if the specific data-owning service already has a database in Known Services.
+  Do NOT skip just because some other service already has a database.
+- Event broker infrastructure: skip if an event broker entry already exists in Known Services.
 Propose ONLY questions where the decision is genuinely absent from the above context.
 If all decisions are already made, return an empty proposals list.
 
