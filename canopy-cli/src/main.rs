@@ -1143,14 +1143,18 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
             entry.technology = proposal.technology.clone();
         }
         if entry.component_type.is_none() {
-            entry.component_type = proposal.component_type.clone();
+            entry.component_type = Some(
+                proposal.component_type.clone().unwrap_or_else(|| "service".to_string())
+            );
         }
     } else {
         services.services.push(ServiceEntry {
             name: name.clone(),
             responsibilities: filtered_responsibilities,
             technology: proposal.technology.clone(),
-            component_type: proposal.component_type.clone(),
+            component_type: Some(
+                proposal.component_type.clone().unwrap_or_else(|| "service".to_string())
+            ),
         });
     }
 }
