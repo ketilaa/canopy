@@ -1298,6 +1298,51 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
             }
         }
 
+        // Catch any service or frontend that ended up without a decided technology —
+        // can happen when the LLM omits a tech stack proposal or the user renames a component.
+        let missing_tech: Vec<String> = services.services.iter()
+            .filter(|s| {
+                let ct = s.component_type.as_deref().unwrap_or("service");
+                ct != "infrastructure" && s.technology.is_none()
+            })
+            .map(|s| s.name.clone())
+            .collect();
+
+        for name in missing_tech {
+            println!("\n  '{}' has no decided technology.", name);
+            let tech: String = Input::with_theme(&theme)
+                .with_prompt(format!("Technology for '{}'", name))
+                .interact_text()
+                .context("failed to read technology")?;
+            let tech = tech.trim().to_string();
+            if !tech.is_empty() {
+                let ct = services.services.iter()
+                    .find(|s| s.name == name)
+                    .and_then(|s| s.component_type.clone())
+                    .unwrap_or_else(|| "service".to_string());
+                if let Some(entry) = services.services.iter_mut().find(|s| s.name == name) {
+                    entry.technology = Some(tech.clone());
+                }
+                let adr = Adr {
+                    title: format!("Tech stack for {}", name),
+                    decision: tech.clone(),
+                    reason: "Decided interactively — not proposed by LLM.".to_string(),
+                    alternatives: vec![],
+                };
+                let index = existing_adrs.len() + 1;
+                let slug = canopy_storage::intent_slug(&adr.title);
+                save_adr(index, &slug, &adr).context("failed to save tech stack ADR")?;
+                println!("  Saved: adr-{:03}-{}.yaml", index, slug);
+                existing_adrs.push(adr);
+                // Ensure component_type is set correctly for scaffold
+                if let Some(entry) = services.services.iter_mut().find(|s| s.name == name) {
+                    if entry.component_type.is_none() {
+                        entry.component_type = Some(ct);
+                    }
+                }
+            }
+        }
+
         save_services_registry(&services).context("failed to save services registry")?;
     }
 
