@@ -223,10 +223,69 @@ fn cmd_init() -> Result<()> {
     let idea = Idea { description };
     save_idea(&idea).context("failed to save idea.yaml")?;
 
-    println!("Saved .canopy/idea.yaml");
+    // Architecture style — pre-authored ADR written at adr-000
+    let arch_styles = ["Event-driven microservices (DDD)"];
+    let arch_idx = Select::with_theme(&theme)
+        .with_prompt("Architecture style")
+        .items(&arch_styles)
+        .default(0)
+        .interact()
+        .context("failed to read architecture style selection")?;
+    let arch_adr = architecture_style_adr(arch_idx);
+    save_adr(0, "architecture-style", &arch_adr)
+        .context("failed to save adr-000-architecture-style.yaml")?;
+    println!("  Saved .canopy/decisions/adr-000-architecture-style.yaml");
+
+    // Deployment style — pre-authored ADR written at adr-001
+    let deploy_styles = ["Docker Compose (local development)"];
+    let deploy_idx = Select::with_theme(&theme)
+        .with_prompt("Deployment style")
+        .items(&deploy_styles)
+        .default(0)
+        .interact()
+        .context("failed to read deployment style selection")?;
+    let deploy_adr = deployment_style_adr(deploy_idx);
+    save_adr(1, "deployment-style", &deploy_adr)
+        .context("failed to save adr-001-deployment-style.yaml")?;
+    println!("  Saved .canopy/decisions/adr-001-deployment-style.yaml");
+
     println!("Project: {}", project_name());
     println!("Next: run `canopy intent` to add your first behavioral requirement.");
     Ok(())
+}
+
+fn architecture_style_adr(idx: usize) -> Adr {
+    match idx {
+        _ => Adr {
+            title: "Architecture Style".to_string(),
+            decision: "Event-driven microservices using Domain-Driven Design".to_string(),
+            reason: "Services are bounded by domain context and communicate through domain events. \
+                     This enables independent deployability, clear ownership boundaries, \
+                     and natural alignment with the domain model."
+                .to_string(),
+            alternatives: vec![
+                "Modular monolith".to_string(),
+                "Layered monolith".to_string(),
+            ],
+        },
+    }
+}
+
+fn deployment_style_adr(idx: usize) -> Adr {
+    match idx {
+        _ => Adr {
+            title: "Deployment Style".to_string(),
+            decision: "Docker Compose for local development".to_string(),
+            reason: "All services, databases, and event infrastructure run locally in Docker Compose. \
+                     This provides a consistent, portable local development environment without \
+                     requiring a Kubernetes cluster. Production deployment strategy is decided separately."
+                .to_string(),
+            alternatives: vec![
+                "Kubernetes with local cluster (minikube or kind)".to_string(),
+                "Native processes per service".to_string(),
+            ],
+        },
+    }
 }
 
 fn cmd_vision(debug: bool) -> Result<()> {
@@ -878,30 +937,60 @@ fn cmd_domain_show() -> Result<()> {
 }
 
 fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &ProposedAdr) {
-    if let Some(ref name) = proposal.service {
-        if name.is_empty() {
-            return;
+    let is_infra = proposal.component_type.as_deref() == Some("infrastructure");
+
+    if is_infra {
+        // Infrastructure proposals (DB, event broker) describe a shared component, not the owning
+        // service. Derive the component name from its technology so it gets its own entry.
+        if let Some(ref tech) = proposal.technology {
+            let infra_name = tech
+                .split_whitespace()
+                .next()
+                .unwrap_or(tech)
+                .to_lowercase();
+            if !infra_name.is_empty() && !services.services.iter().any(|s| s.name == infra_name) {
+                services.services.push(ServiceEntry {
+                    name: infra_name,
+                    responsibilities: vec![],
+                    technology: Some(tech.clone()),
+                    component_type: Some("infrastructure".to_string()),
+                });
+            }
         }
-        if let Some(entry) = services.services.iter_mut().find(|s| s.name == *name) {
-            for r in &proposal.service_responsibilities {
-                if !entry.responsibilities.contains(r) {
-                    entry.responsibilities.push(r.clone());
-                }
+        return;
+    }
+
+    let Some(ref name) = proposal.service else { return };
+    if name.is_empty() {
+        return;
+    }
+
+    let filtered_responsibilities: Vec<String> = proposal
+        .service_responsibilities
+        .iter()
+        .filter(|r| r.as_str() != "<none>")
+        .cloned()
+        .collect();
+
+    if let Some(entry) = services.services.iter_mut().find(|s| s.name == *name) {
+        for r in &filtered_responsibilities {
+            if !entry.responsibilities.contains(r) {
+                entry.responsibilities.push(r.clone());
             }
-            if entry.technology.is_none() {
-                entry.technology = proposal.technology.clone();
-            }
-            if entry.component_type.is_none() {
-                entry.component_type = proposal.component_type.clone();
-            }
-        } else {
-            services.services.push(ServiceEntry {
-                name: name.clone(),
-                responsibilities: proposal.service_responsibilities.clone(),
-                technology: proposal.technology.clone(),
-                component_type: proposal.component_type.clone(),
-            });
         }
+        if entry.technology.is_none() {
+            entry.technology = proposal.technology.clone();
+        }
+        if entry.component_type.is_none() {
+            entry.component_type = proposal.component_type.clone();
+        }
+    } else {
+        services.services.push(ServiceEntry {
+            name: name.clone(),
+            responsibilities: filtered_responsibilities,
+            technology: proposal.technology.clone(),
+            component_type: proposal.component_type.clone(),
+        });
     }
 }
 
@@ -1026,6 +1115,29 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     save_story_spec(story_id, &spec).context("failed to save story spec")?;
 
     println!("\nSpec saved to .canopy/stories/{}/spec.yaml", story_id);
+
+    if let Some(ref schema) = spec.entity_schema {
+        println!("\nEntity Schema: {}", schema.entity);
+        if !schema.system_generated.is_empty() {
+            println!("  System-generated:");
+            for f in &schema.system_generated {
+                println!("    {} ({})  {}", f.name, f.field_type, f.description);
+            }
+        }
+        if !schema.mandatory.is_empty() {
+            println!("  Mandatory:");
+            for f in &schema.mandatory {
+                println!("    {} ({})  {}", f.name, f.field_type, f.description);
+            }
+        }
+        if !schema.optional.is_empty() {
+            println!("  Optional:");
+            for f in &schema.optional {
+                println!("    {} ({})  {}", f.name, f.field_type, f.description);
+            }
+        }
+    }
+
     println!("\nScenarios:");
     for s in &spec.scenarios {
         println!("  [{}] {}", s.id, s.name);

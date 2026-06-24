@@ -354,6 +354,7 @@ mod tests {
             use canopy_core::{IntentSpec, Scenario};
             let spec = IntentSpec {
                 intent_ref: "User Authentication".into(),
+                entity_schema: None,
                 scenarios: vec![Scenario {
                     id: "auth-001".into(),
                     name: "Successful login".into(),

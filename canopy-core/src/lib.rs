@@ -111,8 +111,29 @@ pub struct Scenario {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldDef {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub field_type: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntitySchema {
+    pub entity: String,
+    #[serde(default)]
+    pub system_generated: Vec<FieldDef>,
+    #[serde(default)]
+    pub mandatory: Vec<FieldDef>,
+    #[serde(default)]
+    pub optional: Vec<FieldDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntentSpec {
     pub intent_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_schema: Option<EntitySchema>,
     pub scenarios: Vec<Scenario>,
     #[serde(default)]
     pub out_of_scope: Vec<String>,
@@ -636,6 +657,7 @@ agents:
     fn intent_spec_yaml_round_trip() {
         let spec = IntentSpec {
             intent_ref: "User Authentication".into(),
+            entity_schema: None,
             scenarios: vec![Scenario {
                 id: "auth-001".into(),
                 name: "Successful login".into(),

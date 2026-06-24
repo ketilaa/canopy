@@ -956,7 +956,7 @@ fn architectural_questions_prompt(
             .join("\n")
     };
     format!(
-        r#"You are an experienced software architect applying Domain-Driven Design and event-driven architecture principles.
+        r#"You are an experienced software architect.
 
 A team is about to write a BDD specification for this user story:
   As a {as_a}, I want {want}, so that {so_that}
@@ -967,7 +967,16 @@ Existing Architecture Decisions:
 Known Services and Responsibilities:
 {services_summary}
 
-Identify ALL architectural questions that MUST be answered before a specification can be written for this story.
+SKIP a question entirely if its answer is already captured above. Check each category before proposing:
+- Service ownership: skip if the service already appears in Known Services.
+- UI/frontend: skip if a frontend service already appears in Known Services.
+- Tech stack: skip if the service already has a decided technology in Known Services.
+- Database infrastructure: skip if a database infrastructure entry already appears in Known Services.
+- Event broker infrastructure: skip if an event broker entry already appears in Known Services.
+Propose ONLY questions where the decision is genuinely absent from the above context.
+If all decisions are already made, return an empty proposals list.
+
+Identify the architectural questions NOT YET answered that MUST be resolved before a specification can be written for this story.
 
 Include ALL of:
 1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
@@ -982,8 +991,10 @@ Include ALL of:
      what event broker/bus is used? Propose it if not yet decided.
 
 Naming rules — strictly enforced:
-- Use kebab-case for all names: product-registry, catalog-service, backoffice, storefront, redpanda, postgresql
-- Never use PascalCase, never append "Service", "DB", or "Database" as a suffix
+- Service and infrastructure component names: kebab-case only (product-registry, catalog-service, backoffice, storefront, redpanda, postgresql)
+  Never append "Service", "DB", or "Database" as a suffix to service names.
+- Domain event names: PascalCase past tense, prefixed with the entity name (ProductCreated, OrderPlaced, CustomerRegistered)
+  Never use kebab-case for event names.
 
 For tech stack proposals:
 - Set technology to the canonical technology name (e.g. "Spring Boot", "Angular", "React",
@@ -1076,11 +1087,51 @@ Services and Responsibilities:
 Domain Entities: {entities}
 Domain Events: {events}
 
-Write BDD scenarios (Given/When/Then) as acceptance criteria. Rules:
+## Creation story detection
+
+This is a CREATION STORY if the want contains a creation verb (register, create, add, onboard,
+submit, publish) OR if the domain events include a {{Entity}}Created event for an entity in
+the want statement.
+
+If this is a creation story, you MUST output an entity_schema section before scenarios.
+If this is NOT a creation story, omit entity_schema entirely.
+
+### entity_schema rules
+
+Identify the primary entity being created and define its fields in three categories:
+
+system_generated — fields the system sets automatically; the actor never provides these:
+  - Always include: id (uuid), createdAt (datetime)
+  - Always include: modifiedAt (datetime) — null at creation, updated on every write
+  - Include business-operation timestamps for any domain event that implies a later state
+    transition on this entity (e.g. ProductPromotedToCatalog → promotedAt datetime,
+    ProductActivated → activatedAt datetime). Set these to null at creation.
+  - Do not include actor-provided fields here.
+
+mandatory — fields the actor MUST provide when registering the entity:
+  - These are the minimum data required for the entity to exist in the domain.
+  - Infer from domain context, industry norms, and common sense for this entity type.
+  - Do not include system_generated fields here.
+
+optional — fields the actor MAY provide; nullable or defaulted:
+  - These enrich the entity but are not required for it to exist.
+
+Field format: name (camelCase), type (uuid | string | integer | decimal | boolean | datetime),
+description (one sentence).
+
+### Scenario grounding rule (CRITICAL)
+
+When entity_schema is present, BDD scenarios MUST be grounded in it:
+- "when" MUST explicitly name the mandatory fields the actor submits
+- "then" MUST reference at least the system-generated fields set at creation
+  (e.g. "the system assigns an id and sets createdAt to the current timestamp")
+- Also include a scenario for the missing-mandatory-field failure case
+
+Write BDD scenarios (Given/When/Then) as acceptance criteria. Additional rules:
 - Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
   HTTP verbs, JSON payloads, or implementation details
 - Given describes the world state before the action
-- When describes what the user or system does (e.g. "the product manager submits a new product form")
+- When describes what the user or system does
 - Then describes what the user observes or what state has changed
 - Use the exact kebab-case service names defined above
 - intent_ref must be exactly: {story_id}
@@ -1089,14 +1140,28 @@ Write BDD scenarios (Given/When/Then) as acceptance criteria. Rules:
 Return ONLY valid YAML — no prose, no code fences:
 
 intent_ref: {story_id}
+entity_schema:                    # omit entirely if not a creation story
+  entity: "<PascalCase entity name>"
+  system_generated:
+    - name: "<camelCase>"
+      type: "<type>"
+      description: "<one sentence>"
+  mandatory:
+    - name: "<camelCase>"
+      type: "<type>"
+      description: "<one sentence>"
+  optional:
+    - name: "<camelCase>"
+      type: "<type>"
+      description: "<one sentence>"
 scenarios:
   - id: "{story_id}-01"
     name: "<scenario name>"
     given:
       - "<world state precondition>"
-    when: "<user or system action>"
+    when: "<user or system action — must name mandatory fields for creation stories>"
     then:
-      - "<observable outcome>"
+      - "<observable outcome — must reference system-assigned fields for creation stories>"
     constraints:
       - "<constraint or empty list>"
 out_of_scope:
