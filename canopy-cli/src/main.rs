@@ -1142,7 +1142,9 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
         if entry.technology.is_none() {
             entry.technology = proposal.technology.clone();
         }
-        if entry.component_type.is_none() {
+        // An explicit component_type from the proposal (e.g. "frontend" from the tech stack ADR)
+        // always overrides the default set by an earlier structural ADR.
+        if entry.component_type.is_none() || proposal.component_type.is_some() {
             entry.component_type = Some(
                 proposal.component_type.clone().unwrap_or_else(|| "service".to_string())
             );
