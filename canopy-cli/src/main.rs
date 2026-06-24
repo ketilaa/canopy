@@ -288,7 +288,21 @@ fn cmd_init(debug: bool) -> Result<()> {
     match suggest_domain_entities(&client, &idea) {
         Ok(suggestions) if !suggestions.is_empty() => {
             println!();
-            let entities = bootstrap_select(&theme, "Domain entities (deselect to remove, add missing below)", &suggestions)?;
+            let names = bootstrap_select(&theme, "Domain entities (deselect to remove, add missing below)", &suggestions)?;
+            let mut entities = Vec::new();
+            for name in names {
+                let desc: String = Input::with_theme(&theme)
+                    .with_prompt(format!("Description for '{}' (leave blank to skip)", name))
+                    .allow_empty(true)
+                    .interact_text()
+                    .context("failed to read entity description")?;
+                let desc = desc.trim().to_string();
+                entities.push(if desc.is_empty() {
+                    DomainEntity::Simple(name)
+                } else {
+                    DomainEntity::Described { name, description: desc }
+                });
+            }
             let registry = DomainRegistry { entities, events: vec![] };
             save_domain_registry(&registry).context("failed to save domain_registry.yaml")?;
             println!("  Saved .canopy/domain_registry.yaml ({} entities)", registry.entities.len());
@@ -303,7 +317,21 @@ fn cmd_init(debug: bool) -> Result<()> {
     match suggest_roles(&client, &idea) {
         Ok(suggestions) if !suggestions.is_empty() => {
             println!();
-            let roles = bootstrap_select(&theme, "Roles (deselect to remove, add missing below)", &suggestions)?;
+            let names = bootstrap_select(&theme, "Roles (deselect to remove, add missing below)", &suggestions)?;
+            let mut roles = Vec::new();
+            for name in names {
+                let desc: String = Input::with_theme(&theme)
+                    .with_prompt(format!("Description for '{}' (leave blank to skip)", name))
+                    .allow_empty(true)
+                    .interact_text()
+                    .context("failed to read role description")?;
+                let desc = desc.trim().to_string();
+                roles.push(if desc.is_empty() {
+                    Role::Simple(name)
+                } else {
+                    Role::Described { name, description: desc }
+                });
+            }
             let registry = RolesRegistry { roles };
             save_roles_registry(&registry).context("failed to save roles.yaml")?;
             println!("  Saved .canopy/roles.yaml ({} roles)", registry.roles.len());
@@ -406,7 +434,10 @@ fn cmd_plan(intent: Option<String>, debug: bool) -> Result<()> {
     let registry = match roots::entity_vocabulary() {
         Some(names) => {
             println!("  Using Roots index for entity vocabulary ({} symbols)", names.len());
-            DomainRegistry { entities: names, events: vec![] }
+            DomainRegistry {
+                entities: names.into_iter().map(DomainEntity::Simple).collect(),
+                events: vec![],
+            }
         }
         None => load_domain_registry().context("failed to load domain_registry.yaml")?,
     };
@@ -934,8 +965,8 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
     let mut roles = load_roles_registry().context("failed to load roles")?;
     for story in &existing.stories {
         let role = story.as_a.trim().to_string();
-        if !roles.roles.iter().any(|r| r.eq_ignore_ascii_case(&role)) {
-            roles.roles.push(role);
+        if !roles.roles.iter().any(|r| r.name().eq_ignore_ascii_case(&role)) {
+            roles.roles.push(Role::Simple(role));
         }
     }
     save_roles_registry(&roles).context("failed to save roles.yaml")?;
@@ -953,13 +984,13 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
                 let mut added_entities = 0usize;
                 let mut added_events = 0usize;
                 for e in &extracted.entities {
-                    if !domain.entities.iter().any(|x| x.eq_ignore_ascii_case(e)) {
+                    if !domain.entities.iter().any(|x| x.name().eq_ignore_ascii_case(e.name())) {
                         domain.entities.push(e.clone());
                         added_entities += 1;
                     }
                 }
                 for e in &extracted.events {
-                    if !domain.events.iter().any(|x| x.eq_ignore_ascii_case(e)) {
+                    if !domain.events.iter().any(|x| x.name().eq_ignore_ascii_case(e.name())) {
                         domain.events.push(e.clone());
                         added_events += 1;
                     }
@@ -987,12 +1018,18 @@ fn cmd_domain_show() -> Result<()> {
 
     println!("Entities ({}):", domain.entities.len());
     for e in &domain.entities {
-        println!("  {}", e);
+        match e.description() {
+            Some(d) => println!("  {} — {}", e.name(), d),
+            None    => println!("  {}", e.name()),
+        }
     }
 
     println!("\nEvents ({}):", domain.events.len());
     for e in &domain.events {
-        println!("  {}", e);
+        match e.description() {
+            Some(d) => println!("  {} — {}", e.name(), d),
+            None    => println!("  {}", e.name()),
+        }
     }
 
     println!("\nEdit .canopy/domain_registry.yaml to add, rename, or remove entries.");

@@ -214,27 +214,98 @@ pub struct DomainScope {
     pub relationships: Vec<String>,
 }
 
+/// A domain entity with an optional human-curated description.
+/// Serializes as a plain string when there is no description (backward-compatible),
+/// or as a map `{name, description}` when a description is present.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DomainEntity {
+    Simple(String),
+    Described { name: String, description: String },
+}
+
+impl DomainEntity {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Simple(n) => n,
+            Self::Described { name, .. } => name,
+        }
+    }
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Described { description, .. } => Some(description),
+        }
+    }
+}
+
+/// A domain event with an optional human-curated description.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DomainEvent {
+    Simple(String),
+    Described { name: String, description: String },
+}
+
+impl DomainEvent {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Simple(n) => n,
+            Self::Described { name, .. } => name,
+        }
+    }
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Described { description, .. } => Some(description),
+        }
+    }
+}
+
+/// A user role with an optional human-curated description.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Role {
+    Simple(String),
+    Described { name: String, description: String },
+}
+
+impl Role {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Simple(n) => n,
+            Self::Described { name, .. } => name,
+        }
+    }
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Described { description, .. } => Some(description),
+        }
+    }
+}
+
 /// Accumulated entity and event vocabulary across all planned delivery intents.
 /// Built incrementally by `canopy plan` — no upfront global modeling required.
 /// In repository mode, Roots is the authoritative source and supersedes this file.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DomainRegistry {
     #[serde(default)]
-    pub entities: Vec<String>,
+    pub entities: Vec<DomainEntity>,
     #[serde(default)]
-    pub events: Vec<String>,
+    pub events: Vec<DomainEvent>,
 }
 
 impl DomainRegistry {
     pub fn merge(&mut self, scope: &DomainScope) {
         for name in &scope.entities {
-            if !self.entities.contains(name) {
-                self.entities.push(name.clone());
+            if !self.entities.iter().any(|e| e.name().eq_ignore_ascii_case(name)) {
+                self.entities.push(DomainEntity::Simple(name.clone()));
             }
         }
         for name in &scope.events {
-            if !self.events.contains(name) {
-                self.events.push(name.clone());
+            if !self.events.iter().any(|e| e.name().eq_ignore_ascii_case(name)) {
+                self.events.push(DomainEvent::Simple(name.clone()));
             }
         }
     }
@@ -307,7 +378,7 @@ pub struct UserStories {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RolesRegistry {
     #[serde(default)]
-    pub roles: Vec<String>,
+    pub roles: Vec<Role>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -627,8 +698,8 @@ agents:
     #[test]
     fn domain_registry_merge_deduplicates() {
         let mut reg = DomainRegistry {
-            entities: vec!["User".into(), "Session".into()],
-            events: vec!["UserLoggedIn".into()],
+            entities: vec![DomainEntity::Simple("User".into()), DomainEntity::Simple("Session".into())],
+            events: vec![DomainEvent::Simple("UserLoggedIn".into())],
         };
         let scope = DomainScope {
             entities: vec!["Session".into(), "Order".into()],
@@ -636,8 +707,10 @@ agents:
             relationships: vec![],
         };
         reg.merge(&scope);
-        assert_eq!(reg.entities, vec!["User", "Session", "Order"]);
-        assert_eq!(reg.events, vec!["UserLoggedIn", "OrderPlaced"]);
+        let entity_names: Vec<&str> = reg.entities.iter().map(|e| e.name()).collect();
+        let event_names: Vec<&str> = reg.events.iter().map(|e| e.name()).collect();
+        assert_eq!(entity_names, vec!["User", "Session", "Order"]);
+        assert_eq!(event_names, vec!["UserLoggedIn", "OrderPlaced"]);
     }
 
     #[test]
@@ -649,8 +722,41 @@ agents:
             relationships: vec![],
         };
         reg.merge(&scope);
-        assert_eq!(reg.entities, vec!["Product"]);
-        assert_eq!(reg.events, vec!["ProductCreated"]);
+        assert_eq!(reg.entities.iter().map(|e| e.name()).collect::<Vec<_>>(), vec!["Product"]);
+        assert_eq!(reg.events.iter().map(|e| e.name()).collect::<Vec<_>>(), vec!["ProductCreated"]);
+    }
+
+    #[test]
+    fn domain_entity_described_roundtrip() {
+        let entity = DomainEntity::Described {
+            name: "Product".into(),
+            description: "A sellable item managed by the business.".into(),
+        };
+        let yaml = serde_yaml::to_string(&entity).unwrap();
+        let entity2: DomainEntity = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(entity2.name(), "Product");
+        assert_eq!(entity2.description(), Some("A sellable item managed by the business."));
+    }
+
+    #[test]
+    fn domain_entity_simple_roundtrip() {
+        let entity = DomainEntity::Simple("Order".into());
+        let yaml = serde_yaml::to_string(&entity).unwrap();
+        let entity2: DomainEntity = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(entity2.name(), "Order");
+        assert_eq!(entity2.description(), None);
+    }
+
+    #[test]
+    fn role_described_roundtrip() {
+        let role = Role::Described {
+            name: "product manager".into(),
+            description: "Manages product registration in the backoffice.".into(),
+        };
+        let yaml = serde_yaml::to_string(&role).unwrap();
+        let role2: Role = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(role2.name(), "product manager");
+        assert_eq!(role2.description(), Some("Manages product registration in the backoffice."));
     }
 
     #[test]

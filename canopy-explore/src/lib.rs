@@ -379,7 +379,13 @@ fn component_architecture_prompt(
     let entities_summary = if registry.entities.is_empty() {
         "(none yet — domain accumulates through planning)".to_string()
     } else {
-        registry.entities.join(", ")
+        registry.entities.iter()
+            .map(|e| match e.description() {
+                Some(d) => format!("{} — {}", e.name(), d),
+                None => e.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
     format!(
@@ -513,12 +519,24 @@ fn intent_spec_prompt(
     let known_entities = if registry.entities.is_empty() {
         "(none yet — introduce what this intent requires)".to_string()
     } else {
-        registry.entities.join(", ")
+        registry.entities.iter()
+            .map(|e| match e.description() {
+                Some(d) => format!("{} — {}", e.name(), d),
+                None => e.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let known_events = if registry.events.is_empty() {
         "(none yet)".to_string()
     } else {
-        registry.events.join(", ")
+        registry.events.iter()
+            .map(|e| match e.description() {
+                Some(d) => format!("{} — {}", e.name(), d),
+                None => e.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     format!(
         r#"You are an experienced product and engineering lead writing a behavioral specification.
@@ -607,7 +625,13 @@ fn implementation_plan_prompt(
     let known_entities = if registry.entities.is_empty() {
         "(none yet)".to_string()
     } else {
-        registry.entities.join(", ")
+        registry.entities.iter()
+            .map(|e| match e.description() {
+                Some(d) => format!("{} — {}", e.name(), d),
+                None => e.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
     let all_intents_yaml = serde_yaml::to_string(all_intents).unwrap_or_default();
@@ -788,7 +812,13 @@ fn stories_from_intent_prompt(
     let existing_roles = if roles.roles.is_empty() {
         "none yet".to_string()
     } else {
-        roles.roles.join(", ")
+        roles.roles.iter()
+            .map(|r| match r.description() {
+                Some(d) => format!("{} — {}", r.name(), d),
+                None => r.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     format!(
         r#"You are an experienced product strategist decomposing a behavioral requirement into user stories.
@@ -964,8 +994,9 @@ Idea: {description}
 
 List the key roles of people who will interact with this system.
 Rules:
-- Lowercase noun phrases only (administrator, end user, manager)
+- Lowercase noun phrases only (administrator, store manager, warehouse operator)
 - Human actors only — not systems, services, or technical components
+- Specific named roles that reflect actual domain responsibilities — never generic terms like "user" or "end user"
 - Maximum 6 roles
 
 Return ONLY a JSON array of strings. No explanation. No code fences.
@@ -1131,8 +1162,28 @@ fn story_spec_prompt(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let entities = if domain.entities.is_empty() { "none yet".to_string() } else { domain.entities.join(", ") };
-    let events = if domain.events.is_empty() { "none yet".to_string() } else { domain.events.join(", ") };
+    let entities = if domain.entities.is_empty() {
+        "none yet".to_string()
+    } else {
+        domain.entities.iter()
+            .map(|e| match e.description() {
+                Some(d) => format!("{} — {}", e.name(), d),
+                None => e.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let events = if domain.events.is_empty() {
+        "none yet".to_string()
+    } else {
+        domain.events.iter()
+            .map(|e| match e.description() {
+                Some(d) => format!("{} — {}", e.name(), d),
+                None => e.name().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     format!(
         r#"You are a BDD expert writing acceptance criteria for a user story.
 
