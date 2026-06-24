@@ -1249,7 +1249,11 @@ Write BDD scenarios (Given/When/Then) as acceptance criteria. Additional rules:
 - intent_ref must be exactly: {story_id}
 - Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
 
-Return ONLY valid YAML — no prose, no code fences:
+Return ONLY valid YAML — no prose, no code fences.
+YAML string rules — you MUST follow these to avoid parse errors:
+- Any string value containing a colon (:) MUST be enclosed in double quotes
+- Any list item ending with a question mark (?) MUST be enclosed in double quotes
+- type values use plain strings only: string, integer, decimal, uuid, datetime, boolean — never angle-bracket generics like array<string>; use "[string]" instead
 
 intent_ref: {story_id}
 entity_schema:                    # omit entirely if not a creation story
@@ -1306,8 +1310,35 @@ pub fn generate_story_spec(
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    serde_yaml::from_str::<IntentSpec>(stripped)
-        .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+    let fixed = fix_yaml_colon_in_scalars(stripped);
+    serde_yaml::from_str::<IntentSpec>(&fixed)
+        .map_err(|source| ExploreError::YamlParse { source, raw: fixed })
+}
+
+/// Quote bare YAML scalar values that contain colons — a common LLM mistake that
+/// causes serde_yaml to treat them as nested mappings.
+fn fix_yaml_colon_in_scalars(yaml: &str) -> String {
+    yaml.lines().map(|line| {
+        // Match lines of the form: <indent><key>: <value> where value is unquoted and contains ':'
+        if let Some(colon_pos) = line.find(": ") {
+            let (key_part, rest) = line.split_at(colon_pos + 2);
+            let value = rest.trim_end();
+            // Only fix plain (unquoted) scalars that contain a colon
+            if !value.is_empty()
+                && !value.starts_with('"')
+                && !value.starts_with('\'')
+                && !value.starts_with('{')
+                && !value.starts_with('[')
+                && !value.starts_with('|')
+                && !value.starts_with('>')
+                && value.contains(':')
+            {
+                let escaped = value.replace('"', "\\\"");
+                return format!("{}\"{}\"", key_part, escaped);
+            }
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
 }
 
 fn is_jvm_technology(tech: &str) -> bool {
