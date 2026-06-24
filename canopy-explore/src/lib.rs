@@ -813,6 +813,7 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
   contexts, or architectural components (avoid: "in the catalog", "via the API", "in the registry")
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
 - A creation story includes all actor-provided attributes — mandatory and optional. Split into an update story only when the intent explicitly describes editing an existing record.
+- One intent action = one story. Do not decompose a single action into sub-steps.
 - "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
 - Reason explicitly about dependencies within this batch: if story B requires story A to exist
   first (because it operates on something A creates), then B must list A in depends_on
