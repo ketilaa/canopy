@@ -191,7 +191,7 @@ Q&A context:
 {qa}
 
 Write a project vision as YAML with this exact structure:
-project: <short readable name, 2-4 plain words, no abbreviations, no CamelCase concatenation — e.g. "Merchant Shop" not "MerchantProxyEcomm">
+project: <short readable name, 2-4 plain words, no abbreviations, no CamelCase concatenation — e.g. "Task Tracker" not "TaskTrackerAppV2">
 problem: <the core problem being solved, 1-2 sentences>
 goals:
   - <high-level outcome the system should achieve — not a feature, not an implementation detail>
@@ -407,7 +407,7 @@ Your task: identify every component this system requires and select a concrete t
 Step 1 — derive components from the delivery intents and structural commitments:
 - Read the structural_commitments carefully. If deployment_topology is microservices, name each service separately.
 - Each delivery intent that touches a distinct bounded context is a candidate for its own backend service.
-- If multiple intents describe separate user-facing surfaces (storefront vs backoffice), name each frontend app separately.
+- If multiple intents describe separate user-facing surfaces (e.g. customer portal vs admin portal), name each frontend app separately.
 - Distinguish data stores (relational DBs, document stores) from messaging infrastructure (event buses, queues).
 - Do not merge conceptually distinct things into one component to keep the list short.
 
@@ -420,7 +420,7 @@ Return ONLY valid YAML shaped to match the actual system — do not use a fixed 
 Use these categories as top-level keys (omit any that do not apply):
 
 frontend_apps:
-  - name: <app name, e.g. storefront>
+  - name: <kebab-case app name>
     technology: <framework and version>
     purpose: <one line>
 
@@ -762,7 +762,7 @@ Vision:
 Generate a complete set of user stories covering the core functionality implied by the vision.
 
 Rules:
-- Assign each story a short, stable ID using a domain-area prefix and zero-padded number, e.g. auth-001, catalog-002, cart-001
+- Assign each story a short, stable ID using a domain-area prefix and zero-padded number, e.g. auth-001, account-002, report-001
 - Use only actors that appear in the vision's users list
 - The "so_that" must state a concrete business or user benefit — never a technical detail
 - depends_on lists IDs of stories that must exist before this story can be built
@@ -833,12 +833,12 @@ Existing story IDs (do not reuse these): {existing_ids_str}
 Known roles: {existing_roles}
 
 Derive the minimal set of user stories that fully cover this intent. Rules:
-- Assign each story a short stable ID: use a lowercase domain-area prefix and zero-padded number (e.g. catalog-001, product-003)
+- Assign each story a short stable ID: use a lowercase domain-area prefix and zero-padded number (e.g. account-001, document-003)
 - Choose the prefix from the domain area the story belongs to, not from the intent wording
 - The next ID number must be higher than any existing ID with the same prefix
 - Reuse a known role if it fits; introduce a new role only when genuinely needed
-- Use DDD and domain language in the "want" field — prefer domain verbs (register, activate, promote,
-  publish, place, ship) over CRUD verbs (add, create, update, delete)
+- Use DDD and domain language in the "want" field — prefer domain verbs (register, activate, publish,
+  assign, approve, close) over CRUD verbs (add, create, update, delete)
 - "want" must describe a capability, not a location or component — do not name services, bounded
   contexts, or architectural components (avoid: "in the catalog", "via the API", "in the registry")
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
@@ -899,7 +899,7 @@ Do NOT extract actors, beneficiaries, or concepts only implied by purpose or ben
 Use DDD vocabulary.
 
 Entities: the core business objects — Aggregates, Entities, or Value Objects in the domain model.
-  Use PascalCase singular nouns (Product, Order, Customer, Money, Address).
+  Use PascalCase singular nouns (Account, Document, Booking, Address, Payment).
   Include only real-world domain concepts — things that exist in the business domain.
   Never include: service names (ProductRegistry, CatalogService), infrastructure (Database, EventBus),
   UI concepts (Form, Page), or technical constructs. If it ends in "Service", "Registry",
@@ -911,12 +911,10 @@ Events: things that happened to a specific entity, named in past tense.
 
   Two kinds of events only:
   1. Lifecycle events — created, updated, deleted:
-       ProductCreated, ProductUpdated, ProductDeleted
-     Any field-level change (uploading an image, editing a description, changing a price)
-     is just ProductUpdated — do NOT create a separate event per field.
+       InvoiceCreated, InvoiceUpdated, InvoiceDeleted
+     Any field-level change is just {{Entity}}Updated — do NOT create a separate event per field.
   2. Business operation events — meaningful state transitions or domain actions:
-       ProductPromotedToCatalog, ProductActivated, ProductDeactivated,
-       OrderPlaced, OrderShipped, OrderCancelled, CustomerRegistered
+       AccountActivated, AccountDeactivated, DocumentPublished, AppointmentScheduled, AppointmentCancelled
      Only include these when the story describes a named business operation,
      not when it describes editing or populating data.
 
@@ -999,6 +997,7 @@ Rules:
 - Specific named roles that reflect actual domain responsibilities — never generic terms like "user" or "end user"
 - Maximum 6 roles
 
+Examples of good roles: administrator, case manager, field operator, analyst, reviewer
 Return ONLY a JSON array of strings. No explanation. No code fences.
 ["role one", "role two"]"#,
         description = idea.description
@@ -1068,8 +1067,6 @@ SKIP a question entirely if its answer is already captured above. Check precisel
 Propose ONLY questions where the decision is genuinely absent from the above context.
 If all decisions are already made, return an empty proposals list.
 
-Identify the architectural questions NOT YET answered that MUST be resolved before a specification can be written for this story.
-
 Include ALL of:
 1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
 2. UI questions — if the story has a human actor performing an action, there must be a frontend component
@@ -1084,9 +1081,9 @@ Include ALL of:
      what event broker/bus is used? Propose it if not yet decided.
 
 Naming rules — strictly enforced:
-- Service and infrastructure component names: kebab-case only (product-registry, catalog-service, backoffice, storefront, redpanda, postgresql)
+- Service and infrastructure component names: kebab-case only (user-service, booking-service, admin-portal, client-portal, redpanda, postgresql)
   Never append "Service", "DB", or "Database" as a suffix to service names.
-- Domain event names: PascalCase past tense, prefixed with the entity name (ProductCreated, OrderPlaced, CustomerRegistered)
+- Domain event names: PascalCase past tense, prefixed with the entity name (InvoiceCreated, AppointmentScheduled, AccountActivated)
   Never use kebab-case for event names.
 
 For tech stack proposals:
@@ -1200,8 +1197,7 @@ Services and Responsibilities:
 Domain Entities: {entities}
 Domain Events: {events}
 
-## Creation story detection
-
+Creation story detection:
 This is a CREATION STORY if the want contains a creation verb (register, create, add, onboard,
 submit, publish) OR if the domain events include a {{Entity}}Created event for an entity in
 the want statement.
@@ -1209,16 +1205,14 @@ the want statement.
 If this is a creation story, you MUST output an entity_schema section before scenarios.
 If this is NOT a creation story, omit entity_schema entirely.
 
-### entity_schema rules
-
-Identify the primary entity being created and define its fields in three categories:
+entity_schema rules — identify the primary entity being created and define its fields:
 
 system_generated — fields the system sets automatically; the actor never provides these:
   - Always include: id (uuid), createdAt (datetime)
   - Always include: modifiedAt (datetime) — null at creation, updated on every write
   - Include business-operation timestamps for any domain event that implies a later state
-    transition on this entity (e.g. ProductPromotedToCatalog → promotedAt datetime,
-    ProductActivated → activatedAt datetime). Set these to null at creation.
+    transition on this entity (e.g. AccountActivated → activatedAt datetime,
+    DocumentPublished → publishedAt datetime). Set these to null at creation.
   - Do not include actor-provided fields here.
 
 mandatory — fields the actor MUST provide when registering the entity:
@@ -1232,9 +1226,7 @@ optional — fields the actor MAY provide; nullable or defaulted:
 Field format: name (camelCase), type (uuid | string | integer | decimal | boolean | datetime),
 description (one sentence).
 
-### Scenario grounding rule (CRITICAL)
-
-When entity_schema is present, BDD scenarios MUST be grounded in it:
+Scenario grounding rule — when entity_schema is present, BDD scenarios MUST be grounded in it:
 - "when" MUST explicitly name the mandatory fields the actor submits
 - "then" MUST reference at least the system-generated fields set at creation
   (e.g. "the system assigns an id and sets createdAt to the current timestamp")
