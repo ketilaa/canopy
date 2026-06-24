@@ -925,6 +925,67 @@ pub fn extract_domain_from_stories(
         .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
 }
 
+fn domain_bootstrap_prompt(idea: &Idea) -> String {
+    format!(
+        r#"You are identifying core domain entities implied by a software idea.
+
+Idea: {description}
+
+List the key business entities this system will manage.
+Rules:
+- PascalCase singular nouns only (User, Account, Document)
+- Real-world domain concepts only — things the business deals with
+- Never include services, infrastructure, UI components, or technical constructs
+- Maximum 10 entities
+
+Return ONLY a JSON array of strings. No explanation. No code fences.
+["Entity1", "Entity2"]"#,
+        description = idea.description
+    )
+}
+
+pub fn suggest_domain_entities(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, ExploreError> {
+    let raw = client.complete(&domain_bootstrap_prompt(idea))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str::<Vec<String>>(stripped)
+        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
+}
+
+fn roles_bootstrap_prompt(idea: &Idea) -> String {
+    format!(
+        r#"You are identifying user roles implied by a software idea.
+
+Idea: {description}
+
+List the key roles of people who will interact with this system.
+Rules:
+- Lowercase noun phrases only (administrator, end user, manager)
+- Human actors only — not systems, services, or technical components
+- Maximum 6 roles
+
+Return ONLY a JSON array of strings. No explanation. No code fences.
+["role one", "role two"]"#,
+        description = idea.description
+    )
+}
+
+pub fn suggest_roles(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, ExploreError> {
+    let raw = client.complete(&roles_bootstrap_prompt(idea))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str::<Vec<String>>(stripped)
+        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
+}
+
 fn architectural_questions_prompt(
     story: &UserStory,
     existing_adrs: &[Adr],

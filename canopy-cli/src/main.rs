@@ -2,7 +2,7 @@ mod roots;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, MultiSelect, Select};
 
 use canopy_core::*;
 use canopy_explore::{
@@ -10,7 +10,8 @@ use canopy_explore::{
     generate_component_architecture, generate_delivery_intents,
     generate_files, generate_implementation_plan, generate_intent_spec,
     generate_scaffold_from_services, generate_stories_from_intent, generate_story_spec,
-    generate_vision, identify_architectural_questions, services_need_jvm, validate_spec, LlmClient,
+    generate_vision, identify_architectural_questions, services_need_jvm, suggest_domain_entities,
+    suggest_roles, validate_spec, LlmClient,
 };
 use canopy_storage::*;
 
@@ -116,7 +117,7 @@ fn unix_timestamp() -> String {
 
 fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
     match cmd {
-        Commands::Init                   => cmd_init(),
+        Commands::Init                   => cmd_init(debug),
         Commands::Vision                 => cmd_vision(debug),
         Commands::DeliveryIntents        => cmd_delivery_intents(debug),
         Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
@@ -211,7 +212,38 @@ fn project_name() -> String {
         .unwrap_or_else(|| "project".to_string())
 }
 
-fn cmd_init() -> Result<()> {
+fn bootstrap_select(theme: &ColorfulTheme, prompt: &str, suggestions: &[String]) -> Result<Vec<String>> {
+    let defaults = vec![true; suggestions.len()];
+    let selected_indices = MultiSelect::with_theme(theme)
+        .with_prompt(prompt)
+        .items(suggestions)
+        .defaults(&defaults)
+        .interact()
+        .context("failed to read selection")?;
+
+    let mut selected: Vec<String> = selected_indices
+        .iter()
+        .map(|&i| suggestions[i].clone())
+        .collect();
+
+    loop {
+        let extra: String = Input::with_theme(theme)
+            .with_prompt("Add missing (leave blank to finish)")
+            .allow_empty(true)
+            .interact_text()
+            .context("failed to read additional entry")?;
+        let extra = extra.trim().to_string();
+        if extra.is_empty() {
+            break;
+        }
+        selected.push(extra);
+    }
+
+    Ok(selected)
+}
+
+fn cmd_init(debug: bool) -> Result<()> {
+    use std::io::Write;
     let theme = ColorfulTheme::default();
 
     let description: String = Input::with_theme(&theme)
@@ -248,6 +280,37 @@ fn cmd_init() -> Result<()> {
     save_adr(1, "deployment-style", &deploy_adr)
         .context("failed to save adr-001-deployment-style.yaml")?;
     println!("  Saved .canopy/decisions/adr-001-deployment-style.yaml");
+
+    // Bootstrap domain entities
+    let client = build_client("explorer", debug)?;
+    print!("Suggesting domain entities... ");
+    let _ = std::io::stdout().flush();
+    match suggest_domain_entities(&client, &idea) {
+        Ok(suggestions) if !suggestions.is_empty() => {
+            println!();
+            let entities = bootstrap_select(&theme, "Domain entities (deselect to remove, add missing below)", &suggestions)?;
+            let registry = DomainRegistry { entities, events: vec![] };
+            save_domain_registry(&registry).context("failed to save domain_registry.yaml")?;
+            println!("  Saved .canopy/domain_registry.yaml ({} entities)", registry.entities.len());
+        }
+        Ok(_) => println!("none suggested"),
+        Err(e) => println!("skipped ({e})"),
+    }
+
+    // Bootstrap roles
+    print!("Suggesting roles... ");
+    let _ = std::io::stdout().flush();
+    match suggest_roles(&client, &idea) {
+        Ok(suggestions) if !suggestions.is_empty() => {
+            println!();
+            let roles = bootstrap_select(&theme, "Roles (deselect to remove, add missing below)", &suggestions)?;
+            let registry = RolesRegistry { roles };
+            save_roles_registry(&registry).context("failed to save roles.yaml")?;
+            println!("  Saved .canopy/roles.yaml ({} roles)", registry.roles.len());
+        }
+        Ok(_) => println!("none suggested"),
+        Err(e) => println!("skipped ({e})"),
+    }
 
     println!("Project: {}", project_name());
     println!("Next: run `canopy intent` to add your first behavioral requirement.");
