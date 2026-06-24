@@ -1131,7 +1131,11 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
 
     if let Some(entry) = services.services.iter_mut().find(|s| s.name == *name) {
         for r in &filtered_responsibilities {
-            if !entry.responsibilities.contains(r) {
+            let normalized = r.trim().trim_end_matches('.').to_lowercase();
+            let already_present = entry.responsibilities.iter().any(|existing| {
+                existing.trim().trim_end_matches('.').to_lowercase() == normalized
+            });
+            if !already_present {
                 entry.responsibilities.push(r.clone());
             }
         }
