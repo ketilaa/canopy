@@ -1074,7 +1074,8 @@ Include ALL of:
 1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
 2. UI questions — if the story has a human actor performing an action, there must be a frontend component
    through which they act. Ask what UI delivers this capability and propose it as a new service if not yet decided.
-3. Tech stack questions — for any new service or frontend introduced, what technology should it be built with?
+3. Tech stack questions — for every new service or frontend introduced, what technology should it be built with?
+   This is MANDATORY — never omit a tech stack proposal for a newly introduced service or frontend.
    Suggest the most pragmatic and common choice, but a human will decide before accepting.
 4. Infrastructure questions — if not yet decided:
    - Persistent storage: what database does each service use to store its data?
@@ -1242,9 +1243,9 @@ When entity_schema is present, BDD scenarios MUST be grounded in it:
 Write BDD scenarios (Given/When/Then) as acceptance criteria. Additional rules:
 - Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
   HTTP verbs, JSON payloads, or implementation details
-- Given describes the world state before the action
-- When describes what the user or system does
-- Then describes what the user observes or what state has changed
+- Given describes the BUSINESS STATE before the action — never infrastructure health, service availability, or deployment topology
+- When describes what the actor does — one action per scenario
+- Then describes what the actor observes or what business state has changed
 - Use the exact kebab-case service names defined above
 - intent_ref must be exactly: {story_id}
 - Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
