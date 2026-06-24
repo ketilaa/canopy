@@ -812,10 +812,7 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
 - "want" must describe a capability, not a location or component — do not name services, bounded
   contexts, or architectural components (avoid: "in the catalog", "via the API", "in the registry")
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
-- Do not split stories that populate the same domain object:
-  a creation story covers only the mandatory attributes needed for the object to exist.
-  Optional attributes, images, descriptions, and enrichment data belong to a separate update story.
-  Only generate an update story when the intent explicitly asks for enrichment or editing.
+- A creation story includes all actor-provided attributes — mandatory and optional. Split into an update story only when the intent explicitly describes editing an existing record.
 - "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
 - Reason explicitly about dependencies within this batch: if story B requires story A to exist
   first (because it operates on something A creates), then B must list A in depends_on
