@@ -1084,7 +1084,8 @@ Include ALL of:
      what event broker/bus is used? Propose it if not yet decided.
 
 Naming rules — strictly enforced:
-- Service and infrastructure component names: kebab-case only (user-service, booking-service, admin-portal, client-portal, redpanda, postgresql)
+- Service, frontend, and infrastructure component names: kebab-case only (user-service, booking-service, admin-portal, client-portal, redpanda, postgresql)
+  Never use PascalCase or camelCase for component names.
   Never append "Service", "DB", or "Database" as a suffix to service names.
 - Domain event names: PascalCase past tense, prefixed with the entity name (InvoiceCreated, AppointmentScheduled, AccountActivated)
   Never use kebab-case for event names.
