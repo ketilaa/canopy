@@ -1239,10 +1239,15 @@ Scenario grounding rule — when entity_schema is present, BDD scenarios MUST be
 Write BDD scenarios (Given/When/Then) as acceptance criteria. Additional rules:
 - Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
   HTTP verbs, JSON payloads, or implementation details
-- Given describes the BUSINESS STATE before the action — never infrastructure health, service availability, or deployment topology
+- Given describes actor context and relevant domain state only — never system availability,
+  portal health, service status, or infrastructure operations.
+  Good: "The product manager is authenticated and no product with this name exists."
+  Bad:  "The admin portal is operating normally."
 - When describes what the actor does — one action per scenario
-- Then describes what the actor observes or what business state has changed
-- Use the exact kebab-case service names defined above
+- Then describes what the actor observes or what changed in the domain — never service internals,
+  technology names, or infrastructure operations.
+  Good: "The product is registered and a ProductCreated event is published."
+  Bad:  "ProductService stores the data and Redpanda receives the event."
 - intent_ref must be exactly: {story_id}
 - Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
 
