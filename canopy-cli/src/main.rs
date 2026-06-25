@@ -1117,10 +1117,32 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
         return;
     }
 
-    let Some(ref name) = proposal.service else { return };
-    if name.is_empty() {
+    // Frontend proposals often have service: null with the component name in decision instead.
+    // Derive the name: for a naming proposal (no technology) use decision; for a tech stack
+    // proposal (technology set) find an existing untyped frontend entry.
+    let derived_name: Option<String>;
+    let name: &str = if let Some(ref svc) = proposal.service {
+        if svc.is_empty() { return; }
+        svc.as_str()
+    } else if proposal.component_type.as_deref() == Some("frontend") {
+        if proposal.technology.is_none() {
+            // Component-naming proposal: decision holds the frontend name.
+            let candidate = proposal.decision.trim();
+            if candidate.is_empty() { return; }
+            derived_name = Some(candidate.to_string());
+            derived_name.as_deref().unwrap()
+        } else {
+            // Tech stack proposal: apply to the most recent frontend entry without technology.
+            if let Some(entry) = services.services.iter_mut().find(|s| {
+                s.component_type.as_deref() == Some("frontend") && s.technology.is_none()
+            }) {
+                entry.technology = proposal.technology.clone();
+            }
+            return;
+        }
+    } else {
         return;
-    }
+    };
 
     let filtered_responsibilities: Vec<String> = proposal
         .service_responsibilities
@@ -1152,7 +1174,7 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
         }
     } else {
         services.services.push(ServiceEntry {
-            name: name.clone(),
+            name: name.to_string(),
             responsibilities: filtered_responsibilities,
             technology: proposal.technology.clone(),
             component_type: Some(

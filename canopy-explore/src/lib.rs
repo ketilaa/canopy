@@ -1071,9 +1071,11 @@ Include ALL of:
 1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
 2. UI questions — if the story has a human actor performing an action, there must be a frontend component
    through which they act. Ask what UI delivers this capability and propose it as a new service if not yet decided.
-   Immediately after proposing a new frontend component, propose its tech stack as the very next question.
+   - Set service to the kebab-case frontend component name (e.g. admin-portal) for BOTH the component proposal AND its tech stack proposal.
+   - Immediately after proposing a new frontend component, propose its tech stack as the very next question.
 3. Tech stack questions — for every new backend service introduced in category 1, what technology should it use?
-   This is MANDATORY — never omit a tech stack proposal for a newly introduced service.
+   This is MANDATORY — never omit a tech stack proposal for a newly introduced backend service.
+   Set service to the service name and component_type to "service".
    Suggest the most pragmatic and common choice, but a human will decide before accepting.
 4. Infrastructure questions — if not yet decided:
    - Persistent storage: what database does each service use to store its data?
