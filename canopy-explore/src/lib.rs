@@ -1247,7 +1247,7 @@ Return ONLY valid YAML — no prose, no code fences.
 YAML string rules — you MUST follow these to avoid parse errors:
 - Any string value containing a colon (:) MUST be enclosed in double quotes
 - Any list item ending with a question mark (?) MUST be enclosed in double quotes
-- type values use plain strings only: string, integer, decimal, uuid, datetime, boolean — never angle-bracket generics like array<string>; use "[string]" instead
+- type values are strings: string, integer, decimal, uuid, datetime, boolean, "[string]", "[uuid]" — always quote bracket forms: type: "[string]" not type: [string]
 
 intent_ref: {story_id}
 entity_schema:                    # omit entirely if not a creation story
@@ -1317,6 +1317,14 @@ fn fix_yaml_colon_in_scalars(yaml: &str) -> String {
         if let Some(colon_pos) = line.find(": ") {
             let (key_part, rest) = line.split_at(colon_pos + 2);
             let value = rest.trim_end();
+            // type: [string] — LLM uses bracket notation for array types but YAML parses
+            // it as an inline sequence. Quote any unquoted bracket-enclosed type annotation.
+            if value.starts_with('[') && value.ends_with(']')
+                && !value.starts_with("[\n")
+                && !value[1..value.len()-1].contains(", ")
+            {
+                return format!("{}\"{}\"", key_part, value);
+            }
             // Only fix plain (unquoted) scalars that contain a colon
             if !value.is_empty()
                 && !value.starts_with('"')
