@@ -1139,11 +1139,12 @@ fn update_services_from_proposal(services: &mut ServicesRegistry, proposal: &Pro
                 entry.responsibilities.push(r.clone());
             }
         }
-        if entry.technology.is_none() {
+        // A proposal with an explicit component_type is a tech stack ADR and is authoritative
+        // for technology — overrides any accidental earlier setting (e.g. a database ADR that
+        // leaked its technology onto the service entry because component_type was not set).
+        if entry.technology.is_none() || proposal.component_type.is_some() {
             entry.technology = proposal.technology.clone();
         }
-        // An explicit component_type from the proposal (e.g. "frontend" from the tech stack ADR)
-        // always overrides the default set by an earlier structural ADR.
         if entry.component_type.is_none() || proposal.component_type.is_some() {
             entry.component_type = Some(
                 proposal.component_type.clone().unwrap_or_else(|| "service".to_string())
@@ -1326,7 +1327,7 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                 let adr = Adr {
                     title: format!("Tech stack for {}", name),
                     decision: tech.clone(),
-                    reason: "Decided interactively — not proposed by LLM.".to_string(),
+                    reason: format!("Technology for {} decided during spec — no proposal was generated.", name),
                     alternatives: vec![],
                 };
                 let index = existing_adrs.len() + 1;
