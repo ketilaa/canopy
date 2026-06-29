@@ -20,7 +20,7 @@ Everything emerges. Nothing is decided upfront.
 
 | Artifact | Emerges from |
 |---|---|
-| Vision | `canopy explore` |
+| Vision | `canopy init` |
 | User roles | `canopy intent` (from `as_a` fields) |
 | Domain entities and events | `canopy intent` (automatic extraction) |
 | User stories | `canopy intent` (one behavioral statement at a time) |
@@ -63,7 +63,14 @@ canopy scaffold [dir]
   └─ requires at least one service with a decided technology
   └─ runs scaffold commands: Spring Boot, Angular, React, Node.js, etc.
 
-canopy implement <story-id>   (future)
+canopy implement <story-id>
+  └─ detects actual package from scaffolded *Application.java (no guessing)
+  └─ generates implementation plan: one LLM call per service → merged and sorted
+  └─ human confirms plan before execution
+  └─ executes step by step, reindexes after each file
+  └─ runs test/fix loop per service after all steps complete (up to 5 iterations)
+  └─ saves: stories/<id>/plan.yaml, stories/<id>/contract.yaml
+
 canopy validate <story-id>    (future)
 ```
 
@@ -100,6 +107,8 @@ but skipped by `canopy scaffold` — they belong in docker-compose or equivalent
   stories/
     <story-id>/
       spec.yaml                    BDD scenarios for that story
+      plan.yaml                    implementation steps with status (resume-safe)
+      contract.yaml                OAS contract snapshot used during implementation
 ```
 
 ---
@@ -110,12 +119,12 @@ but skipped by `canopy scaffold` — they belong in docker-compose or equivalent
 
 ```
 canopy-core/       data types (structs, enums, serde)
-canopy-explore/    LLM prompt functions and generation logic
+canopy-llm/        LLM client, prompts, and generation functions
 canopy-storage/    save/load wrappers around .canopy/
 canopy-cli/        CLI commands (clap), interactive prompts (dialoguer)
 ```
 
-When adding a new capability: type in core → storage helpers → explore prompt/function → cli command.
+When adding a new capability: type in core → storage helpers → llm prompt/function → cli command.
 
 ### Roots (repository intelligence engine)
 
@@ -135,6 +144,38 @@ The graph hierarchy: Workspace → Project → Module → File → Symbol.
 Roots is the authoritative source of truth in repository mode.
 `canopy-cli` calls into `roots-context` to get context packets rather than reading files directly.
 When Roots is available, prefer `roots-context` over `canopy-storage` for symbol and relationship queries.
+
+---
+
+## Tech-Stack Skills
+
+`canopy implement` injects a **skill** into each per-service plan prompt based on the service's
+technology. A skill is a concise, authoritative rules block that tells the LLM the exact
+conventions for that tech stack — package layout, file paths, naming, forbidden patterns.
+
+Skills are defined in `canopy-llm/src/lib.rs`. The matcher is `skill_for_technology(tech, pkg, pkg_path, service_name)`.
+
+| Skill | Matched by |
+|---|---|
+| Spring Boot 3 (Jakarta EE) | "spring", "quarkus", "micronaut", "java", "kotlin" |
+| React + TypeScript (Vite) | "react", "vite" |
+| Angular | "angular" |
+| Node.js / Express | "node", "express", "nest" |
+
+**What a skill encodes:**
+- Exact file paths and source roots (computed from the detected scaffold package)
+- Sub-package names and layer ordering
+- Forbidden patterns (e.g. `javax.*`, `../../` imports)
+- Required dependencies (e.g. `spring-boot-starter-validation`)
+- Strict scope: only files directly required by the story — no speculative abstractions
+
+**Scope discipline.** Each skill explicitly lists what must NOT be added unless a story requires it.
+For Spring Boot: no extra Application classes, no sub-package for the entry point.
+For React/Vite: no custom hooks, page components, route files, Redux slices, or utility modules
+unless the story's acceptance criteria call for them. Architecture emerges story by story.
+
+**Adding a new skill:** add a `const SKILL_*` string (or a function for dynamic context),
+add a match arm in `skill_for_technology`, and document it in this table.
 
 ---
 

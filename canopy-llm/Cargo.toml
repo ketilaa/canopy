@@ -1,5 +1,5 @@
 [package]
-name = "canopy-explore"
+name = "canopy-llm"
 version = "0.1.0"
 edition = "2021"
 

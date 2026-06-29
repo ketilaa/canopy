@@ -5,13 +5,11 @@ use clap::{Parser, Subcommand};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, MultiSelect, Select};
 
 use canopy_core::*;
-use canopy_explore::{
-    extract_domain_from_stories, generate_adrs, generate_architecture_principles,
-    generate_component_architecture, generate_delivery_intents,
-    generate_files, generate_implementation_plan, generate_intent_spec,
-    generate_scaffold_from_services, generate_stories_from_intent, generate_story_spec,
-    generate_vision, identify_architectural_questions, services_need_jvm, suggest_domain_entities,
-    suggest_roles, validate_spec, LlmClient,
+use canopy_llm::{
+    execute_implementation_step, extract_domain_from_stories, fix_file,
+    generate_scaffold_from_services, generate_stories_from_intent, generate_story_contract,
+    generate_story_plan, generate_story_spec, identify_architectural_questions,
+    services_need_jvm, suggest_domain_entities, suggest_roles, LlmClient,
 };
 use canopy_storage::*;
 
@@ -34,28 +32,9 @@ struct Cli {
 enum Commands {
     /// Initialise a new project — describe what you are building
     Init,
-    /// Regenerate vision.yaml from saved idea
-    Vision,
-    /// Regenerate delivery_intents.yaml from saved idea and vision
-    DeliveryIntents,
-    /// Regenerate architecture_principles.yaml from saved vision and delivery intents
-    ArchitecturePrinciples,
     /// Show the accumulated domain vocabulary (entities and events)
     Domain,
-    /// Generate spec.yaml and plan.yaml for a delivery intent
-    Plan {
-        /// Intent to plan: index (0, 1, …) or title fragment. Prompts interactively if omitted.
-        #[arg(long)]
-        intent: Option<String>,
-    },
-    /// Mark a plan as confirmed so an implementation agent can consume it
-    PlanConfirm {
-        /// Plan slug (directory name under .canopy/plans/)
-        slug: String,
-    },
-    /// List all plans and their current status
-    PlanList,
-    /// Derive scaffold commands from component_architecture.yaml and run them
+    /// Derive scaffold commands from services.yaml and run them
     Scaffold {
         /// Directory to run scaffold commands in (defaults to current directory)
         #[arg(long, default_value = ".")]
@@ -64,15 +43,10 @@ enum Commands {
         #[arg(long)]
         regenerate: bool,
     },
-    /// Implement all pending tasks in a confirmed plan
+    /// Implement a story using its spec and OAS contract
     Implement {
-        /// Plan slug (directory name under .canopy/plans/)
-        slug: String,
-    },
-    /// Validate generated files against spec scenarios
-    Validate {
-        /// Plan slug (directory name under .canopy/plans/)
-        slug: String,
+        /// Story ID to implement (must have status: accepted and a generated spec)
+        story_id: String,
     },
     /// List all user stories and their current status
     Stories,
@@ -117,20 +91,13 @@ fn unix_timestamp() -> String {
 
 fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
     match cmd {
-        Commands::Init                   => cmd_init(debug),
-        Commands::Vision                 => cmd_vision(debug),
-        Commands::DeliveryIntents        => cmd_delivery_intents(debug),
-        Commands::ArchitecturePrinciples => cmd_architecture_principles(debug),
-        Commands::Domain                 => cmd_domain_show(),
-        Commands::Plan { intent }        => cmd_plan(intent, debug),
-        Commands::PlanConfirm { slug }   => cmd_plan_confirm(&slug),
-        Commands::PlanList               => cmd_plan_list(),
+        Commands::Init                         => cmd_init(debug),
+        Commands::Domain                       => cmd_domain_show(),
         Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
-        Commands::Implement { slug }     => cmd_implement(&slug, debug),
-        Commands::Validate { slug }      => cmd_validate(&slug, debug),
-        Commands::Stories               => cmd_stories(),
-        Commands::Intent { statement }   => cmd_intent(statement, debug),
-        Commands::Spec { story_id }      => cmd_spec(&story_id, debug),
+        Commands::Implement { story_id }       => cmd_implement(&story_id, debug),
+        Commands::Stories                      => cmd_stories(),
+        Commands::Intent { statement }         => cmd_intent(statement, debug),
+        Commands::Spec { story_id }            => cmd_spec(&story_id, debug),
     }
 }
 
@@ -282,7 +249,7 @@ fn cmd_init(debug: bool) -> Result<()> {
     println!("  Saved .canopy/decisions/adr-001-deployment-style.yaml");
 
     // Bootstrap domain entities
-    let client = build_client("explorer", debug)?;
+    let client = build_client("intent", debug)?;
     print!("Suggesting domain entities... ");
     let _ = std::io::stdout().flush();
     match suggest_domain_entities(&client, &idea) {
@@ -377,248 +344,6 @@ fn deployment_style_adr(idx: usize) -> Adr {
             ],
         },
     }
-}
-
-fn cmd_vision(debug: bool) -> Result<()> {
-    let client = build_client("explorer", debug)?;
-    let idea = load_idea()
-        .context("No idea.yaml found — run `canopy explore` first")?;
-    println!("Generating vision...");
-    let vision = generate_vision(&client, &idea, &[])
-        .context("failed to generate vision")?;
-    save_vision(&vision).context("failed to save vision.yaml")?;
-    println!("Saved .canopy/vision.yaml");
-    Ok(())
-}
-
-fn cmd_delivery_intents(debug: bool) -> Result<()> {
-    let client = build_client("explorer", debug)?;
-    let idea = load_idea()
-        .context("No idea.yaml found — run `canopy explore` first")?;
-    let vision = load_vision()
-        .context("No vision.yaml found — run `canopy vision` first")?;
-    println!("Generating delivery intents...");
-    let intents = generate_delivery_intents(&client, &idea, &vision, &[])
-        .context("failed to generate delivery intents")?;
-    save_delivery_intents(&intents).context("failed to save delivery_intents.yaml")?;
-    println!("Saved .canopy/delivery_intents.yaml");
-    Ok(())
-}
-
-fn cmd_architecture_principles(debug: bool) -> Result<()> {
-    let client = build_client("explorer", debug)?;
-    let vision = load_vision()
-        .context("No vision.yaml found — run `canopy vision` first")?;
-    let intents = load_delivery_intents()
-        .context("No delivery_intents.yaml found — run `canopy delivery-intents` first")?;
-    println!("Generating architecture principles...");
-    let principles = generate_architecture_principles(&client, &vision, &intents, &[])
-        .context("failed to generate architecture principles")?;
-    save_architecture_principles(&principles).context("failed to save architecture_principles.yaml")?;
-    println!("Saved .canopy/architecture_principles.yaml");
-    Ok(())
-}
-
-
-fn cmd_plan(intent: Option<String>, debug: bool) -> Result<()> {
-    let theme = ColorfulTheme::default();
-
-    let vision = load_vision()
-        .context("No vision.yaml found — run `canopy explore` first")?;
-    let intents = load_delivery_intents()
-        .context("No delivery_intents.yaml found — run `canopy explore` first")?;
-    let principles = load_architecture_principles()
-        .context("No architecture_principles.yaml found — run `canopy explore` first")?;
-    // Entity vocabulary: Roots is authoritative when available (repository mode).
-    // Falls back to the accumulated domain_registry.yaml in greenfield mode.
-    let registry = match roots::entity_vocabulary() {
-        Some(names) => {
-            println!("  Using Roots index for entity vocabulary ({} symbols)", names.len());
-            DomainRegistry {
-                entities: names.into_iter().map(DomainEntity::Simple).collect(),
-                events: vec![],
-            }
-        }
-        None => load_domain_registry().context("failed to load domain_registry.yaml")?,
-    };
-
-    // Ensure component architecture exists; generate and confirm if not.
-    let comp_arch = match load_component_architecture() {
-        Ok(a) => a,
-        Err(StorageError::NotFound(_)) => {
-            let client = build_client("architect", debug)?;
-            println!("Component architecture not found. Generating from principles...");
-            let arch = generate_component_architecture(&client, &vision, &intents, &principles, &registry)
-                .context("failed to generate component architecture")?;
-
-            let arch_yaml = serde_yaml::to_string(&arch)
-                .context("failed to serialize component architecture")?;
-            println!("\nProposed component architecture:\n{arch_yaml}");
-
-            let accepted = Confirm::with_theme(&theme)
-                .with_prompt("Accept this component architecture?")
-                .interact()
-                .context("failed to read confirmation")?;
-
-            if !accepted {
-                println!("Cancelled. Adjust .canopy/architecture_principles.yaml and retry.");
-                return Ok(());
-            }
-
-            save_component_architecture(&arch)
-                .context("failed to save component_architecture.yaml")?;
-            println!("Saved .canopy/component_architecture.yaml");
-
-            println!("Generating ADRs...");
-            let adrs = generate_adrs(&client, &arch, &principles)
-                .context("failed to generate ADRs")?;
-            for (i, adr) in adrs.iter().enumerate() {
-                let slug = intent_slug(&adr.title);
-                save_adr(i + 1, &slug, adr)
-                    .context("failed to save ADR")?;
-                println!("  Saved .canopy/decisions/adr-{:03}-{}.yaml", i + 1, slug);
-            }
-
-            arch
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    // Select delivery intent.
-    let selected_idx = match &intent {
-        Some(s) => {
-            if let Ok(idx) = s.parse::<usize>() {
-                if idx < intents.intents.len() {
-                    idx
-                } else {
-                    anyhow::bail!(
-                        "intent index {} out of range (valid: 0..{})",
-                        idx,
-                        intents.intents.len().saturating_sub(1)
-                    );
-                }
-            } else {
-                let s_lower = s.to_lowercase();
-                intents
-                    .intents
-                    .iter()
-                    .position(|i| i.title.to_lowercase().contains(&s_lower))
-                    .ok_or_else(|| anyhow::anyhow!("no intent matching '{}'", s))?
-            }
-        }
-        None => {
-            let titles: Vec<&str> = intents.intents.iter().map(|i| i.title.as_str()).collect();
-            Select::with_theme(&theme)
-                .with_prompt("Select a delivery intent to plan")
-                .items(&titles)
-                .default(0)
-                .interact()
-                .context("failed to read intent selection")?
-        }
-    };
-
-    let selected_intent = &intents.intents[selected_idx];
-    let slug = intent_slug(&selected_intent.title);
-
-    println!("\nPlanning: {}", selected_intent.title);
-
-    let client = build_client("planner", debug)?;
-
-    println!("Generating intent specification...");
-    let spec = generate_intent_spec(&client, selected_intent, &registry, &comp_arch)
-        .context("failed to generate intent specification")?;
-
-    // Collect answers to open questions.
-    let mut answered: Vec<AnsweredQuestion> = Vec::new();
-    if !spec.open_questions.is_empty() {
-        println!("\nOpen questions (press Enter to skip):\n");
-        for (i, q) in spec.open_questions.iter().enumerate() {
-            let answer: String = Input::with_theme(&theme)
-                .with_prompt(format!("[{}/{}] {}", i + 1, spec.open_questions.len(), q))
-                .allow_empty(true)
-                .interact_text()
-                .context("failed to read answer")?;
-            if !answer.trim().is_empty() {
-                answered.push(AnsweredQuestion { question: q.clone(), answer });
-            }
-        }
-    }
-
-    println!("\nGenerating implementation plan...");
-    let mut plan = generate_implementation_plan(
-        &client,
-        selected_intent,
-        selected_idx,
-        &spec,
-        &registry,
-        &comp_arch,
-        &intents,
-        &answered,
-    )
-    .context("failed to generate implementation plan")?;
-
-    plan.intent_index = selected_idx;
-    plan.status = "draft".to_string();
-    plan.generated_at = unix_timestamp();
-
-    save_intent_spec(&slug, &spec)
-        .context("failed to save spec.yaml")?;
-    println!("  Saved .canopy/plans/{}/spec.yaml", slug);
-
-    save_implementation_plan(&slug, &plan)
-        .context("failed to save plan.yaml")?;
-    println!("  Saved .canopy/plans/{}/plan.yaml", slug);
-
-    // Merge this intent's domain scope into the registry so future plans have the vocabulary.
-    let mut updated_registry = registry;
-    updated_registry.merge(&plan.domain_scope);
-    save_domain_registry(&updated_registry)
-        .context("failed to save domain_registry.yaml")?;
-    println!("  Updated .canopy/domain_registry.yaml ({} entities, {} events)",
-        updated_registry.entities.len(), updated_registry.events.len());
-
-    println!("\nPlan '{}' created (status: draft)", slug);
-    if plan.open_questions.iter().any(|q| q.blocking && q.answer.is_none()) {
-        println!("  WARNING: plan has unresolved blocking questions — review plan.yaml before confirming");
-    }
-    println!("Run `canopy plan-confirm {}` when ready.", slug);
-    Ok(())
-}
-
-fn cmd_plan_confirm(slug: &str) -> Result<()> {
-    let mut plan = load_implementation_plan(slug)
-        .with_context(|| format!("no plan '{slug}' found — run `canopy plan` first"))?;
-
-    if plan.status == "confirmed" {
-        println!("Plan '{slug}' is already confirmed.");
-        return Ok(());
-    }
-
-    plan.status = "confirmed".to_string();
-    save_implementation_plan(slug, &plan)
-        .with_context(|| format!("failed to save confirmed plan '{slug}'"))?;
-
-    println!("Plan '{slug}' confirmed — ready for implementation.");
-    Ok(())
-}
-
-fn cmd_plan_list() -> Result<()> {
-    let slugs = list_plans().context("failed to list plans")?;
-
-    if slugs.is_empty() {
-        println!("No plans found. Run `canopy plan` to create one.");
-        return Ok(());
-    }
-
-    println!("Plans:");
-    for slug in &slugs {
-        let status = match load_implementation_plan(slug) {
-            Ok(p) => p.status,
-            Err(_) => "unknown".to_string(),
-        };
-        println!("  {:<40}  [{}]", slug, status);
-    }
-    Ok(())
 }
 
 fn cmd_scaffold(dir: &str, regenerate: bool, _debug: bool) -> Result<()> {
@@ -725,167 +450,521 @@ fn cmd_scaffold(dir: &str, regenerate: bool, _debug: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_implement(slug: &str, debug: bool) -> Result<()> {
-    let plan = load_implementation_plan(slug)
-        .with_context(|| format!("no plan '{slug}' — run `canopy plan` first"))?;
-
-    if plan.status != "confirmed" {
-        anyhow::bail!(
-            "plan '{slug}' is '{}' — run `canopy plan-confirm {slug}` first",
-            plan.status
-        );
+fn scan_project_files(services: &ServicesRegistry) -> Vec<String> {
+    let mut files = Vec::new();
+    for service in &services.services {
+        if service.component_type.as_deref() == Some("infrastructure") { continue; }
+        let base = match service.component_type.as_deref().unwrap_or("service") {
+            "frontend" => format!("frontend/{}", service.name),
+            _ => format!("services/{}", service.name),
+        };
+        collect_files(std::path::Path::new(&base), &mut files);
     }
-
-    let pending: Vec<_> = plan.tasks.iter().filter(|t| !t.completed).collect();
-    if pending.is_empty() {
-        println!("All tasks in '{slug}' are already complete.");
-        return Ok(());
-    }
-
-    let spec = load_intent_spec(slug)
-        .with_context(|| format!("no spec for '{slug}'"))?;
-    let comp_arch = load_component_architecture()
-        .context("no component_architecture.yaml — run `canopy plan` first")?;
-    let intents = load_delivery_intents()
-        .context("no delivery_intents.yaml — run `canopy explore` first")?;
-    let intent = intents.intents.get(plan.intent_index)
-        .ok_or_else(|| anyhow::anyhow!("intent index {} out of range", plan.intent_index))?;
-
-    // Roots context for repository mode; None in greenfield.
-    let roots_ctx = roots::get_feature_context(&intent.title)
-        .map(|p| serde_json::to_string(&p).unwrap_or_default());
-    if roots_ctx.is_some() {
-        println!("Using Roots context for '{}'", intent.title);
-    }
-
-    let client = build_client("developer", debug)?;
-
-    println!("\nImplementing {} pending task(s) for '{slug}'...", pending.len());
-    let output = generate_files(&client, intent, &spec, &plan, &comp_arch, roots_ctx.as_deref())
-        .context("developer LLM call failed")?;
-
-    // Write files to disk.
-    for file in &output.files {
-        let dest = std::path::Path::new(&file.path);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory for {}", file.path))?;
-        }
-        std::fs::write(dest, &file.content)
-            .with_context(|| format!("failed to write {}", file.path))?;
-        println!("  wrote  {}", file.path);
-    }
-
-    // Mark tasks whose declared outputs were generated as completed.
-    let generated_paths: std::collections::HashSet<&str> =
-        output.files.iter().map(|f| f.path.as_str()).collect();
-
-    let mut updated_plan = plan;
-    for task in updated_plan.tasks.iter_mut() {
-        if !task.completed && task.outputs.iter().any(|o| generated_paths.contains(o.as_str())) {
-            task.completed = true;
-        }
-    }
-    updated_plan.status = if updated_plan.tasks.iter().all(|t| t.completed) {
-        "complete".to_string()
-    } else {
-        "in_progress".to_string()
-    };
-
-    save_implementation_plan(slug, &updated_plan)
-        .context("failed to save updated plan")?;
-
-    println!(
-        "\n{} file(s) written. Plan '{}' status: {}",
-        output.files.len(),
-        slug,
-        updated_plan.status
-    );
-
-    // Keep the Roots index current so the next LLM context query reflects the new files.
-    if std::path::Path::new(".roots/index.db").exists() {
-        use std::io::Write;
-        print!("Updating Roots index... ");
-        let _ = std::io::stdout().flush();
-        roots::reindex();
-        println!("done");
-    }
-
-    println!("Run `canopy validate {slug}` to verify against spec scenarios.");
-    Ok(())
+    files
 }
 
-fn cmd_validate(slug: &str, debug: bool) -> Result<()> {
-    let plan = load_implementation_plan(slug)
-        .with_context(|| format!("no plan '{slug}' — run `canopy plan` first"))?;
+/// Walk a JVM service's src/main/java tree to find *Application.java and read its package declaration.
+/// Returns the fully qualified base package as declared in the file (e.g. "com.example.canopyecommerce.product_service").
+fn detect_service_package(service_name: &str) -> Option<String> {
+    let root = std::path::Path::new("services")
+        .join(service_name)
+        .join("src/main/java");
+    find_application_package(&root)
+}
 
-    if matches!(plan.status.as_str(), "draft" | "confirmed") {
-        anyhow::bail!(
-            "plan '{slug}' has not been implemented yet (status: {})",
-            plan.status
-        );
+fn find_application_package(dir: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if let Some(pkg) = find_application_package(&path) {
+                return Some(pkg);
+            }
+        } else if name.ends_with("Application.java") {
+            let content = std::fs::read_to_string(&path).ok()?;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("package ") {
+                    return Some(rest.trim_end_matches(';').trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn collect_files(dir: &std::path::Path, out: &mut Vec<String>) {
+    let skip = ["target", "node_modules", ".git", ".roots"];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if skip.contains(&name) { continue; }
+            if path.is_dir() {
+                collect_files(&path, out);
+            } else {
+                out.push(path.to_string_lossy().to_string());
+            }
+        }
+    }
+}
+
+fn format_roots_context(packet: &roots_context::FeatureContextPacket) -> String {
+    let mut parts = Vec::new();
+    if !packet.symbols.is_empty() {
+        let syms: Vec<String> = packet.symbols.iter()
+            .map(|s| format!("  {} {} ({}:{})", s.kind, s.fqn, s.file, s.line))
+            .collect();
+        parts.push(format!("Symbols:\n{}", syms.join("\n")));
+    }
+    if !packet.facts.is_empty() {
+        let facts = packet.facts.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n");
+        parts.push(format!("Facts:\n{facts}"));
+    }
+    parts.join("\n")
+}
+
+fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
+    let theme = ColorfulTheme::default();
+
+    let stories = load_user_stories()
+        .context("no stories.yaml — run `canopy intent` first")?;
+    let story = stories.stories.iter()
+        .find(|s| s.id == story_id)
+        .ok_or_else(|| anyhow::anyhow!("story '{}' not found", story_id))?;
+    if story.status != StoryStatus::Accepted {
+        anyhow::bail!("story '{}' is not accepted", story_id);
     }
 
-    let spec = load_intent_spec(slug)
-        .with_context(|| format!("no spec for '{slug}'"))?;
-    let intents = load_delivery_intents()
-        .context("no delivery_intents.yaml — run `canopy explore` first")?;
-    let intent = intents.intents.get(plan.intent_index)
-        .ok_or_else(|| anyhow::anyhow!("intent index {} out of range", plan.intent_index))?;
+    let spec = load_story_spec(story_id)
+        .with_context(|| format!("no spec for '{}' — run `canopy spec {story_id}` first", story_id))?;
 
-    // Collect all output files from tasks.
-    let mut generated_files: Vec<(String, String)> = Vec::new();
-    for task in &plan.tasks {
-        for output_path in &task.outputs {
-            let p = std::path::Path::new(output_path);
-            if p.exists() {
-                match std::fs::read_to_string(p) {
-                    Ok(content) => generated_files.push((output_path.clone(), content)),
-                    Err(e) => eprintln!("  warning: could not read {output_path}: {e}"),
+    let contract_path = canopy_storage::storage_dir()
+        .join(format!("stories/{}/contract.yaml", story_id));
+    let contract_yaml = std::fs::read_to_string(&contract_path)
+        .with_context(|| format!("no contract for '{}' — run `canopy spec {story_id}` first", story_id))?;
+
+    let services = load_services_registry()
+        .context("no services.yaml — run `canopy spec` first")?;
+
+    let adrs = load_all_adrs().unwrap_or_default();
+
+    // Detect the actual base package per JVM service from the scaffolded *Application.java.
+    // This adapts to whatever naming convention the scaffold tool used (Spring Initializr
+    // converts "product-service" to "product_service", not "productservice").
+    let service_packages: std::collections::HashMap<String, String> = services.services.iter()
+        .filter(|s| s.component_type.as_deref() != Some("infrastructure")
+                 && s.component_type.as_deref() != Some("frontend"))
+        .filter_map(|s| detect_service_package(&s.name).map(|pkg| (s.name.clone(), pkg)))
+        .collect();
+    if service_packages.is_empty() {
+        println!("Note: no scaffolded JVM services found — package detection skipped.");
+    } else {
+        for (name, pkg) in &service_packages {
+            println!("Detected package for {name}: {pkg}");
+        }
+    }
+
+    // Load or generate implementation plan
+    let mut plan = match load_story_plan(story_id) {
+        Ok(existing) => {
+            let pending = existing.steps.iter().filter(|s| s.status == StepStatus::Pending).count();
+            if pending == 0 {
+                println!("All steps for '{}' are done — running test/fix loop.", story_id);
+            } else {
+                println!("Resuming plan for '{}' ({} pending step(s)).", story_id, pending);
+            }
+            existing
+        }
+        Err(_) => {
+            let existing_files = scan_project_files(&services);
+            println!("Generating implementation plan for '{story_id}'...");
+            let client = build_client("planner", debug)?;
+            let plan = generate_story_plan(
+                &client, story, &spec, &contract_yaml, &services, &adrs, &existing_files, &service_packages,
+            )
+            .context("failed to generate implementation plan")?;
+
+            println!("\nImplementation plan ({} steps):\n", plan.steps.len());
+            for step in &plan.steps {
+                let op = if step.operation == "modify" { "✎" } else { "+" };
+                println!("  [{}] {} {} — {}", step.id, op, step.file, step.description);
+            }
+            println!();
+
+            let confirmed = Confirm::with_theme(&theme)
+                .with_prompt("Execute this plan?")
+                .default(true)
+                .interact()
+                .context("failed to read confirmation")?;
+
+            save_story_plan(story_id, &plan)
+                .context("failed to save implementation plan")?;
+
+            if !confirmed {
+                println!("Plan saved. Edit .canopy/stories/{story_id}/plan.yaml and re-run `canopy implement {story_id}` to execute.");
+                return Ok(());
+            }
+            plan
+        }
+    };
+
+    let client = build_client("developer", debug)?;
+    let total = plan.steps.len();
+    let mut written = 0usize;
+
+    roots::ensure_indexed();
+
+    for i in 0..total {
+        if plan.steps[i].status != StepStatus::Pending { continue; }
+
+        let step = &plan.steps[i];
+        let op_label = if step.operation == "modify" { "modify" } else { "create" };
+        println!("\n[{}/{}] {} {}", step.id, total, op_label, step.file);
+        println!("  {}", step.description);
+
+        let current_content = if step.operation == "modify" {
+            std::fs::read_to_string(&step.file).ok()
+        } else {
+            None
+        };
+
+        let roots_context = roots::get_feature_context(&step.description)
+            .map(|p| format_roots_context(&p))
+            .filter(|s| !s.is_empty());
+
+        let content = execute_implementation_step(
+            &client, story, &spec, &contract_yaml,
+            step, current_content.as_deref(), roots_context.as_deref(),
+            &service_packages, &services,
+        )
+        .with_context(|| format!("LLM call failed for step {}", step.id))?;
+
+        let dest = std::path::Path::new(&step.file);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory for {}", step.file))?;
+        }
+        std::fs::write(dest, &content)
+            .with_context(|| format!("failed to write {}", step.file))?;
+        println!("  wrote {}", step.file);
+        written += 1;
+
+        plan.steps[i].status = StepStatus::Done;
+        save_story_plan(story_id, &plan)
+            .context("failed to save plan progress")?;
+
+        roots::reindex();
+    }
+
+    println!("\n{written} file(s) written.");
+
+    // Test/fix loop — run build+tests per service and fix compiler errors with LLM
+    let implementable: Vec<_> = services.services.iter()
+        .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+        .filter(|s| s.technology.is_some())
+        .collect();
+
+    const MAX_FIX_ITERATIONS: usize = 5;
+
+    for service in &implementable {
+        let service_dir = match service.component_type.as_deref().unwrap_or("service") {
+            "frontend" => format!("frontend/{}", service.name),
+            _ => format!("services/{}", service.name),
+        };
+
+        if !std::path::Path::new(&service_dir).exists() {
+            continue;
+        }
+
+        let test_cmd = test_command_for_service(service, &service_dir);
+        let service_source_files = scan_service_source_files(&service_dir);
+
+        // Ensure frontend dependencies are installed before building
+        if !std::path::Path::new(&format!("{service_dir}/node_modules")).exists()
+            && std::path::Path::new(&format!("{service_dir}/package.json")).exists()
+        {
+            println!("  running npm install in {service_dir}...");
+            let _ = std::process::Command::new("npm")
+                .arg("install")
+                .current_dir(&service_dir)
+                .status();
+        }
+        println!("\nRunning: {} (in {})", test_cmd, service_dir);
+
+        for iteration in 0..MAX_FIX_ITERATIONS {
+            let output = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(&test_cmd)
+                .current_dir(&service_dir)
+                .output();
+
+            let output = match output {
+                Ok(o) => o,
+                Err(e) => { eprintln!("  failed to run test command: {e}"); break; }
+            };
+
+            let combined = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            if output.status.success() {
+                println!("  ✓ {} passes", service.name);
+                break;
+            }
+
+            let missing_pkgs = extract_missing_packages(&combined);
+            let mut fixed_any = false;
+            let broken_files = extract_error_files(&combined, &service_dir);
+
+            // javax.* → jakarta.* is a mechanical rename, no LLM needed.
+            // Spring Boot 3+ dropped the javax.* namespace entirely.
+            if missing_pkgs.iter().any(|p| p.starts_with("javax.")) {
+                let n = migrate_javax_to_jakarta(&service_dir);
+                if n > 0 {
+                    println!("  migrated javax.* → jakarta.* in {n} file(s)");
+                    fixed_any = true;
+                }
+            }
+
+            // Remaining missing packages are genuine pom.xml gaps — let LLM add them.
+            let non_javax: Vec<_> = missing_pkgs.iter()
+                .filter(|p| !p.starts_with("javax."))
+                .collect();
+            if !non_javax.is_empty() {
+                let build_file = format!("{service_dir}/pom.xml");
+                if std::path::Path::new(&build_file).exists() {
+                    let content = match std::fs::read_to_string(&build_file) {
+                        Ok(c) => c,
+                        Err(e) => { eprintln!("  cannot read {build_file}: {e}"); String::new() }
+                    };
+                    if !content.is_empty() {
+                        let errors = format!(
+                            "The following packages are missing from the Maven dependencies:\n{}",
+                            non_javax.iter().map(|p| format!("  - {p}")).collect::<Vec<_>>().join("\n")
+                        );
+                        println!("  fixing pom.xml ({} missing package(s))", non_javax.len());
+                        match fix_file(&client, &build_file, &content, &errors, &service_source_files) {
+                            Ok(fixed) => {
+                                if let Err(e) = std::fs::write(&build_file, &fixed) {
+                                    eprintln!("    failed to write {build_file}: {e}");
+                                } else {
+                                    fixed_any = true;
+                                }
+                            }
+                            Err(e) => eprintln!("    LLM fix failed for {build_file}: {e}"),
+                        }
+                    }
+                }
+            }
+
+            if broken_files.is_empty() && !fixed_any {
+                eprintln!("  Tests failed but no fixable errors found — manual fix needed.");
+                eprintln!("{combined}");
+                break;
+            }
+
+            if !broken_files.is_empty() {
+                println!(
+                    "  iteration {}/{}: {} source file(s) with errors",
+                    iteration + 1, MAX_FIX_ITERATIONS, broken_files.len()
+                );
+            }
+
+            for file_path in &broken_files {
+                let content = match std::fs::read_to_string(file_path) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("  cannot read {file_path}: {e}"); continue; }
+                };
+                let errors = errors_for_file(&combined, file_path);
+                if errors.trim().is_empty() {
+                    eprintln!("  skipping {} — in error list but no matching error lines found", file_path);
+                    continue;
+                }
+                println!("    fixing {} ({} error line(s))", file_path, errors.lines().count());
+
+                match fix_file(&client, file_path, &content, &errors, &service_source_files) {
+                    Ok(fixed) => {
+                        if let Err(e) = std::fs::write(file_path, &fixed) {
+                            eprintln!("    failed to write {file_path}: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("    LLM fix failed for {file_path}: {e}"),
                 }
             }
         }
     }
 
-    if generated_files.is_empty() {
-        anyhow::bail!(
-            "no output files found for '{slug}' — run `canopy implement {slug}` first"
-        );
+    Ok(())
+}
+
+fn test_command_for_service(service: &ServiceEntry, service_dir: &str) -> String {
+    let tech = service.technology.as_deref().unwrap_or("").to_lowercase();
+    if tech.contains("spring") || tech.contains("maven") || tech.contains("java") {
+        return "./mvnw test -B".to_string();
     }
-
-    let client = build_client("validator", debug)?;
-
-    println!("Validating {slug} ({} files, {} scenarios)...",
-        generated_files.len(), spec.scenarios.len());
-
-    let report = validate_spec(&client, intent, &spec, &generated_files)
-        .context("validator LLM call failed")?;
-
-    save_validation_report(slug, &report)
-        .context("failed to save validation report")?;
-
-    println!("\nValidation results for '{slug}':");
-    println!("  {}/{} scenarios passed\n", report.passed, report.total);
-    for result in &report.results {
-        let icon = if result.passed { "✓" } else { "✗" };
-        println!("  {icon} [{}] {}", result.scenario_id, result.scenario_name);
-        if !result.passed {
-            println!("    reason: {}", result.reasoning);
-            for issue in &result.issues {
-                println!("    issue:  {issue}");
+    if tech.contains("gradle") {
+        return "./gradlew test".to_string();
+    }
+    // Frontend: check package.json scripts to pick the right command
+    let pkg_path = format!("{service_dir}/package.json");
+    if let Ok(pkg) = std::fs::read_to_string(&pkg_path) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&pkg) {
+            let scripts = json.get("scripts");
+            if scripts.and_then(|s| s.get("test")).is_some() {
+                return "npm test -- --watchAll=false".to_string();
+            }
+            if scripts.and_then(|s| s.get("build")).is_some() {
+                return "npm run build".to_string();
             }
         }
     }
+    "npx tsc --noEmit".to_string()
+}
 
-    println!("\nReport saved to .canopy/plans/{slug}/validation.yaml");
+fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    let svc_path = std::path::Path::new(service_dir);
 
-    if report.passed < report.total {
-        anyhow::bail!(
-            "{} scenario(s) failed — fix the implementation and re-run `canopy validate {slug}`",
-            report.total - report.passed
-        );
+    let resolve = |path: &str| -> Option<String> {
+        let p = std::path::Path::new(path);
+        let candidates = if p.is_absolute() {
+            vec![p.to_path_buf()]
+        } else {
+            vec![
+                svc_path.join(p),                          // relative to service dir
+                std::env::current_dir().ok()?.join(p),     // relative to project root
+            ]
+        };
+        candidates.into_iter()
+            .map(|c| c.to_string_lossy().to_string())
+            .find(|s| std::path::Path::new(s).exists())
+    };
+
+    for line in output.lines() {
+        // Maven: [ERROR] /abs/path/to/File.java:[line,col] message
+        if let Some(rest) = line.strip_prefix("[ERROR] ") {
+            if let Some(bracket) = rest.find(":[") {
+                let path = rest[..bracket].trim();
+                if path.ends_with(".java") || path.ends_with(".ts") || path.ends_with(".tsx") {
+                    if let Some(resolved) = resolve(path) {
+                        if !files.contains(&resolved) { files.push(resolved); }
+                    }
+                }
+            }
+        }
+        // TypeScript / vite: path/to/File.ts(line,col): error TS...
+        // Must contain ): error or ): warning after the (line,col) part
+        if line.contains("): error ") || line.contains("): warning ") {
+            if let Some(paren) = line.find('(') {
+                let path = line[..paren].trim_start();
+                if path.ends_with(".ts") || path.ends_with(".tsx") {
+                    if let Some(resolved) = resolve(path) {
+                        if !files.contains(&resolved) { files.push(resolved); }
+                    }
+                }
+            }
+        }
     }
-    Ok(())
+    files
+}
+
+fn scan_service_source_files(service_dir: &str) -> Vec<String> {
+    let mut all = Vec::new();
+    collect_files(std::path::Path::new(service_dir), &mut all);
+    let base = std::path::Path::new(service_dir);
+    all.into_iter()
+        .filter(|f| f.ends_with(".java") || f.ends_with(".ts") || f.ends_with(".tsx"))
+        .map(|f| {
+            std::path::Path::new(&f)
+                .strip_prefix(base)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(f)
+        })
+        .collect()
+}
+
+fn migrate_javax_to_jakarta(service_dir: &str) -> usize {
+    let mut count = 0;
+    let mut java_files = Vec::new();
+    collect_files(std::path::Path::new(service_dir), &mut java_files);
+    for path in java_files.iter().filter(|p| p.ends_with(".java")) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if content.contains("javax.") {
+                let fixed = content
+                    .replace("javax.persistence", "jakarta.persistence")
+                    .replace("javax.validation", "jakarta.validation")
+                    .replace("javax.servlet", "jakarta.servlet")
+                    .replace("javax.annotation", "jakarta.annotation")
+                    .replace("javax.transaction", "jakarta.transaction");
+                if fixed != content {
+                    let _ = std::fs::write(path, fixed);
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+fn extract_missing_packages(output: &str) -> Vec<String> {
+    let mut packages = Vec::new();
+    for line in output.lines() {
+        // javac: error: package javax.validation does not exist
+        if line.contains("does not exist") {
+            if let Some(start) = line.rfind("package ") {
+                let rest = &line[start + 8..];
+                if let Some(end) = rest.find(" does not exist") {
+                    let pkg = rest[..end].trim().to_string();
+                    if !pkg.is_empty() && !packages.contains(&pkg) {
+                        packages.push(pkg);
+                    }
+                }
+            }
+        }
+        // javac: error: cannot access X — class file for X not found
+        if line.contains("class file for") && line.contains("not found") {
+            if let Some(start) = line.rfind("class file for ") {
+                let rest = &line[start + 15..];
+                let cls = rest.split_whitespace().next().unwrap_or("").trim_end_matches(" not").to_string();
+                if !cls.is_empty() && !packages.contains(&cls) {
+                    packages.push(cls);
+                }
+            }
+        }
+    }
+    packages
+}
+
+fn errors_for_file(output: &str, file_path: &str) -> String {
+    // tsc emits relative paths from within the service dir; file_path may be the
+    // fully-resolved absolute-or-project-relative path. Match on any suffix.
+    let suffixes: Vec<&str> = {
+        let mut v = vec![file_path];
+        // strip leading service-dir prefix variants (frontend/admin-portal/, services/product-service/)
+        for sep in &['/', '\\'] {
+            if let Some(pos) = file_path.find(*sep) {
+                // try each progressively shorter tail
+                let mut rest = &file_path[pos + 1..];
+                loop {
+                    v.push(rest);
+                    match rest.find(*sep) {
+                        Some(p) => rest = &rest[p + 1..],
+                        None => break,
+                    }
+                }
+            }
+        }
+        v
+    };
+    output
+        .lines()
+        .filter(|l| suffixes.iter().any(|s| l.contains(s)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn print_stories_section(label: &str, stories: &[&canopy_core::UserStory]) {
@@ -943,7 +1022,7 @@ fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
     let mut existing = load_user_stories().context("failed to load stories")?;
     let roles = load_roles_registry().context("failed to load roles")?;
 
-    let client = build_client("explorer", debug)?;
+    let client = build_client("intent", debug)?;
     println!("\nDeriving stories from intent...");
     let new_stories = generate_stories_from_intent(
         &client, &statement, &context, &existing, &roles,
@@ -1375,8 +1454,19 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
             .context("failed to generate story spec")?;
 
     save_story_spec(story_id, &spec).context("failed to save story spec")?;
-
     println!("\nSpec saved to .canopy/stories/{}/spec.yaml", story_id);
+
+    println!("\nGenerating OAS 3.1.0 contract...");
+    match generate_story_contract(&client, story, &spec, &services, &existing_adrs) {
+        Ok(contract_yaml) => {
+            save_story_contract(story_id, &contract_yaml).context("failed to save contract")?;
+            println!("Contract saved to .canopy/stories/{}/contract.yaml", story_id);
+        }
+        Err(e) => {
+            eprintln!("Warning: contract generation failed: {e}");
+        }
+    }
+
 
     if let Some(ref schema) = spec.entity_schema {
         println!("\nEntity Schema: {}", schema.entity);

@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 canopy-core    = { path = "../canopy-core" }
-canopy-explore = { path = "../canopy-explore" }
+canopy-llm     = { path = "../canopy-llm" }
 canopy-storage = { path = "../canopy-storage" }
 roots-context  = { path = "../roots-context" }
 roots-storage  = { path = "../roots-storage" }

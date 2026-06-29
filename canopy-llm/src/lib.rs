@@ -2,7 +2,7 @@ use canopy_core::*;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum ExploreError {
+pub enum LlmError {
     #[error("ANTHROPIC_API_KEY environment variable is not set. Export it before running canopy.")]
     MissingApiKey,
     #[error("HTTP request failed: {0}")]
@@ -56,16 +56,16 @@ impl LlmClient {
         }
     }
 
-    pub fn complete(&self, prompt: &str) -> Result<String, ExploreError> {
+    pub fn complete(&self, prompt: &str) -> Result<String, LlmError> {
         self.complete_with_max_tokens(prompt, 4096)
     }
 
     /// Use for code generation where output can be significantly larger than planning artifacts.
-    pub fn complete_large(&self, prompt: &str) -> Result<String, ExploreError> {
+    pub fn complete_large(&self, prompt: &str) -> Result<String, LlmError> {
         self.complete_with_max_tokens(prompt, 8192)
     }
 
-    fn complete_with_max_tokens(&self, prompt: &str, max_tokens: u32) -> Result<String, ExploreError> {
+    fn complete_with_max_tokens(&self, prompt: &str, max_tokens: u32) -> Result<String, LlmError> {
         if self.debug {
             eprintln!("\n╔══ LLM INPUT ═══════════════════════════════════════════╗");
             eprintln!("{prompt}");
@@ -99,7 +99,7 @@ impl LlmClient {
         Ok(text)
     }
 
-    fn call_anthropic(&self, prompt: &str, max_tokens: u32) -> Result<(String, serde_json::Value), ExploreError> {
+    fn call_anthropic(&self, prompt: &str, max_tokens: u32) -> Result<(String, serde_json::Value), LlmError> {
         let body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
@@ -111,20 +111,20 @@ impl LlmClient {
             .set("anthropic-version", "2023-06-01")
             .set("content-type", "application/json")
             .send_json(body)
-            .map_err(|e| ExploreError::Http(e.to_string()))?;
+            .map_err(|e| LlmError::Http(e.to_string()))?;
         let json: serde_json::Value = response
             .into_json()
-            .map_err(|e| ExploreError::JsonParse(e.to_string()))?;
+            .map_err(|e| LlmError::JsonParse(e.to_string()))?;
         let text = json["content"][0]["text"]
             .as_str()
-            .ok_or_else(|| ExploreError::UnexpectedShape(
+            .ok_or_else(|| LlmError::UnexpectedShape(
                 format!("expected content[0].text, got: {json}")
             ))?
             .to_string();
         Ok((text, json))
     }
 
-    fn call_openai_compatible(&self, prompt: &str) -> Result<(String, serde_json::Value), ExploreError> {
+    fn call_openai_compatible(&self, prompt: &str) -> Result<(String, serde_json::Value), LlmError> {
         let body = serde_json::json!({
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}]
@@ -133,668 +133,18 @@ impl LlmClient {
         let response = ureq::post(&url)
             .set("content-type", "application/json")
             .send_json(body)
-            .map_err(|e| ExploreError::Http(e.to_string()))?;
+            .map_err(|e| LlmError::Http(e.to_string()))?;
         let json: serde_json::Value = response
             .into_json()
-            .map_err(|e| ExploreError::JsonParse(e.to_string()))?;
+            .map_err(|e| LlmError::JsonParse(e.to_string()))?;
         let text = json["choices"][0]["message"]["content"]
             .as_str()
-            .ok_or_else(|| ExploreError::UnexpectedShape(
+            .ok_or_else(|| LlmError::UnexpectedShape(
                 format!("expected choices[0].message.content, got: {json}")
             ))?
             .to_string();
         Ok((text, json))
     }
-}
-
-fn format_answers(answers: &[AnsweredQuestion]) -> String {
-    if answers.is_empty() {
-        return "(no additional context provided)".to_string();
-    }
-    answers.iter()
-        .map(|a| format!("Q: {}\nA: {}", a.question, a.answer))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn questions_prompt(idea: &Idea) -> String {
-    format!(
-        r#"You are helping to capture the vision behind a new software idea.
-
-The developer described this idea:
-{description}
-
-Ask only the questions genuinely needed to write a clear vision statement.
-If the description is already clear enough, return an empty list.
-Maximum 2 questions.
-
-Focus ONLY on: what core problem the system solves for its users, and what the system is meant to do.
-
-DO NOT ask about: who specific user types or roles are, system boundaries, technology stack,
-security, compliance, integrations, performance, scalability, deployment, or architecture.
-All of those emerge later through behavioral requirements and architecture decisions.
-
-Return ONLY a JSON object. No explanation. No code fences. Exact format:
-{{"questions": ["question 1", "question 2", "question 3"]}}"#,
-        description = idea.description
-    )
-}
-
-fn vision_prompt(idea: &Idea, answers: &[AnsweredQuestion]) -> String {
-    let qa = format_answers(answers);
-    format!(
-        r#"You are an experienced software architect.
-
-Software idea: {description}
-
-Q&A context:
-{qa}
-
-Write a project vision as YAML with this exact structure:
-project: <short readable name, 2-4 plain words, no abbreviations, no CamelCase concatenation — e.g. "Task Tracker" not "TaskTrackerAppV2">
-problem: <the core problem being solved, 1-2 sentences>
-goals:
-  - <high-level outcome the system should achieve — not a feature, not an implementation detail>
-  - <another outcome>
-  - <another outcome>
-
-Goals must be durable, high-level outcomes — still valid even if specific features change.
-Do not pre-commit to specific features, technologies, or integrations in goals.
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        description = idea.description,
-        qa = qa
-    )
-}
-
-fn delivery_intents_prompt(idea: &Idea, vision: &Vision, answers: &[AnsweredQuestion]) -> String {
-    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let qa = format_answers(answers);
-    format!(
-        r#"You are an experienced product strategist and software architect.
-
-Project vision:
-{vision_yaml}
-
-Original idea: {description}
-
-Q&A context:
-{qa}
-
-Produce an ordered list of delivery intents as YAML. Each intent is a coherent slice of value that can be designed, built, and delivered independently. Order them from foundational to differentiating — earlier intents enable later ones.
-
-intents:
-  - title: <short action-oriented title, e.g. "User authentication">
-    description: <what is built and how it works, 1-2 sentences>
-    value: <the concrete user or business value this delivers>
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        vision_yaml = vision_yaml,
-        description = idea.description,
-        qa = qa
-    )
-}
-
-fn architecture_principles_prompt(vision: &Vision, intents: &DeliveryIntents, answers: &[AnsweredQuestion]) -> String {
-    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
-    let qa = format_answers(answers);
-    format!(
-        r#"You are an experienced software architect.
-
-Project vision:
-{vision_yaml}
-
-Delivery intents:
-{intents_yaml}
-
-Q&A context:
-{qa}
-
-Capture architectural principles, constraints, and structural commitments for this system as YAML.
-
-Do NOT name specific technologies, frameworks, or databases. Capture what is known now:
-- principles: how the system should behave architecturally
-- constraints: non-negotiable requirements (compliance, deployment environment, team expertise, integration mandates)
-- structural_commitments: system-wide decisions that must be consistent across all delivery intents
-
-CRITICAL: Output must start directly with "principles:" — do NOT add a top-level wrapper key.
-
-principles:
-  - <architectural principle, e.g. "Stateless application tier — no session state in services">
-constraints:
-  - <hard constraint, e.g. "Must deploy on-premise, no public cloud">
-structural_commitments:
-  deployment_topology: <e.g. "Modular monolith, extractable to microservices">
-  integration_style: <e.g. "Event-driven integration between bounded contexts">
-  data_ownership: <e.g. "Shared database with schema-per-module boundaries">
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        vision_yaml = vision_yaml,
-        intents_yaml = intents_yaml,
-        qa = qa
-    )
-}
-
-pub fn generate_questions(client: &LlmClient, idea: &Idea) -> Result<ExploreQuestions, ExploreError> {
-    let raw = client.complete(&questions_prompt(idea))?;
-    serde_json::from_str(&raw)
-        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
-}
-
-pub fn generate_vision(
-    client: &LlmClient,
-    idea: &Idea,
-    answers: &[AnsweredQuestion],
-) -> Result<Vision, ExploreError> {
-    let raw = client.complete(&vision_prompt(idea, answers))?;
-    serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-pub fn generate_delivery_intents(
-    client: &LlmClient,
-    idea: &Idea,
-    vision: &Vision,
-    answers: &[AnsweredQuestion],
-) -> Result<DeliveryIntents, ExploreError> {
-    let raw = client.complete(&delivery_intents_prompt(idea, vision, answers))?;
-    serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-pub fn generate_architecture_principles(
-    client: &LlmClient,
-    vision: &Vision,
-    intents: &DeliveryIntents,
-    answers: &[AnsweredQuestion],
-) -> Result<ArchitecturePrinciples, ExploreError> {
-    let raw = client.complete(&architecture_principles_prompt(vision, intents, answers))?;
-    parse_architecture_principles(&raw)
-}
-
-fn domain_model_prompt(
-    vision: &Vision,
-    intents: &DeliveryIntents,
-    principles: &ArchitecturePrinciples,
-) -> String {
-    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
-    let principles_yaml = serde_yaml::to_string(principles).unwrap_or_default();
-    format!(
-        r#"You are an experienced domain-driven design practitioner.
-
-Project vision:
-{vision_yaml}
-
-Delivery intents:
-{intents_yaml}
-
-Architecture principles:
-{principles_yaml}
-
-Model the complete domain for this system. Cover ALL entities required across ALL delivery intents.
-
-Return ONLY valid YAML:
-entities:
-  - <entity name, PascalCase>
-entities_detail:
-  - name: <entity name>
-    attributes:
-      - <fieldName>: <type and short description>
-events:
-  - <domain event, PascalCase past tense, e.g. UserRegistered>
-relationships:
-  - <plain English relationship, e.g. "User has many Orders">
-
-Rules:
-- Every entity in 'entities' must appear in 'entities_detail'
-- Attributes use map format: fieldName: type description
-- Event names are PascalCase past tense
-- Relationships use plain English
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#
-    )
-}
-
-pub fn generate_domain_model(
-    client: &LlmClient,
-    vision: &Vision,
-    intents: &DeliveryIntents,
-    principles: &ArchitecturePrinciples,
-) -> Result<DomainModel, ExploreError> {
-    let raw = client.complete(&domain_model_prompt(vision, intents, principles))?;
-    serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-fn component_architecture_prompt(
-    vision: &Vision,
-    intents: &DeliveryIntents,
-    principles: &ArchitecturePrinciples,
-    registry: &DomainRegistry,
-) -> String {
-    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let principles_yaml = serde_yaml::to_string(principles).unwrap_or_default();
-    let entities_summary = if registry.entities.is_empty() {
-        "(none yet — domain accumulates through planning)".to_string()
-    } else {
-        registry.entities.iter()
-            .map(|e| match e.description() {
-                Some(d) => format!("{} — {}", e.name(), d),
-                None => e.name().to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let intents_yaml = serde_yaml::to_string(intents).unwrap_or_default();
-    format!(
-        r#"You are an experienced software architect deriving a component architecture.
-
-Project vision:
-{vision_yaml}
-
-Architecture principles (MUST be respected — constraints are non-negotiable):
-{principles_yaml}
-
-Domain entities known so far: {entities_summary}
-
-Delivery intents (full detail — use these to identify distinct components and services):
-{intents_yaml}
-
-Your task: identify every component this system requires and select a concrete technology for each.
-
-Step 1 — derive components from the delivery intents and structural commitments:
-- Read the structural_commitments carefully. If deployment_topology is microservices, name each service separately.
-- Each delivery intent that touches a distinct bounded context is a candidate for its own backend service.
-- If multiple intents describe separate user-facing surfaces (e.g. customer portal vs admin portal), name each frontend app separately.
-- Distinguish data stores (relational DBs, document stores) from messaging infrastructure (event buses, queues).
-- Do not merge conceptually distinct things into one component to keep the list short.
-
-Step 2 — select technologies:
-- Every selection MUST satisfy ALL constraints and respect the structural commitments.
-- Use current stable versions. Do not name specific version numbers for the deployment platform unless certain they are current.
-- Apply domain entities as hints for where data lives.
-
-Return ONLY valid YAML shaped to match the actual system — do not use a fixed template.
-Use these categories as top-level keys (omit any that do not apply):
-
-frontend_apps:
-  - name: <kebab-case app name>
-    technology: <framework and version>
-    purpose: <one line>
-
-backend_services:
-  - name: <service name derived from bounded context>
-    technology: <runtime and framework>
-    purpose: <one line>
-
-data_stores:
-  - name: <store name>
-    technology: <database and version>
-    owned_by: <service name(s)>
-
-messaging:
-  - name: <broker or bus name>
-    technology: <technology and version>
-    purpose: <one line>
-
-deployment:
-  platform: <orchestration platform>
-  strategy: <one line describing how services are deployed>
-
-reasoning:
-  - <one entry per significant technology decision, citing the principle or constraint it satisfies>
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#
-    )
-}
-
-pub fn generate_component_architecture(
-    client: &LlmClient,
-    vision: &Vision,
-    intents: &DeliveryIntents,
-    principles: &ArchitecturePrinciples,
-    registry: &DomainRegistry,
-) -> Result<ComponentArchitecture, ExploreError> {
-    let raw = client.complete(&component_architecture_prompt(vision, intents, principles, registry))?;
-    serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-fn adrs_prompt(comp_arch: &ComponentArchitecture, principles: &ArchitecturePrinciples) -> String {
-    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
-    let principles_yaml = serde_yaml::to_string(principles).unwrap_or_default();
-    format!(
-        r#"You are an experienced software architect writing Architecture Decision Records.
-
-Component architecture:
-{arch_yaml}
-
-Architecture principles:
-{principles_yaml}
-
-Write one ADR for each major technology decision in the component architecture.
-
-Return ONLY a YAML list:
-- title: <decision title, e.g. "Use PostgreSQL as primary database">
-  decision: <the decision in one sentence>
-  reason: <why this technology was chosen>
-  alternatives:
-    - <alternative that was considered>
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#
-    )
-}
-
-pub fn generate_adrs(
-    client: &LlmClient,
-    comp_arch: &ComponentArchitecture,
-    principles: &ArchitecturePrinciples,
-) -> Result<Vec<Adr>, ExploreError> {
-    let raw = client.complete(&adrs_prompt(comp_arch, principles))?;
-    if let Ok(adrs) = serde_yaml::from_str::<Vec<Adr>>(&raw) {
-        return Ok(adrs);
-    }
-    // Fallback: LLM may wrap the list in a key
-    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
-    for key in &["adrs", "decisions", "records"] {
-        if let Some(inner) = value.get(*key) {
-            if let Ok(adrs) = serde_yaml::from_value::<Vec<Adr>>(inner.clone()) {
-                return Ok(adrs);
-            }
-        }
-    }
-    serde_yaml::from_str::<Vec<Adr>>(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-fn intent_spec_prompt(
-    intent: &DeliveryIntent,
-    registry: &DomainRegistry,
-    comp_arch: &ComponentArchitecture,
-) -> String {
-    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
-    let known_entities = if registry.entities.is_empty() {
-        "(none yet — introduce what this intent requires)".to_string()
-    } else {
-        registry.entities.iter()
-            .map(|e| match e.description() {
-                Some(d) => format!("{} — {}", e.name(), d),
-                None => e.name().to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let known_events = if registry.events.is_empty() {
-        "(none yet)".to_string()
-    } else {
-        registry.events.iter()
-            .map(|e| match e.description() {
-                Some(d) => format!("{} — {}", e.name(), d),
-                None => e.name().to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    format!(
-        r#"You are an experienced product and engineering lead writing a behavioral specification.
-
-Intent to specify:
-  title: {title}
-  description: {description}
-  value: {value}
-
-Known entities from prior plans (reuse these names — do not redefine, extend only if needed):
-{known_entities}
-
-Known events from prior plans:
-{known_events}
-
-Component architecture:
-{arch_yaml}
-
-Write a precise behavioral specification for this delivery intent.
-
-Return ONLY valid YAML:
-intent_ref: "{title}"
-scenarios:
-  - id: <short-slug-001>
-    name: <scenario name>
-    given:
-      - <precondition using entity names above where applicable>
-    when: <user action or system event>
-    then:
-      - <observable outcome>
-    constraints:
-      - <optional: measurable bound, e.g. "Response under 200ms at p99">
-out_of_scope:
-  - <what is explicitly NOT covered by this intent>
-open_questions:
-  - <ambiguity that must be resolved before or during implementation>
-
-Rules:
-- Reuse known entity names verbatim (User not "the user", Session not "auth token")
-- Introduce new entity names only when this intent genuinely requires a new concept
-- Each scenario covers ONE observable behavior
-- constraints list may be empty for scenarios with no measurable bounds
-- Be explicit about out_of_scope to prevent creep
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        title = intent.title,
-        description = intent.description,
-        value = intent.value,
-    )
-}
-
-pub fn generate_intent_spec(
-    client: &LlmClient,
-    intent: &DeliveryIntent,
-    registry: &DomainRegistry,
-    comp_arch: &ComponentArchitecture,
-) -> Result<IntentSpec, ExploreError> {
-    let raw = client.complete(&intent_spec_prompt(intent, registry, comp_arch))?;
-    if let Ok(spec) = serde_yaml::from_str::<IntentSpec>(&raw) {
-        return Ok(spec);
-    }
-    // Fallback for wrapped responses
-    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
-    for key in &["spec", "intent_spec", "specification"] {
-        if let Some(inner) = value.get(*key) {
-            if let Ok(spec) = serde_yaml::from_value::<IntentSpec>(inner.clone()) {
-                return Ok(spec);
-            }
-        }
-    }
-    serde_yaml::from_str::<IntentSpec>(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-fn implementation_plan_prompt(
-    intent: &DeliveryIntent,
-    intent_index: usize,
-    spec: &IntentSpec,
-    registry: &DomainRegistry,
-    comp_arch: &ComponentArchitecture,
-    all_intents: &DeliveryIntents,
-    answered_questions: &[AnsweredQuestion],
-) -> String {
-    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
-    let known_entities = if registry.entities.is_empty() {
-        "(none yet)".to_string()
-    } else {
-        registry.entities.iter()
-            .map(|e| match e.description() {
-                Some(d) => format!("{} — {}", e.name(), d),
-                None => e.name().to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
-    let all_intents_yaml = serde_yaml::to_string(all_intents).unwrap_or_default();
-    let qa = format_answers(answered_questions);
-    format!(
-        r#"You are an experienced software architect decomposing a delivery intent into implementation tasks.
-
-Delivery intent (index {intent_index}):
-  title: {title}
-  description: {description}
-
-Intent specification:
-{spec_yaml}
-
-Known entities from prior plans (reuse verbatim, extend only if this intent adds new ones):
-{known_entities}
-
-Component architecture:
-{arch_yaml}
-
-All delivery intents (for dependency analysis):
-{all_intents_yaml}
-
-Resolved open questions:
-{qa}
-
-Generate an implementation plan as YAML. Tasks must be ordered from foundational to dependent.
-
-Return ONLY valid YAML:
-intent_ref: "{title}"
-intent_index: {intent_index}
-status: draft
-depends_on_intents:
-  - <index of a prior delivery intent this depends on, or leave empty>
-domain_scope:
-  entities:
-    - <entity from domain model involved in this intent>
-  events:
-    - <event from domain model triggered in this intent>
-  relationships:
-    - <relationship relevant to this intent>
-tasks:
-  - id: task-001
-    title: <what to build — one logical thing>
-    task_type: <schema | api_contract | implementation | test | integration>
-    inputs:
-      - <task id or artifact this depends on, or leave empty>
-    outputs:
-      - <file path that will be created>
-    acceptance_criteria_refs:
-      - <scenario id from spec>
-    estimated_complexity: <low | medium | high>
-    blocking: <true if subsequent tasks cannot start until this completes>
-reasoning:
-  - <why tasks are ordered and scoped as they are>
-open_questions:
-  - question: <ambiguity>
-    blocking: <true if implementation cannot proceed without answer>
-    default_assumption: <assumption to use if not blocking>
-    answer: null
-
-Rules:
-- Each task does ONE logical thing (schema OR endpoint OR test — not both)
-- Schema and migration tasks are typically blocking
-- Test tasks reference the scenarios they verify via acceptance_criteria_refs
-- If a question is blocking, leave answer as null
-- depends_on_intents should list intent indices whose artifacts this intent requires
-
-Return ONLY valid YAML. No explanation. No code fences. No markdown."#,
-        title = intent.title,
-        description = intent.description,
-        intent_index = intent_index,
-    )
-}
-
-pub fn generate_implementation_plan(
-    client: &LlmClient,
-    intent: &DeliveryIntent,
-    intent_index: usize,
-    spec: &IntentSpec,
-    registry: &DomainRegistry,
-    comp_arch: &ComponentArchitecture,
-    all_intents: &DeliveryIntents,
-    answered_questions: &[AnsweredQuestion],
-) -> Result<ImplementationPlan, ExploreError> {
-    let raw = client.complete(&implementation_plan_prompt(
-        intent, intent_index, spec, registry, comp_arch, all_intents, answered_questions,
-    ))?;
-    if let Ok(plan) = serde_yaml::from_str::<ImplementationPlan>(&raw) {
-        return Ok(plan);
-    }
-    // Fallback for wrapped responses
-    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw: raw.clone() })?;
-    for key in &["implementation_plan", "plan"] {
-        if let Some(inner) = value.get(*key) {
-            if let Ok(plan) = serde_yaml::from_value::<ImplementationPlan>(inner.clone()) {
-                return Ok(plan);
-            }
-        }
-    }
-    serde_yaml::from_str::<ImplementationPlan>(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
-}
-
-fn user_stories_prompt(
-    vision: &Vision,
-    domain: Option<&DomainRegistry>,
-    comp_arch: Option<&ComponentArchitecture>,
-) -> String {
-    let vision_yaml = serde_yaml::to_string(vision).unwrap_or_default();
-    let domain_section = domain
-        .map(|d| format!("Domain vocabulary:\n{}", serde_yaml::to_string(d).unwrap_or_default()))
-        .unwrap_or_default();
-    let arch_section = comp_arch
-        .map(|a| format!("Component architecture:\n{}", serde_yaml::to_string(a).unwrap_or_default()))
-        .unwrap_or_default();
-    format!(
-        r#"You are an experienced product strategist writing user stories for a software project.
-
-Vision:
-{vision_yaml}
-
-{domain_section}
-
-{arch_section}
-
-Generate a complete set of user stories covering the core functionality implied by the vision.
-
-Rules:
-- Assign each story a short, stable ID using a domain-area prefix and zero-padded number, e.g. auth-001, account-002, report-001
-- Use only actors that appear in the vision's users list
-- The "so_that" must state a concrete business or user benefit — never a technical detail
-- depends_on lists IDs of stories that must exist before this story can be built
-- Order stories from foundational (no dependencies) to differentiating (many dependencies)
-- Omit stories for infrastructure, deployment, or internal tooling
-
-Return ONLY valid YAML in this exact shape. No explanation. No code fences. No markdown.
-
-stories:
-  - id: <area-NNN>
-    as_a: <role from vision users>
-    want: <capability>
-    so_that: <concrete benefit>
-    depends_on: []"#,
-        vision_yaml = vision_yaml,
-        domain_section = domain_section,
-        arch_section = arch_section,
-    )
-}
-
-pub fn generate_user_stories(
-    client: &LlmClient,
-    vision: &Vision,
-    domain: Option<&DomainRegistry>,
-    comp_arch: Option<&ComponentArchitecture>,
-) -> Result<UserStories, ExploreError> {
-    let raw = client.complete_large(&user_stories_prompt(vision, domain, comp_arch))?;
-    if let Ok(stories) = serde_yaml::from_str::<UserStories>(&raw) {
-        return Ok(stories);
-    }
-    serde_yaml::from_str::<UserStories>(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
 }
 
 fn stories_from_intent_prompt(
@@ -874,12 +224,12 @@ pub fn generate_stories_from_intent(
     context: &str,
     existing_stories: &UserStories,
     roles: &RolesRegistry,
-) -> Result<UserStories, ExploreError> {
+) -> Result<UserStories, LlmError> {
     let raw = client.complete_large(&stories_from_intent_prompt(
         intent, context, existing_stories, roles,
     ))?;
     serde_yaml::from_str::<UserStories>(&raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw })
+        .map_err(|source| LlmError::YamlParse { source, raw })
 }
 
 fn domain_extraction_prompt(stories: &[UserStory]) -> String {
@@ -938,7 +288,7 @@ events:
 pub fn extract_domain_from_stories(
     client: &LlmClient,
     stories: &[UserStory],
-) -> Result<DomainRegistry, ExploreError> {
+) -> Result<DomainRegistry, LlmError> {
     if stories.is_empty() {
         return Ok(DomainRegistry::default());
     }
@@ -950,7 +300,7 @@ pub fn extract_domain_from_stories(
         .trim_end_matches("```")
         .trim();
     serde_yaml::from_str::<DomainRegistry>(stripped)
-        .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+        .map_err(|source| LlmError::YamlParse { source, raw: stripped.to_string() })
 }
 
 fn domain_bootstrap_prompt(idea: &Idea) -> String {
@@ -972,7 +322,7 @@ Return ONLY a JSON array of strings. No explanation. No code fences.
     )
 }
 
-pub fn suggest_domain_entities(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, ExploreError> {
+pub fn suggest_domain_entities(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, LlmError> {
     let raw = client.complete(&domain_bootstrap_prompt(idea))?;
     let stripped = raw
         .trim()
@@ -981,7 +331,7 @@ pub fn suggest_domain_entities(client: &LlmClient, idea: &Idea) -> Result<Vec<St
         .trim_end_matches("```")
         .trim();
     serde_json::from_str::<Vec<String>>(stripped)
-        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
+        .map_err(|e| LlmError::JsonParse(format!("{e}. Raw was: {raw}")))
 }
 
 fn roles_bootstrap_prompt(idea: &Idea) -> String {
@@ -1004,7 +354,7 @@ Return ONLY a JSON array of strings. No explanation. No code fences.
     )
 }
 
-pub fn suggest_roles(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, ExploreError> {
+pub fn suggest_roles(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, LlmError> {
     let raw = client.complete(&roles_bootstrap_prompt(idea))?;
     let stripped = raw
         .trim()
@@ -1013,7 +363,7 @@ pub fn suggest_roles(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, Exp
         .trim_end_matches("```")
         .trim();
     serde_json::from_str::<Vec<String>>(stripped)
-        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
+        .map_err(|e| LlmError::JsonParse(format!("{e}. Raw was: {raw}")))
 }
 
 fn architectural_questions_prompt(
@@ -1128,7 +478,7 @@ pub fn identify_architectural_questions(
     story: &UserStory,
     existing_adrs: &[Adr],
     services: &ServicesRegistry,
-) -> Result<ProposedAdrs, ExploreError> {
+) -> Result<ProposedAdrs, LlmError> {
     let raw = client.complete_large(&architectural_questions_prompt(story, existing_adrs, services))?;
     let stripped = raw
         .trim()
@@ -1137,7 +487,7 @@ pub fn identify_architectural_questions(
         .trim_end_matches("```")
         .trim();
     serde_yaml::from_str::<ProposedAdrs>(stripped)
-        .map_err(|source| ExploreError::YamlParse { source, raw: stripped.to_string() })
+        .map_err(|source| LlmError::YamlParse { source, raw: stripped.to_string() })
 }
 
 fn story_spec_prompt(
@@ -1304,7 +654,7 @@ pub fn generate_story_spec(
     adrs: &[Adr],
     services: &ServicesRegistry,
     domain: &DomainRegistry,
-) -> Result<IntentSpec, ExploreError> {
+) -> Result<IntentSpec, LlmError> {
     let raw = client.complete_large(&story_spec_prompt(story, adrs, services, domain))?;
     let stripped = raw
         .trim()
@@ -1314,11 +664,167 @@ pub fn generate_story_spec(
         .trim();
     let fixed = fix_yaml_colon_in_scalars(stripped);
     serde_yaml::from_str::<IntentSpec>(&fixed)
-        .map_err(|source| ExploreError::YamlParse { source, raw: fixed })
+        .map_err(|source| LlmError::YamlParse { source, raw: fixed })
+}
+
+fn contract_prompt(
+    story: &UserStory,
+    spec: &IntentSpec,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+) -> String {
+    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
+    let adrs_summary = if adrs.is_empty() {
+        "None yet.".to_string()
+    } else {
+        adrs.iter()
+            .map(|a| format!("- {}: {}", a.title, a.decision))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let services_summary = if services.services.is_empty() {
+        "None yet.".to_string()
+    } else {
+        services.services.iter()
+            .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+            .map(|s| {
+                let tech = s.technology.as_deref().unwrap_or("unknown");
+                format!("- {} [{}]: {}", s.name, tech, s.responsibilities.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        r#"You are an API contract designer generating an OpenAPI Specification (OAS) fragment for a user story.
+
+Story: As a {as_a}, I want {want}, so that {so_that}
+
+Architecture Decisions:
+{adrs_summary}
+
+Services:
+{services_summary}
+
+Behavioral Specification:
+{spec_yaml}
+
+Generate a minimal OAS 3.0 YAML contract covering the API endpoints required to implement the BDD scenarios above.
+
+Rules:
+- Include only paths directly required by the scenarios
+- Use RESTful conventions: POST to create, GET to read, PUT/PATCH to update, DELETE to remove
+- Request bodies must include the mandatory and optional fields from entity_schema (if present)
+- Response schemas must include the system-generated fields set at creation
+- Include 400 Bad Request response with {{message, fields}} for validation failures
+- Include 201 Created with Location header for successful creation
+- Use $ref for reusable schemas
+
+Return ONLY valid YAML. No prose. No code fences. No markdown."#,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        adrs_summary = adrs_summary,
+        services_summary = services_summary,
+        spec_yaml = spec_yaml,
+    )
+}
+
+pub fn generate_story_contract(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+) -> Result<String, LlmError> {
+    let raw = client.complete_large(&contract_prompt(story, spec, services, adrs))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
+    Ok(stripped)
 }
 
 /// Quote bare YAML scalar values that contain colons — a common LLM mistake that
 /// causes serde_yaml to treat them as nested mappings.
+/// Remove duplicate keys within each YAML mapping block.
+/// When the LLM emits `operation: create\noperation: modify`, keep the last occurrence.
+/// Fix missing indentation inside YAML list items.
+/// Some models emit:
+///   - id: "1"
+///   service: foo      ← should be indented 2 spaces
+/// This function detects fields that should be part of the current list item and
+/// re-indents them.
+fn fix_yaml_list_indentation(yaml: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_item = false;
+    let mut item_indent = 0usize;
+
+    for line in yaml.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+
+        if trimmed.starts_with("- ") || trimmed == "-" {
+            in_item = true;
+            item_indent = indent;
+            out.push(line.to_string());
+        } else if in_item && !trimmed.is_empty() && indent == item_indent && !trimmed.starts_with('#') {
+            // At the same column as the `- ` marker but without one — belongs to the item
+            out.push(format!("{}  {}", " ".repeat(item_indent), trimmed));
+        } else {
+            // Leaving the list item if we hit a non-empty, non-indented line that isn't a new item
+            if !trimmed.is_empty() && indent <= item_indent && !trimmed.starts_with('-') {
+                in_item = false;
+            }
+            out.push(line.to_string());
+        }
+    }
+    out.join("\n")
+}
+
+fn dedup_yaml_keys(yaml: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    // Track (indent_len, key) pairs seen since the last list-item marker.
+    let mut seen: Vec<(usize, &str)> = Vec::new();
+
+    for line in yaml.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+
+        // A new list item resets the seen set for this indent level and deeper.
+        if trimmed.starts_with("- ") || trimmed == "-" {
+            seen.retain(|(d, _)| *d < indent);
+        }
+
+        // Detect a plain mapping key: `key: ...` (no leading `-`).
+        if !trimmed.starts_with('-') {
+            if let Some(colon) = trimmed.find(": ").or_else(|| trimmed.ends_with(':').then_some(trimmed.len() - 1)) {
+                let key = &trimmed[..colon];
+                if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    // If already seen at this indent, skip this line (keep the last occurrence
+                    // by retroactively removing the earlier one).
+                    if let Some(pos) = seen.iter().position(|(d, k)| *d == indent && *k == key) {
+                        seen.remove(pos);
+                        // Remove the earlier line from out.
+                        if let Some(prev) = out.iter().rposition(|l: &&str| {
+                            let t = l.trim_start();
+                            let id = l.len() - t.len();
+                            id == indent && (t.starts_with(&format!("{key}: ")) || t == &format!("{key}:"))
+                        }) {
+                            out.remove(prev);
+                        }
+                    }
+                    seen.push((indent, key));
+                }
+            }
+        }
+        out.push(line);
+    }
+    out.join("\n")
+}
+
 fn fix_yaml_colon_in_scalars(yaml: &str) -> String {
     yaml.lines().map(|line| {
         // Match lines of the form: <indent><key>: <value> where value is unquoted and contains ':'
@@ -1378,6 +884,560 @@ pub fn services_need_jvm(services: &ServicesRegistry) -> bool {
         .any(|s| s.technology.as_deref().map(is_jvm_technology).unwrap_or(false))
 }
 
+// ── Tech-stack skills ────────────────────────────────────────────────────────
+// Each skill is a rules block injected into the per-service plan prompt.
+// JVM skills receive dynamic package/path context; others are static strings.
+// Add new skills here; the matcher in `skill_for_technology` selects the right one.
+
+fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> String {
+    format!(
+        "Tech stack rules — Spring Boot 3 (Jakarta EE):\n\
+         - Build file:    services/{service_name}/pom.xml  ← this exact path, never just pom.xml\n\
+         - Base package:  {pkg}  ← use this exact string in every `package` declaration\n\
+         - Source root:   services/{service_name}/src/main/java/{pkg_path}/\n\
+         - Test root:     services/{service_name}/src/test/java/{pkg_path}/\n\
+         - Example paths: services/{service_name}/src/main/java/{pkg_path}/domain/Product.java\n\
+                          services/{service_name}/src/main/java/{pkg_path}/controller/ProductController.java\n\
+                          services/{service_name}/src/test/java/{pkg_path}/ProductControllerIT.java\n\
+         - Sub-packages:  {pkg}.domain   {pkg}.repository\n\
+                          {pkg}.dto      {pkg}.service   {pkg}.controller\n\
+         - Every .java file's package declaration MUST be exactly '{pkg}' or one of its sub-packages\n\
+         - If an existing file has any other package declaration, correct it to match\n\
+         - @SpringBootApplication class MUST be at services/{service_name}/src/main/java/{pkg_path}/*Application.java\n\
+           (directly in the base package, never inside a sub-package like service/ or controller/)\n\
+         - Namespace: jakarta.* everywhere — NEVER import javax.*\n\
+         - One public type per .java file; file name MUST match the class name exactly\n\
+         - pom.xml MUST include: spring-boot-starter-data-jpa, spring-boot-starter-validation,\n\
+           postgresql (runtime scope), lombok\n\
+         - Validation: jakarta.validation.constraints.* (@NotBlank, @NotNull, @Positive, etc.)\n\
+         - Integration tests: @SpringBootTest + @AutoConfigureMockMvc",
+        pkg = pkg,
+        pkg_path = pkg_path,
+        service_name = service_name,
+    )
+}
+
+const SKILL_REACT_VITE: &str = "\
+Tech stack rules — React + TypeScript (Vite scaffold):
+- File paths in steps are relative to the PROJECT ROOT — always include the full prefix,
+  e.g. frontend/admin-portal/src/api/ProductApi.ts
+- ALL .ts and .tsx files MUST live under the service's src/ directory
+- Minimal layout for a story: one API client, one form component, one App.tsx update — nothing more
+- API client: <prefix>/src/api/<Entity>Api.ts — typed fetch(), request and response interfaces inline
+- Form component: <prefix>/src/components/<Entity>Form.tsx — controlled inputs, validation, error display
+- Wire up: modify <prefix>/src/App.tsx to render the form component
+- Import paths inside source files are relative to the file's position — never use ../..
+- STRICT SCOPE — do NOT add: custom hooks, page components, route files, store/redux slices,
+  utility/validator modules, CSS files, or any abstraction not required by the story.
+  The form component handles its own state and calls the API client directly.";
+
+const SKILL_ANGULAR: &str = "\
+Tech stack rules — Angular:
+- File paths in steps are relative to the PROJECT ROOT — always include the full prefix
+- Source root is src/app/ inside the service directory
+- Feature folder per domain concept: module, component, service, and model in one folder
+- Services: @Injectable({ providedIn: 'root' }) unless feature-scoped
+- HTTP: inject HttpClient — never call fetch() directly
+- Prefer reactive forms (FormBuilder) over template-driven forms for non-trivial inputs
+- Typed HTTP responses: use generics on HttpClient methods";
+
+const SKILL_NODE_EXPRESS: &str = "\
+Tech stack rules — Node.js / Express (TypeScript):
+- File paths in steps are relative to the PROJECT ROOT — always include the full prefix
+- Source root is src/ inside the service directory
+- Layout: src/routes/ for Express routers, src/services/ for business logic,
+  src/models/ for type interfaces, src/middleware/ for cross-cutting concerns
+- Use async/await throughout — no raw .then() chains in route handlers
+- Validate input at the route boundary (e.g. zod or joi schema)
+- Central error-handling middleware in src/middleware/errorHandler.ts";
+
+/// Build the skill block for the given technology, injecting dynamic package context for JVM.
+/// Returns an empty string if no built-in skill matches (LLM gets no extra rules).
+pub fn skill_for_technology(tech: &str, pkg: &str, pkg_path: &str, service_name: &str) -> String {
+    let t = tech.to_lowercase();
+    if t.contains("spring") || t.contains("quarkus") || t.contains("micronaut")
+        || (t.contains("java") && !t.contains("javascript"))
+        || t.contains("kotlin")
+    {
+        spring_boot_skill(pkg, pkg_path, service_name)
+    } else if t.contains("react") || t.contains("vite") {
+        SKILL_REACT_VITE.to_string()
+    } else if t.contains("angular") {
+        SKILL_ANGULAR.to_string()
+    } else if t.contains("node") || t.contains("express") || t.contains("nest") {
+        SKILL_NODE_EXPRESS.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn plan_prompt_for_service(
+    service: &ServiceEntry,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    adrs: &[Adr],
+    existing_files: &[String],
+    service_packages: &std::collections::HashMap<String, String>,
+) -> String {
+    let tech = service.technology.as_deref().unwrap_or("unknown");
+    let is_front = service.component_type.as_deref() == Some("frontend");
+
+    let (pkg, pkg_path) = if is_front {
+        (String::new(), String::new())
+    } else if let Some(detected) = service_packages.get(&service.name) {
+        (detected.clone(), detected.replace('.', "/"))
+    } else {
+        // Scaffold not found — fall back to Spring Initializr convention (hyphen → underscore)
+        let p = service.name.replace('-', "_");
+        eprintln!("Warning: no scaffolded package detected for '{}'; using fallback '{}'", service.name, p);
+        (p.clone(), p.replace('.', "/"))
+    };
+
+    let skill = skill_for_technology(tech, &pkg, &pkg_path, &service.name);
+
+    // For frontend the skill already states the path convention; show the prefix explicitly here too.
+    let location_line = if is_front {
+        format!("Service directory prefix: frontend/{}/  (all file paths in steps start with this)",
+            service.name)
+    } else {
+        String::new() // covered in full detail by the Spring Boot skill
+    };
+
+    let schema_yaml = spec.entity_schema.as_ref()
+        .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+        .unwrap_or_default();
+    let scenarios_yaml = serde_yaml::to_string(&spec.scenarios).unwrap_or_default();
+
+    let adrs_summary: String = adrs.iter()
+        .map(|a| format!("  - {}: {}", a.title, a.decision))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Only show files that belong to this service
+    let service_prefix = if is_front {
+        format!("frontend/{}/", service.name)
+    } else {
+        format!("services/{}/", service.name)
+    };
+    let service_existing: Vec<&str> = existing_files.iter()
+        .filter(|f| f.starts_with(&service_prefix))
+        .map(|f| f.as_str())
+        .collect();
+
+    let existing_note = if service_existing.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nExisting files — use operation: modify for these:\n{}",
+            service_existing.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n")
+        )
+    };
+
+    let skill_section = if skill.is_empty() {
+        String::new()
+    } else {
+        format!("\n{skill}\n")
+    };
+
+    format!(
+        "Generate implementation steps for service '{sname}' as part of story '{story_id}'.\n\
+         \n\
+         Story: As a {as_a}, I want {want}, so that {so_that}.\n\
+         \n\
+         Service: {sname}  Technology: {tech}\n\
+         {location_line}\n\
+         {skill_section}\n\
+         Entity schema:\n{schema_yaml}\n\
+         BDD scenarios:\n{scenarios_yaml}\n\
+         OAS Contract:\n{contract_yaml}\n\
+         Architecture decisions:\n{adrs_summary}\n\
+         {existing_note}\n\
+         Return ONLY valid YAML — no prose, no code fences.\n\
+         List ONLY files that belong to service '{sname}'.\n\
+         Every field inside a list item MUST be indented by exactly 2 spaces.\n\
+         \n\
+         steps:\n\
+         - id: \"1\"\n\
+           service: {sname}\n\
+           file: <path/relative/to/project/root>\n\
+           operation: create\n\
+           description: <specific description of what this file contains>\n\
+         \n\
+         Rules:\n\
+         - `operation` is create for new files, modify for files in the existing list above\n\
+         - One step per file — no duplicates\n\
+         - Order: build config → domain → data layer → service → API → tests\n\
+         - description must name the specific classes, fields, and annotations\n\
+         - ALL string values must be quoted with double quotes — every id, service, file, operation, and description\n\
+         - Never use block scalars (>- or |) — always use a single quoted string on one line\n\
+         - STRICT SCOPE: only include files that are directly required to implement this story.\n\
+           Do NOT include: README, HELP.md, .gitignore, CSS files, config files (tsconfig, vite.config),\n\
+           scaffolding artifacts, or any file that does not contain logic for this story.\n\
+           If in doubt, leave it out.\n",
+        sname = service.name,
+        story_id = story.id,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        tech = tech,
+        location_line = location_line,
+        skill_section = skill_section,
+        schema_yaml = schema_yaml,
+        scenarios_yaml = scenarios_yaml,
+        contract_yaml = contract_yaml,
+        adrs_summary = adrs_summary,
+        existing_note = existing_note,
+    )
+}
+
+/// Merge orphaned continuation lines back into the preceding quoted scalar.
+///
+/// The model occasionally breaks a long quoted description across two lines:
+///   description: "fields: name, categories,"
+///     images, price
+/// The second line is not a valid YAML key, causing a parse error.
+/// We detect it (non-empty, no colon, not a list item, follows a closing `"`) and
+/// re-attach it before the closing quote of the previous line.
+fn fix_broken_quoted_continuations(yaml: &str) -> String {
+    let lines: Vec<&str> = yaml.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim_end();
+        // Peek ahead: if next line looks like an orphaned continuation, absorb it.
+        if i + 1 < lines.len() && line.ends_with('"') && line.contains(": \"") {
+            let next = lines[i + 1].trim();
+            let is_continuation = !next.is_empty()
+                && !next.starts_with('-')
+                && !next.contains(": ")
+                && !next.ends_with(':');
+            if is_continuation {
+                // Insert continuation text before the closing quote.
+                let merged = format!("{} {}", &line[..line.len() - 1], next);
+                result.push(merged);
+                i += 2;
+                continue;
+            }
+        }
+        result.push(line.to_string());
+        i += 1;
+    }
+    result.join("\n")
+}
+
+fn parse_plan_steps(raw: &str) -> Result<Vec<ImplementationStep>, LlmError> {
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let fixed = dedup_yaml_keys(&fix_yaml_colon_in_scalars(&fix_yaml_list_indentation(&fix_broken_quoted_continuations(stripped))));
+    #[derive(serde::Deserialize)]
+    struct PlanResponse { steps: Vec<ImplementationStep> }
+    let parsed: PlanResponse = serde_yaml::from_str(&fixed)
+        .map_err(|source| LlmError::YamlParse { source, raw: fixed })?;
+    Ok(parsed.steps)
+}
+
+fn layer_weight(file: &str) -> u8 {
+    let f = file.to_lowercase();
+    if f.ends_with("pom.xml") || f.ends_with("package.json") || f.ends_with("build.gradle") { 0 }
+    else if f.contains("/domain/") || f.contains("entity") { 1 }
+    else if f.contains("/repository/") { 2 }
+    else if f.contains("/dto/") || f.contains("request") || f.contains("response") { 3 }
+    else if f.contains("/service/") { 4 }
+    else if f.contains("/controller/") || f.contains("/api/") { 5 }
+    else if f.contains("test") || f.contains("spec") { 6 }
+    else { 3 }
+}
+
+pub fn generate_story_plan(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+    existing_files: &[String],
+    service_packages: &std::collections::HashMap<String, String>,
+) -> Result<StoryPlan, LlmError> {
+    let active: Vec<&ServiceEntry> = services.services.iter()
+        .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+        .collect();
+
+    let mut all_steps: Vec<ImplementationStep> = Vec::new();
+    for service in &active {
+        let prompt = plan_prompt_for_service(
+            service, story, spec, contract_yaml, adrs, existing_files, service_packages,
+        );
+        let raw = client.complete_large(&prompt)?;
+        let mut steps = parse_plan_steps(&raw)?;
+        for step in &mut steps {
+            step.service = service.name.clone();
+            // Normalise operation: any value that isn't exactly "modify" becomes "create"
+            if step.operation.to_lowercase() != "modify" {
+                step.operation = "create".to_string();
+            } else {
+                step.operation = "modify".to_string();
+            }
+        }
+        all_steps.extend(steps);
+    }
+
+    // Sort: backend services first, frontend last; within each group by architectural layer
+    let is_frontend_service = |name: &str| {
+        services.services.iter()
+            .find(|s| s.name == name)
+            .and_then(|s| s.component_type.as_deref())
+            .map(|t| t == "frontend")
+            .unwrap_or(false)
+    };
+    all_steps.sort_by_key(|s| {
+        let tier = if is_frontend_service(&s.service) { 1u8 } else { 0u8 };
+        (tier, layer_weight(&s.file))
+    });
+
+    for (i, step) in all_steps.iter_mut().enumerate() {
+        step.id = (i + 1).to_string();
+    }
+
+    Ok(StoryPlan { story_id: story.id.clone(), steps: all_steps })
+}
+
+fn step_prompt(
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    current_content: Option<&str>,
+    roots_context: Option<&str>,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+) -> String {
+    let schema_yaml = spec.entity_schema.as_ref()
+        .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+        .unwrap_or_default();
+
+    // The plan LLM sometimes prefixes service names with their directory (e.g. "frontend/admin-portal").
+    // Strip any leading path component before looking up in the registry.
+    let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
+    let service_entry = services.services.iter()
+        .find(|s| s.name == service_name || s.name == step.service);
+    let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+    // Detect frontend by registry entry OR by file extension (belt-and-suspenders).
+    let is_frontend = service_entry
+        .and_then(|s| s.component_type.as_deref())
+        .map(|t| t == "frontend")
+        .unwrap_or(false)
+        || step.file.ends_with(".ts")
+        || step.file.ends_with(".tsx");
+
+    let pkg = service_packages.get(service_name)
+        .cloned()
+        .unwrap_or_else(|| service_name.replace('-', "_"));
+    let pkg_path = pkg.replace('.', "/");
+
+    let tech_rules = if is_frontend {
+        format!(
+            "Technology rules (React + TypeScript, Vite scaffold):\n\
+             - Source root is src/ — ALL .ts/.tsx files live under src/\n\
+             - Layout: src/api/<Entity>Api.ts, src/components/<Entity>Form.tsx, src/App.tsx\n\
+             - Import paths are always relative to the file's location inside src/\n\
+               e.g. App.tsx imports: import ProductForm from './components/ProductForm'\n\
+               e.g. App.tsx imports: import {{ registerProduct }} from './api/ProductApi'\n\
+             - Never use '../../' — all project files are siblings or children inside src/\n\
+             - This file's location: {file_path}\n\
+             - Complete TypeScript — no 'any' types unless unavoidable\n\
+             - Use fetch() for HTTP calls — no external HTTP libraries\n\
+             - Idiomatic React with hooks (useState, useCallback)\n\
+             - Form validation: enforce required fields client-side before submission\n\
+             - Show success message after successful operation\n\
+             - Show field-level error messages from 400 responses\n\
+             - Do not import files that do not exist yet",
+            file_path = step.file
+        )
+    } else {
+        format!(
+            "Technology rules (Spring Boot, Java, Maven):\n\
+             - Base package: {pkg}  ← use this exact string in every package declaration\n\
+             - Source root:  src/main/java/{pkg_path}/\n\
+             - Test root:    src/test/java/{pkg_path}/\n\
+             - Sub-packages: {pkg}.domain  {pkg}.repository  {pkg}.service  {pkg}.controller\n\
+             - Every file's package declaration must be exactly '{pkg}' or a sub-package of it\n\
+             - If the current file contains a different package declaration, correct it to match the above\n\
+             - Complete, compilable Java — no stubs, no TODO placeholders — include all imports\n\
+             - NAMESPACE: Spring Boot 3+ uses jakarta.* — NEVER use javax.*\n\
+               Use jakarta.validation.*, jakarta.persistence.*, jakarta.servlet.*, jakarta.annotation.*\n\
+             - REST endpoints must match OAS contract paths and HTTP methods exactly\n\
+             - 201 Created with Location header on successful creation\n\
+             - 400 Bad Request with {{message: String, fields: List<String>}} on validation failure\n\
+             - Use Hibernate Validator annotations (@NotBlank, @NotNull, @Min) on request DTOs\n\
+             - Publish domain events via ApplicationEventPublisher\n\
+             - For pom.xml modifications: preserve all existing content, only add missing dependencies\n\
+             - Required Spring Boot dependencies if missing: spring-boot-starter-data-jpa, \
+               spring-boot-starter-validation, h2 (test scope), lombok"
+        )
+    };
+
+    let current_section = match current_content {
+        Some(content) => format!(
+            "\nCurrent file content (modify operation — preserve what stays, change what the description requires):\n\
+             ```\n{content}\n```\n"
+        ),
+        None => String::new(),
+    };
+
+    let roots_section = match roots_context {
+        Some(ctx) if !ctx.is_empty() => format!(
+            "\nRelated code already in the project (use these exact class names and package paths):\n{ctx}\n"
+        ),
+        _ => String::new(),
+    };
+
+    format!(
+        "Generate the complete content of file '{file}'.\n\
+         \n\
+         Operation: {operation}\n\
+         Description: {description}\n\
+         \n\
+         Story: As a {as_a}, I want {want}, so that {so_that}.\n\
+         Service: {service} ({technology})\n\
+         \n\
+         Entity schema:\n\
+         {schema_yaml}\n\
+         OAS Contract:\n\
+         {contract_yaml}\n\
+         {current_section}\
+         {roots_section}\n\
+         {tech_rules}\n\
+         \n\
+         Return ONLY the raw file content — no JSON wrapper, no markdown, no code fences, no explanation.",
+        file = step.file,
+        operation = step.operation,
+        description = step.description,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        service = step.service,
+        technology = technology,
+        schema_yaml = schema_yaml,
+        contract_yaml = contract_yaml,
+        current_section = current_section,
+        roots_section = roots_section,
+        tech_rules = tech_rules,
+    )
+}
+
+pub fn execute_implementation_step(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    current_content: Option<&str>,
+    roots_context: Option<&str>,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+) -> Result<String, LlmError> {
+    let prompt = step_prompt(story, spec, contract_yaml, step, current_content, roots_context, service_packages, services);
+    let raw = client.complete_large(&prompt)?;
+    let trimmed = raw.trim();
+    let after_open = trimmed
+        .trim_start_matches("```java")
+        .trim_start_matches("```typescript")
+        .trim_start_matches("```tsx")
+        .trim_start_matches("```ts")
+        .trim_start_matches("```xml")
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```properties")
+        .trim_start_matches("```")
+        .trim_start();
+    let content = if let Some(pos) = after_open.rfind("\n```") {
+        &after_open[..pos]
+    } else {
+        after_open.trim_end_matches("```").trim_end()
+    };
+    Ok(content.to_string())
+}
+
+fn fix_prompt(file_path: &str, content: &str, errors: &str, existing_files: &[String]) -> String {
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let lang = match ext {
+        "java" => "Java",
+        "ts" | "tsx" => "TypeScript",
+        "xml" => "XML",
+        _ => "source",
+    };
+    let extra_rules = if ext == "java" {
+        "\n- A Java source file contains exactly one top-level type declaration\n\
+         - Nothing may appear after the final closing brace of the top-level class/interface/enum/record\n\
+         - Remove any stray import statements, package declarations, or class bodies that appear after that brace\n\
+         - The file must begin with the package declaration"
+    } else if file_path.ends_with("pom.xml") {
+        "\n- Add the required <dependency> blocks inside <dependencies>\n\
+         - Use the correct groupId/artifactId/version for each missing package\n\
+         - For javax.validation use jakarta.validation-api or spring-boot-starter-validation\n\
+         - For javax.persistence use jakarta.persistence-api or spring-boot-starter-data-jpa\n\
+         - Do not remove any existing dependencies\n\
+         - Keep the XML well-formed"
+    } else {
+        ""
+    };
+    let files_section = if !existing_files.is_empty() {
+        format!(
+            "\nExisting files in the project (use for correct import paths):\n{}\n",
+            existing_files.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n")
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "Fix the {lang} file below so that all listed errors are resolved.\n\
+         \n\
+         File: {file_path}\n\
+         \n\
+         Errors:\n\
+         {errors}\n\
+         {files_section}\n\
+         Current content:\n\
+         {content}\n\
+         \n\
+         Rules:\n\
+         - Return ONLY the corrected file content — no prose, no markdown fences, no explanations\
+         {extra_rules}\n\
+         - Preserve all correct logic; only fix what the errors report\n\
+         - Do not add TODO comments or placeholder stubs\n\
+         - Only import from modules that exist in the project files listed above"
+    )
+}
+
+pub fn fix_file(
+    client: &LlmClient,
+    file_path: &str,
+    content: &str,
+    errors: &str,
+    existing_files: &[String],
+) -> Result<String, LlmError> {
+    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files))?;
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```java")
+        .trim_start_matches("```typescript")
+        .trim_start_matches("```xml")
+        .trim_start_matches("```")
+        .trim();
+    if let Some(end) = stripped.rfind("\n```") {
+        Ok(stripped[..end].trim_end().to_string())
+    } else {
+        Ok(stripped.to_string())
+    }
+}
+
 pub fn generate_scaffold_from_services(services: &ServicesRegistry, group_id: &str) -> ScaffoldPlan {
     let mut commands = Vec::new();
     for service in &services.services {
@@ -1408,51 +1468,6 @@ pub fn generate_scaffold_from_services(services: &ServicesRegistry, group_id: &s
             );
         }
     }
-    ScaffoldPlan { generated_at: String::new(), commands }
-}
-
-pub fn arch_needs_jvm(comp_arch: &ComponentArchitecture) -> bool {
-    let value = &comp_arch.0;
-    for section in &["frontend_apps", "backend_services"] {
-        if let Some(seq) = value.get(*section).and_then(|v| v.as_sequence()) {
-            for component in seq {
-                if let Some(tech) = component.get("technology").and_then(|v| v.as_str()) {
-                    let t = tech.to_lowercase();
-                    if t.contains("spring") || t.contains("java") || t.contains("kotlin")
-                        || t.contains("maven") || t.contains("gradle")
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-pub fn generate_scaffold_plan_static(group_id: &str, comp_arch: &ComponentArchitecture) -> ScaffoldPlan {
-    let mut commands = Vec::new();
-    let value = &comp_arch.0;
-
-    for (section_key, working_dir) in &[
-        ("frontend_apps", "frontend"),
-        ("backend_services", "services"),
-    ] {
-        if let Some(seq) = value.get(*section_key).and_then(|v| v.as_sequence()) {
-            for component in seq {
-                let name = component.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-                let technology = component.get("technology").and_then(|v| v.as_str()).unwrap_or_default();
-                if name.is_empty() || technology.is_empty() {
-                    continue;
-                }
-                match technology_to_command(name, technology, group_id, working_dir) {
-                    Some(cmd) => commands.push(cmd),
-                    None => eprintln!("  (skipping '{name}': no scaffold template for '{technology}')"),
-                }
-            }
-        }
-    }
-
     ScaffoldPlan { generated_at: String::new(), commands }
 }
 
@@ -1566,170 +1581,35 @@ fn vite_template_for(tech_lower: &str) -> &'static str {
     }
 }
 
-fn developer_prompt(
-    intent: &DeliveryIntent,
-    spec: &IntentSpec,
-    plan: &ImplementationPlan,
-    comp_arch: &ComponentArchitecture,
-    roots_context: Option<&str>,
-) -> String {
-    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
-    let plan_yaml = serde_yaml::to_string(plan).unwrap_or_default();
-    let arch_yaml = serde_yaml::to_string(comp_arch).unwrap_or_default();
-    let roots_section = match roots_context {
-        Some(ctx) => format!("\nRepository context from Roots:\n{ctx}\n"),
-        None => String::new(),
-    };
-    // Build pending task list (not yet completed)
-    let pending: Vec<String> = plan.tasks.iter()
-        .filter(|t| !t.completed)
-        .map(|t| format!("  - [{}] {} (outputs: {})", t.id, t.title, t.outputs.join(", ")))
-        .collect();
-    let pending_summary = if pending.is_empty() {
-        "  (all tasks completed)".to_string()
-    } else {
-        pending.join("\n")
-    };
-    format!(
-        r#"You are an expert software developer implementing a delivery intent.
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-Intent: {title}
-Description: {description}
-{roots_section}
-Component architecture:
-{arch_yaml}
-
-Behavioral specification:
-{spec_yaml}
-
-Implementation plan:
-{plan_yaml}
-
-Pending tasks to implement:
-{pending_summary}
-
-Generate ALL files required to implement the pending tasks. This is a greenfield implementation — write complete, production-quality file contents.
-
-Return ONLY a JSON object. No explanation. No code fences. No markdown:
-{{"files": [{{"path": "relative/path/to/file.ext", "content": "full file content"}}]}}
-
-Rules:
-- Use the technology stack from the component architecture
-- Each file must be complete and syntactically correct — no stubs, no TODOs
-- path is relative to the project root
-- Implement exactly what the specification scenarios describe
-- Do not generate files for tasks that are already completed
-- Include tests in a separate file when the plan has test tasks
-- Follow idiomatic conventions for the chosen technology"#,
-        title = intent.title,
-        description = intent.description,
-    )
-}
-
-pub fn generate_files(
-    client: &LlmClient,
-    intent: &DeliveryIntent,
-    spec: &IntentSpec,
-    plan: &ImplementationPlan,
-    comp_arch: &ComponentArchitecture,
-    roots_context: Option<&str>,
-) -> Result<DeveloperOutput, ExploreError> {
-    let prompt = developer_prompt(intent, spec, plan, comp_arch, roots_context);
-    let raw = client.complete_large(&prompt)?;
-    // Try direct parse first
-    if let Ok(output) = serde_json::from_str::<DeveloperOutput>(&raw) {
-        return Ok(output);
+    #[test]
+    fn fix_yaml_list_indentation_repairs_missing_indent() {
+        let input = "steps:\n- id: \"1\"\nservice: product-service\nfile: foo.java\noperation: create\ndescription: Do something.\n- id: \"2\"\nservice: admin-portal\nfile: bar.tsx\noperation: create\ndescription: Do another thing.";
+        let result = fix_yaml_list_indentation(input);
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result).expect("should parse");
+        let steps = parsed["steps"].as_sequence().unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["service"].as_str().unwrap(), "product-service");
+        assert_eq!(steps[1]["service"].as_str().unwrap(), "admin-portal");
     }
-    // Strip possible markdown code fences
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    serde_json::from_str::<DeveloperOutput>(stripped)
-        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))
-}
 
-fn validator_prompt(
-    intent: &DeliveryIntent,
-    spec: &IntentSpec,
-    generated_files: &[(String, String)],
-) -> String {
-    let spec_yaml = serde_yaml::to_string(spec).unwrap_or_default();
-    let files_section: String = generated_files.iter()
-        .map(|(path, content)| format!("### {path}\n```\n{content}\n```"))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    format!(
-        r#"You are a rigorous QA engineer validating an implementation against its behavioral specification.
-
-Intent: {title}
-
-Behavioral specification:
-{spec_yaml}
-
-Implemented files:
-{files_section}
-
-For EACH scenario in the specification, determine whether the implementation satisfies it.
-
-Return ONLY a JSON object. No explanation. No code fences. No markdown:
-{{
-  "intent_ref": "{title}",
-  "results": [
-    {{
-      "scenario_id": "<scenario id>",
-      "scenario_name": "<scenario name>",
-      "passed": true,
-      "reasoning": "<why this scenario passes or fails>",
-      "issues": ["<specific issue if failed>"]
-    }}
-  ]
-}}
-
-Rules:
-- passed is true only if the implementation fully satisfies ALL given/when/then conditions and constraints
-- reasoning must cite specific code evidence (file name, line context) when marking passed
-- issues must list exactly what is missing or wrong when passed is false
-- Cover every scenario — no omissions"#,
-        title = intent.title,
-    )
-}
-
-pub fn validate_spec(
-    client: &LlmClient,
-    intent: &DeliveryIntent,
-    spec: &IntentSpec,
-    generated_files: &[(String, String)],
-) -> Result<ValidationReport, ExploreError> {
-    let prompt = validator_prompt(intent, spec, generated_files);
-    let raw = client.complete(&prompt)?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    let mut report: ValidationReport = serde_json::from_str(stripped)
-        .map_err(|e| ExploreError::JsonParse(format!("{e}. Raw was: {raw}")))?;
-    report.recompute_totals();
-    Ok(report)
-}
-
-fn parse_architecture_principles(raw: &str) -> Result<ArchitecturePrinciples, ExploreError> {
-    if let Ok(ap) = serde_yaml::from_str::<ArchitecturePrinciples>(raw) {
-        return Ok(ap);
+    #[test]
+    fn dedup_yaml_keys_removes_duplicate_operation() {
+        let input = "steps:\n- id: \"8\"\n  service: product-service\n  file: foo.java\n  operation: create\n  operation: modify\n  description: Do something.";
+        let result = dedup_yaml_keys(input);
+        // Only one `operation:` line should survive, and it should be the last one
+        let count = result.lines().filter(|l| l.trim_start().starts_with("operation:")).count();
+        assert_eq!(count, 1);
+        assert!(result.contains("operation: modify"));
     }
-    // Fallback: LLM sometimes wraps output in a top-level key despite instructions.
-    let value: serde_yaml::Value = serde_yaml::from_str(raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() })?;
-    for key in &["architecture_principles", "architecture", "principles_doc"] {
-        if let Some(inner) = value.get(*key) {
-            return serde_yaml::from_value(inner.clone())
-                .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() });
-        }
+
+    #[test]
+    fn dedup_yaml_keys_leaves_unique_keys_intact() {
+        let input = "steps:\n- id: \"1\"\n  service: svc\n  file: a.java\n  operation: create\n  description: Create something.";
+        let result = dedup_yaml_keys(input);
+        assert_eq!(result, input);
     }
-    serde_yaml::from_str::<ArchitecturePrinciples>(raw)
-        .map_err(|source| ExploreError::YamlParse { source, raw: raw.to_string() })
 }

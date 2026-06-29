@@ -9,7 +9,7 @@ members = [
     # Canopy — planning and implementation orchestrator
     "canopy-core",
     "canopy-storage",
-    "canopy-explore",
+    "canopy-llm",
     "canopy-cli",
 ]
 resolver = "2"

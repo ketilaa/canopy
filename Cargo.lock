@@ -97,7 +97,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "canopy-core",
- "canopy-explore",
+ "canopy-llm",
  "canopy-storage",
  "clap",
  "dialoguer",
@@ -118,7 +118,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "canopy-explore"
+name = "canopy-llm"
 version = "0.1.0"
 dependencies = [
  "canopy-core",
