@@ -348,47 +348,72 @@ fn deployment_style_adr(idx: usize) -> Adr {
     }
 }
 
-/// Prompts for a React testing framework and saves the ADR when the accepted tech stack is React/Vite
-/// and no Testing Strategy ADR exists yet. Angular, Spring Boot, and Node are implicit — no prompt.
-fn maybe_prompt_react_testing_strategy(
+/// Prompts for a testing framework and saves the ADR when the accepted tech stack is React/Vite
+/// or Node.js/Express and no tech-specific Testing Strategy ADR exists yet.
+/// ADR titles are tech-specific so both can coexist in a full-stack project:
+///   React/Vite  → "Frontend Testing Strategy"
+///   Node/Express → "Node.js Testing Strategy"
+/// Angular TestBed and Spring Boot JUnit 5 are implicit — no prompt needed.
+fn maybe_prompt_testing_strategy(
     theme: &dialoguer::theme::ColorfulTheme,
     existing_adrs: &mut Vec<Adr>,
     technology: &str,
 ) -> Result<()> {
     let t = technology.to_lowercase();
-    if !t.contains("react") && !t.contains("vite") {
+    let is_react = t.contains("react") || t.contains("vite");
+    let is_node  = t.contains("node") || t.contains("express") || t.contains("nest");
+    if !is_react && !is_node {
         return Ok(());
     }
-    let already_decided = existing_adrs.iter()
-        .any(|a| a.title.to_lowercase().contains("testing strategy"));
-    if already_decided {
+    let (search_title, prompt, options, adr_offset, slug) = if is_react {
+        (
+            "frontend testing",
+            "React testing framework",
+            vec![
+                "Vitest + React Testing Library  (recommended for Vite)",
+                "Jest  + React Testing Library",
+            ],
+            0usize,
+            "frontend-testing-strategy",
+        )
+    } else {
+        (
+            "node.js testing",
+            "Node.js testing framework",
+            vec![
+                "Jest  + Supertest  (recommended — de facto standard)",
+                "Vitest + Supertest",
+            ],
+            2usize,
+            "nodejs-testing-strategy",
+        )
+    };
+    if existing_adrs.iter().any(|a| a.title.to_lowercase().contains(search_title)) {
         return Ok(());
     }
-    let options = [
-        "Vitest + React Testing Library  (recommended for Vite)",
-        "Jest  + React Testing Library",
-    ];
     let idx = Select::with_theme(theme)
-        .with_prompt("React testing framework")
+        .with_prompt(prompt)
         .items(&options)
         .default(0)
         .interact()
-        .context("failed to read React testing framework selection")?;
-    let adr = testing_strategy_adr(idx);
+        .context("failed to read testing framework selection")?;
+    let adr = testing_strategy_adr(adr_offset + idx);
     let index = existing_adrs.len() + 1;
-    save_adr(index, "testing-strategy", &adr)
+    save_adr(index, slug, &adr)
         .context("failed to save testing-strategy ADR")?;
-    println!("  Saved: adr-{:03}-testing-strategy.yaml", index);
+    println!("  Saved: adr-{:03}-{}.yaml", index, slug);
     existing_adrs.push(adr);
     Ok(())
 }
 
-/// Pre-authored testing strategy ADRs for React frontends (0 = Vitest, 1 = Jest).
-/// Angular TestBed, Spring Boot JUnit 5, and Node/Express Jest are implicit — no ADR needed.
+/// Pre-authored testing strategy ADRs.
+/// 0 = React + Vitest, 1 = React + Jest, 2 = Node + Jest, 3 = Node + Vitest.
+/// ADR titles are tech-specific: "Frontend Testing Strategy" for React, "Node.js Testing Strategy" for Node.
+/// Angular TestBed and Spring Boot JUnit 5 are implicit — no ADR needed.
 fn testing_strategy_adr(idx: usize) -> Adr {
     match idx {
         0 => Adr {
-            title: "Testing Strategy".to_string(),
+            title: "Frontend Testing Strategy".to_string(),
             decision: "Vitest + React Testing Library for frontend unit tests".to_string(),
             reason: "Vitest is the natural testing companion for Vite-based React projects. \
                      It shares the Vite config, runs natively in ES modules, and is significantly \
@@ -400,8 +425,8 @@ fn testing_strategy_adr(idx: usize) -> Adr {
                 "Playwright (component mode)".to_string(),
             ],
         },
-        _ => Adr {
-            title: "Testing Strategy".to_string(),
+        1 => Adr {
+            title: "Frontend Testing Strategy".to_string(),
             decision: "Jest + React Testing Library for frontend unit tests".to_string(),
             reason: "Jest is the most widely adopted JavaScript test runner and works well with \
                      non-Vite React setups. It has the broadest ecosystem of matchers and utilities."
@@ -409,6 +434,29 @@ fn testing_strategy_adr(idx: usize) -> Adr {
             alternatives: vec![
                 "Vitest + React Testing Library".to_string(),
                 "Playwright (component mode)".to_string(),
+            ],
+        },
+        2 => Adr {
+            title: "Node.js Testing Strategy".to_string(),
+            decision: "Jest + Supertest for Node.js / Express unit and route tests".to_string(),
+            reason: "Jest is the de facto standard test runner for Node.js projects. \
+                     Supertest provides a clean HTTP-layer assertion API that exercises \
+                     the full Express middleware stack without starting a real server."
+                .to_string(),
+            alternatives: vec![
+                "Vitest + Supertest".to_string(),
+                "Mocha + Chai + Supertest".to_string(),
+            ],
+        },
+        _ => Adr {
+            title: "Node.js Testing Strategy".to_string(),
+            decision: "Vitest + Supertest for Node.js / Express unit and route tests".to_string(),
+            reason: "Vitest offers a faster, ES-module-native alternative to Jest for Node.js \
+                     projects. Its API is Jest-compatible, so migration is low-risk. \
+                     Supertest provides the same HTTP-layer assertions."
+                .to_string(),
+            alternatives: vec![
+                "Jest + Supertest".to_string(),
             ],
         },
     }
@@ -1667,7 +1715,7 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                     println!("  Saved: adr-{:03}-{}.yaml", index, slug);
                     existing_adrs.push(adr);
                     update_services_from_proposal(&mut services, &proposal);
-                    maybe_prompt_react_testing_strategy(
+                    maybe_prompt_testing_strategy(
                         &theme, &mut existing_adrs,
                         proposal.technology.as_deref().unwrap_or(""),
                     )?;
@@ -1717,7 +1765,7 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                     println!("  Saved: adr-{:03}-{}.yaml", index, slug);
                     existing_adrs.push(adr);
                     update_services_from_proposal(&mut services, &modified_proposal);
-                    maybe_prompt_react_testing_strategy(
+                    maybe_prompt_testing_strategy(
                         &theme, &mut existing_adrs,
                         modified_proposal.technology.as_deref().unwrap_or(""),
                     )?;
