@@ -250,6 +250,27 @@ fn cmd_init(debug: bool) -> Result<()> {
         .context("failed to save adr-001-deployment-style.yaml")?;
     println!("  Saved .canopy/decisions/adr-001-deployment-style.yaml");
 
+    // Event broker — mandatory for event-driven architecture; saved at adr-002
+    let arch_decision = arch_adr.decision.to_lowercase();
+    if arch_decision.contains("event-driven") || arch_decision.contains("event driven") {
+        let broker_options = [
+            "Redpanda  (Kafka-compatible, first-class Docker support — recommended for local dev)",
+            "Apache Kafka",
+            "RabbitMQ  (AMQP message broker)",
+            "NATS      (lightweight, cloud-native messaging)",
+        ];
+        let broker_idx = Select::with_theme(&theme)
+            .with_prompt("Event broker")
+            .items(&broker_options)
+            .default(0)
+            .interact()
+            .context("failed to read event broker selection")?;
+        let broker_adr = event_broker_adr(broker_idx);
+        save_adr(2, "event-broker", &broker_adr)
+            .context("failed to save adr-002-event-broker.yaml")?;
+        println!("  Saved .canopy/decisions/adr-002-event-broker.yaml");
+    }
+
     // Bootstrap domain entities
     let client = build_client("intent", debug)?;
     print!("Suggesting domain entities... ");
@@ -326,6 +347,61 @@ fn architecture_style_adr(idx: usize) -> Adr {
             alternatives: vec![
                 "Modular monolith".to_string(),
                 "Layered monolith".to_string(),
+            ],
+        },
+    }
+}
+
+fn event_broker_adr(idx: usize) -> Adr {
+    match idx {
+        0 => Adr {
+            title: "Event Broker".to_string(),
+            decision: "Redpanda as the event broker".to_string(),
+            reason: "Redpanda is Kafka-compatible (same producer/consumer API) with no JVM dependency \
+                     and first-class Docker Compose support. It starts in milliseconds and requires \
+                     no ZooKeeper, making it the lowest-friction choice for local development in an \
+                     event-driven microservices architecture."
+                .to_string(),
+            alternatives: vec![
+                "Apache Kafka".to_string(),
+                "RabbitMQ".to_string(),
+                "NATS".to_string(),
+            ],
+        },
+        1 => Adr {
+            title: "Event Broker".to_string(),
+            decision: "Apache Kafka as the event broker".to_string(),
+            reason: "Kafka is the de facto standard for high-throughput, durable event streaming. \
+                     Its log-based model supports event replay and consumer group fan-out, \
+                     aligning naturally with event-sourcing and DDD patterns."
+                .to_string(),
+            alternatives: vec![
+                "Redpanda (Kafka-compatible, no JVM)".to_string(),
+                "RabbitMQ".to_string(),
+            ],
+        },
+        2 => Adr {
+            title: "Event Broker".to_string(),
+            decision: "RabbitMQ as the event broker".to_string(),
+            reason: "RabbitMQ is a mature AMQP message broker well-suited to flexible routing \
+                     patterns (exchanges, queues, bindings). It is simpler to operate than Kafka \
+                     when throughput requirements are modest."
+                .to_string(),
+            alternatives: vec![
+                "Apache Kafka".to_string(),
+                "Redpanda (Kafka-compatible, no JVM)".to_string(),
+            ],
+        },
+        _ => Adr {
+            title: "Event Broker".to_string(),
+            decision: "NATS as the event broker".to_string(),
+            reason: "NATS is a lightweight, cloud-native messaging system with a tiny footprint. \
+                     NATS JetStream adds persistence and replay. Good choice when low latency \
+                     and operational simplicity matter more than Kafka's log-retention guarantees."
+                .to_string(),
+            alternatives: vec![
+                "Redpanda (Kafka-compatible, no JVM)".to_string(),
+                "Apache Kafka".to_string(),
             ],
         },
     }

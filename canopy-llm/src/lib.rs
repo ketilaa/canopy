@@ -430,8 +430,9 @@ Include ALL of:
 4. Infrastructure questions — if not yet decided:
    - Persistent storage: what database does each service use to store its data?
      Propose one per service that owns data. Suggest the most appropriate type (relational, document, etc.)
-   - Event infrastructure: if the story involves publishing or subscribing to events,
-     what event broker/bus is used? Propose it if not yet decided.
+   - Event infrastructure: if the Architecture Style ADR says "event-driven", an event broker is
+     MANDATORY infrastructure. Propose it unconditionally if no event broker is in Known Services —
+     do not wait for the story to mention events explicitly.
 
 Naming rules — strictly enforced:
 - Service, frontend, and infrastructure component names: kebab-case only (user-service, booking-service, admin-portal, client-portal, redpanda, postgresql)
