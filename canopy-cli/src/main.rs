@@ -250,24 +250,6 @@ fn cmd_init(debug: bool) -> Result<()> {
         .context("failed to save adr-001-deployment-style.yaml")?;
     println!("  Saved .canopy/decisions/adr-001-deployment-style.yaml");
 
-    // Testing strategy — pre-authored ADR written at adr-002
-    let testing_strategies = [
-        "Vitest + React Testing Library  (React/Vite projects)",
-        "Jest + React Testing Library    (React/CRA or non-Vite)",
-        "Angular TestBed + Jasmine       (Angular projects)",
-        "None — backend only             (Spring Boot uses JUnit 5 implicitly)",
-    ];
-    let testing_idx = Select::with_theme(&theme)
-        .with_prompt("Frontend testing strategy")
-        .items(&testing_strategies)
-        .default(0)
-        .interact()
-        .context("failed to read testing strategy selection")?;
-    let testing_adr = testing_strategy_adr(testing_idx);
-    save_adr(2, "testing-strategy", &testing_adr)
-        .context("failed to save adr-002-testing-strategy.yaml")?;
-    println!("  Saved .canopy/decisions/adr-002-testing-strategy.yaml");
-
     // Bootstrap domain entities
     let client = build_client("intent", debug)?;
     print!("Suggesting domain entities... ");
@@ -366,6 +348,43 @@ fn deployment_style_adr(idx: usize) -> Adr {
     }
 }
 
+/// Prompts for a React testing framework and saves the ADR when the accepted tech stack is React/Vite
+/// and no Testing Strategy ADR exists yet. Angular, Spring Boot, and Node are implicit — no prompt.
+fn maybe_prompt_react_testing_strategy(
+    theme: &dialoguer::theme::ColorfulTheme,
+    existing_adrs: &mut Vec<Adr>,
+    technology: &str,
+) -> Result<()> {
+    let t = technology.to_lowercase();
+    if !t.contains("react") && !t.contains("vite") {
+        return Ok(());
+    }
+    let already_decided = existing_adrs.iter()
+        .any(|a| a.title.to_lowercase().contains("testing strategy"));
+    if already_decided {
+        return Ok(());
+    }
+    let options = [
+        "Vitest + React Testing Library  (recommended for Vite)",
+        "Jest  + React Testing Library",
+    ];
+    let idx = Select::with_theme(theme)
+        .with_prompt("React testing framework")
+        .items(&options)
+        .default(0)
+        .interact()
+        .context("failed to read React testing framework selection")?;
+    let adr = testing_strategy_adr(idx);
+    let index = existing_adrs.len() + 1;
+    save_adr(index, "testing-strategy", &adr)
+        .context("failed to save testing-strategy ADR")?;
+    println!("  Saved: adr-{:03}-testing-strategy.yaml", index);
+    existing_adrs.push(adr);
+    Ok(())
+}
+
+/// Pre-authored testing strategy ADRs for React frontends (0 = Vitest, 1 = Jest).
+/// Angular TestBed, Spring Boot JUnit 5, and Node/Express Jest are implicit — no ADR needed.
 fn testing_strategy_adr(idx: usize) -> Adr {
     match idx {
         0 => Adr {
@@ -381,38 +400,15 @@ fn testing_strategy_adr(idx: usize) -> Adr {
                 "Playwright (component mode)".to_string(),
             ],
         },
-        1 => Adr {
+        _ => Adr {
             title: "Testing Strategy".to_string(),
             decision: "Jest + React Testing Library for frontend unit tests".to_string(),
-            reason: "Jest is the most widely adopted JavaScript test runner. \
-                     It works well with Create-React-App and non-Vite React setups, \
-                     and has the broadest ecosystem of matchers and utilities."
+            reason: "Jest is the most widely adopted JavaScript test runner and works well with \
+                     non-Vite React setups. It has the broadest ecosystem of matchers and utilities."
                 .to_string(),
             alternatives: vec![
                 "Vitest + React Testing Library".to_string(),
                 "Playwright (component mode)".to_string(),
-            ],
-        },
-        2 => Adr {
-            title: "Testing Strategy".to_string(),
-            decision: "Angular TestBed + Jasmine for frontend unit tests".to_string(),
-            reason: "Angular CLI bootstraps Jasmine + Karma by default. \
-                     TestBed provides first-class Angular dependency injection in tests. \
-                     Jasmine's BDD-style matchers align well with Angular component contracts."
-                .to_string(),
-            alternatives: vec![
-                "Jest with jest-preset-angular".to_string(),
-            ],
-        },
-        _ => Adr {
-            title: "Testing Strategy".to_string(),
-            decision: "Backend only — no dedicated frontend test framework required".to_string(),
-            reason: "The project has no frontend component at this stage. \
-                     Spring Boot tests use JUnit 5, AssertJ, and Mockito via spring-boot-starter-test."
-                .to_string(),
-            alternatives: vec![
-                "Vitest + React Testing Library".to_string(),
-                "Jest + React Testing Library".to_string(),
             ],
         },
     }
@@ -1671,6 +1667,10 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                     println!("  Saved: adr-{:03}-{}.yaml", index, slug);
                     existing_adrs.push(adr);
                     update_services_from_proposal(&mut services, &proposal);
+                    maybe_prompt_react_testing_strategy(
+                        &theme, &mut existing_adrs,
+                        proposal.technology.as_deref().unwrap_or(""),
+                    )?;
                 }
                 1 => {
                     // Modify
@@ -1717,6 +1717,10 @@ fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                     println!("  Saved: adr-{:03}-{}.yaml", index, slug);
                     existing_adrs.push(adr);
                     update_services_from_proposal(&mut services, &modified_proposal);
+                    maybe_prompt_react_testing_strategy(
+                        &theme, &mut existing_adrs,
+                        modified_proposal.technology.as_deref().unwrap_or(""),
+                    )?;
                 }
                 _ => {
                     println!("  Rejected — skipping.");
