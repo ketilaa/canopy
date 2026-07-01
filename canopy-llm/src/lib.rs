@@ -1947,12 +1947,17 @@ fn plan_prompt_for_service(
 
     let skill = skill_for_technology(tech, &pkg, &pkg_path, &service.name);
 
-    // For frontend the skill already states the path convention; show the prefix explicitly here too.
+    // Show the directory prefix for every service so the LLM never invents bare /src/ paths.
     let location_line = if is_front {
-        format!("Service directory prefix: frontend/{}/  (all file paths in steps start with this)",
-            service.name)
+        format!(
+            "Service directory prefix: frontend/{name}/\n\
+             ALL file paths in steps MUST start with frontend/{name}/  — never use bare src/ paths.",
+            name = service.name)
     } else {
-        String::new() // covered in full detail by the Spring Boot skill
+        format!(
+            "Service directory prefix: services/{name}/\n\
+             ALL file paths in steps MUST start with services/{name}/  — never use bare /src/ or /events/ paths.",
+            name = service.name)
     };
 
     let schema_yaml = spec.entity_schema.as_ref()
@@ -2000,6 +2005,7 @@ fn plan_prompt_for_service(
         || (t_lower.contains("java") && !t_lower.contains("javascript"))
         || t_lower.contains("kotlin");
     let is_node = t_lower.contains("node") || t_lower.contains("express") || t_lower.contains("nest");
+    let is_react = is_front || t_lower.contains("react") || t_lower.contains("vite") || t_lower.contains("angular");
     let testing_section = if is_jvm {
         let it_skill = integration_testing_skill(tech);
         format!(
@@ -2021,6 +2027,15 @@ fn plan_prompt_for_service(
                Example: tests/productRoutes.test.ts\n\
              - Route test files are the LAST step(s) in the plan.\n\
              - Do NOT include a test file for src/app.ts or src/index.ts.\n"
+        )
+    } else if is_react {
+        format!(
+            "\nTesting plan rules:\n\
+             - Include one unit test file (*.test.tsx / *.test.ts) per component and per API module.\n\
+             - Test files go in a FLAT tests/ directory — never in tests/unit/ or tests/integration/ subdirectories.\n\
+             - ONLY use libraries from the decided testing strategy ADR.\n\
+               Do NOT introduce msw, Playwright, Cypress, or any library not named in the ADR.\n\
+             - Test files are the LAST step(s) in the plan.\n"
         )
     } else {
         let it_skill = integration_testing_skill(tech);
@@ -2062,14 +2077,19 @@ fn plan_prompt_for_service(
          - `operation` is create for new files, modify for files in the existing list above\n\
          - One step per file — no duplicates\n\
          - Order for backend: build config → domain → data layer → service → controller → tests\n\
-         - Order for frontend: build config → API client (src/api/) → components (src/components/) → App wiring (App.tsx) → tests\n\
-           Reason: each file imports from the previous; generate in dependency order so types are available\n\
+         - Order for frontend (STRICT): API client (src/api/) MUST come before components that import it;\n\
+           then components (src/components/); then App wiring (App.tsx / main.tsx); then tests LAST.\n\
+           Reason: each file imports from the previous; generate in dependency order so types are available.\n\
          - description must name the specific classes, fields, and annotations\n\
          - ALL string values must be quoted with double quotes — every id, service, file, operation, and description\n\
          - Never use block scalars (>- or |) — always use a single quoted string on one line\n\
          - STRICT SCOPE: only include files that are directly required to implement this story.\n\
            Do NOT include: README, HELP.md, .gitignore, CSS files, config files (tsconfig, vite.config),\n\
            scaffolding artifacts, or any file that does not contain logic for this story.\n\
+           Do NOT include event listeners, consumers, or subscribers unless the story explicitly requires\n\
+           consuming a domain event — publishing and consuming are separate stories.\n\
+           If no event broker appears in the architecture decisions, do not plan publisher infrastructure;\n\
+           limit event handling to defining the event type only.\n\
            If in doubt, leave it out.\n",
         sname = service.name,
         story_id = story.id,
