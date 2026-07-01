@@ -269,6 +269,22 @@ fn cmd_init(debug: bool) -> Result<()> {
         save_adr(2, "event-broker", &broker_adr)
             .context("failed to save adr-002-event-broker.yaml")?;
         println!("  Saved .canopy/decisions/adr-002-event-broker.yaml");
+
+        let convention_options = [
+            "<aggregate>-events  (e.g. product-events, order-events — one topic per aggregate)",
+            "<service>-events    (e.g. product-service-events — one topic per service)",
+            "<domain>.<aggregate>.events  (reverse-DNS style, e.g. commerce.product.events)",
+        ];
+        let convention_idx = Select::with_theme(&theme)
+            .with_prompt("Topic naming convention")
+            .items(&convention_options)
+            .default(0)
+            .interact()
+            .context("failed to read topic naming convention selection")?;
+        let convention_adr = topic_naming_convention_adr(convention_idx);
+        save_adr(3, "topic-naming-convention", &convention_adr)
+            .context("failed to save adr-003-topic-naming-convention.yaml")?;
+        println!("  Saved .canopy/decisions/adr-003-topic-naming-convention.yaml");
     }
 
     // Bootstrap domain entities
@@ -347,6 +363,47 @@ fn architecture_style_adr(idx: usize) -> Adr {
             alternatives: vec![
                 "Modular monolith".to_string(),
                 "Layered monolith".to_string(),
+            ],
+        },
+    }
+}
+
+fn topic_naming_convention_adr(idx: usize) -> Adr {
+    match idx {
+        0 => Adr {
+            title: "Topic Naming Convention".to_string(),
+            decision: "One topic per aggregate: <aggregate>-events (e.g. product-events, order-events)".to_string(),
+            reason: "Scoping topics to the aggregate gives per-entity ordering guarantees when \
+                     partitioned by entity ID, clean schema evolution per aggregate type, and \
+                     lets consumers subscribe only to the aggregates they care about. \
+                     Finer granularity (one topic per event type) creates subscription sprawl; \
+                     coarser granularity (one topic per service or one global topic) loses \
+                     ordering and complicates schema management."
+                .to_string(),
+            alternatives: vec![
+                "One topic per service: <service>-events".to_string(),
+                "Reverse-DNS style: <domain>.<aggregate>.events".to_string(),
+            ],
+        },
+        1 => Adr {
+            title: "Topic Naming Convention".to_string(),
+            decision: "One topic per service: <service>-events (e.g. product-service-events)".to_string(),
+            reason: "Groups all events from a single deployable service under one topic. \
+                     Simpler when a service owns a single aggregate, but conflates service \
+                     boundaries with aggregate boundaries as the service grows."
+                .to_string(),
+            alternatives: vec![
+                "One topic per aggregate: <aggregate>-events".to_string(),
+            ],
+        },
+        _ => Adr {
+            title: "Topic Naming Convention".to_string(),
+            decision: "Reverse-DNS style: <domain>.<aggregate>.events (e.g. commerce.product.events)".to_string(),
+            reason: "Namespaced topics prevent collisions in multi-domain Kafka clusters and \
+                     make ownership explicit. Common in large organisations sharing a single broker."
+                .to_string(),
+            alternatives: vec![
+                "One topic per aggregate: <aggregate>-events".to_string(),
             ],
         },
     }

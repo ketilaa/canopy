@@ -440,6 +440,11 @@ Naming rules — strictly enforced:
   Never append "Service", "DB", or "Database" as a suffix to service names.
 - Domain event names: PascalCase past tense, prefixed with the entity name (InvoiceCreated, AppointmentScheduled, AccountActivated)
   Never use kebab-case for event names.
+- Domain event ADR decisions: when a Topic Naming Convention ADR exists in Existing Architecture Decisions,
+  derive the topic name from it and format the decision as "<EventName> on topic <topic-name>".
+  Example: "ProductCreated on topic product-events"
+  The topic name is the aggregate name in kebab-case with an "-events" suffix (product → product-events).
+  If no Topic Naming Convention ADR exists, name the event only (no topic).
 
 For tech stack proposals:
 - Set technology to the canonical technology name (e.g. "Spring Boot", "Angular", "React",
