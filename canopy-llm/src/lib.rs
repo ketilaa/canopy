@@ -633,7 +633,7 @@ entity_schema:                    # omit entirely if not a creation story
       type: "<type>"
       description: "<one sentence>"
       validation:
-        max_length: <N>       # string: required
+        max_length: <N>       # string: required; [string]: required (per-item ceiling)
         min_length: <N>       # string: required (1 for mandatory)
         min: <N>              # integer/decimal: required
         max: <N>              # integer/decimal: required
@@ -643,7 +643,7 @@ entity_schema:                    # omit entirely if not a creation story
       type: "<type>"
       description: "<one sentence>"
       validation:
-        max_length: <N>       # string: required
+        max_length: <N>       # string: required; [string]: required (per-item ceiling)
         min_length: 0         # string: 0 for optional fields
         min: <N>              # integer/decimal: required
         max: <N>              # integer/decimal: required
@@ -1094,11 +1094,13 @@ fn node_express_skill() -> TechStackSkill {
         name: "Node.js / Express (TypeScript)".to_string(),
         file_layout:
             "  Source root: <service-prefix>/src/\n\
-             - src/models/      — TypeScript interfaces (pure types, no runtime deps)\n\
-             - src/services/    — business logic; no Express imports\n\
-             - src/routes/      — Express routers; thin request/response handling\n\
-             - src/middleware/  — cross-cutting (errorHandler, auth, logging)\n\
-             - src/index.ts     — entry point; registers routers and middleware\n\
+             - src/models/        — TypeScript interfaces (pure types, no runtime deps)\n\
+             - src/repositories/  — data access layer; all database calls live here; no Express imports\n\
+             - src/services/      — business logic; depends on repositories; no Express imports\n\
+             - src/routes/        — Express routers; thin request/response handling; validate with zod\n\
+             - src/middleware/    — cross-cutting (errorHandler, auth, logging)\n\
+             - src/app.ts         — builds and exports the Express app; MUST NOT call app.listen()\n\
+             - src/index.ts       — entry point; imports app and calls app.listen()\n\
              File paths in plan steps are relative to the PROJECT ROOT."
             .to_string(),
         namespace_rules:
@@ -1106,16 +1108,21 @@ fn node_express_skill() -> TechStackSkill {
              Validate input at the route boundary with zod:\n\
              - define a zod schema in the route file\n\
              - call schema.parse(req.body); let zod throw propagate to the error handler\n\
-             async/await everywhere — no raw .then() chains in route handlers."
+             async/await everywhere — no raw .then() chains in route handlers.\n\
+             CRITICAL: src/app.ts builds and exports the Express app without calling app.listen().\n\
+             src/index.ts is the ONLY file that calls app.listen().\n\
+             This separation is required so Supertest can import { app } without starting a server."
             .to_string(),
         layer_order:
-            "  1. src/models/      — interfaces only; no deps\n\
-             2. src/services/    — imports models; no Express deps\n\
-             3. src/routes/      — imports services; mounts on Express router\n\
-             4. src/middleware/errorHandler.ts — depends on nothing\n\
-             5. src/index.ts     — assembles app; imports routes and middleware\n\
-             6. tests            — import routes or services\n\
-             Reason: services must not import from routes; routes must not import from index."
+            "  1. src/models/        — interfaces only; no deps\n\
+             2. src/repositories/  — imports models; all DB calls; no Express deps\n\
+             3. src/services/      — imports models and repositories; no Express deps\n\
+             4. src/routes/        — imports services; mounts on Express router; validates with zod\n\
+             5. src/middleware/errorHandler.ts — depends on nothing; must be created before app.ts\n\
+             6. src/app.ts         — assembles the Express app; imports routes and middleware\n\
+             7. src/index.ts       — starts the server; imports app; calls app.listen()\n\
+             8. tests/             — import app from src/app.ts; use Supertest for route tests\n\
+             Reason: services must not import from routes; app.ts must not call listen()."
             .to_string(),
         notes: None,
     }
@@ -1988,15 +1995,42 @@ fn plan_prompt_for_service(
     } else {
         format!("\n{arch_skills}\n")
     };
-    let it_skill = integration_testing_skill(tech);
-    let testing_section = format!(
-        "\nTesting plan rules:\n\
-         - Unit test files (*Test.java / *.test.ts) are auto-generated per class by the TDD loop.\n\
-           DO NOT include unit test files in this plan.\n\
-         - Integration test files (*IT.java) test the full stack end-to-end.\n\
-           Include them as the LAST step(s) in the plan.\n\
-         {it_skill}\n"
-    );
+    let t_lower = tech.to_lowercase();
+    let is_jvm = t_lower.contains("spring") || t_lower.contains("quarkus")
+        || (t_lower.contains("java") && !t_lower.contains("javascript"))
+        || t_lower.contains("kotlin");
+    let is_node = t_lower.contains("node") || t_lower.contains("express") || t_lower.contains("nest");
+    let testing_section = if is_jvm {
+        let it_skill = integration_testing_skill(tech);
+        format!(
+            "\nTesting plan rules:\n\
+             - Unit test files (*Test.java) are auto-generated per class by the TDD loop.\n\
+               DO NOT include unit test files in this plan.\n\
+             - Integration test files (*IT.java) test the full stack end-to-end.\n\
+               Include them as the LAST step(s) in the plan.\n\
+             {it_skill}\n"
+        )
+    } else if is_node {
+        format!(
+            "\nTesting plan rules:\n\
+             - Include one unit test file (*.test.ts) per service module.\n\
+               Unit tests mock the repository and test business logic in isolation.\n\
+               Example: tests/productService.test.ts\n\
+             - Include one route test file (*.test.ts) per route module using Supertest.\n\
+               Route tests import {{ app }} from src/app.ts and exercise the full HTTP stack.\n\
+               Example: tests/productRoutes.test.ts\n\
+             - Route test files are the LAST step(s) in the plan.\n\
+             - Do NOT include a test file for src/app.ts or src/index.ts.\n"
+        )
+    } else {
+        let it_skill = integration_testing_skill(tech);
+        format!(
+            "\nTesting plan rules:\n\
+             - Include unit test files as needed for each module.\n\
+             - Include integration tests as the LAST step(s) in the plan.\n\
+             {it_skill}\n"
+        )
+    };
 
     format!(
         "Generate implementation steps for service '{sname}' as part of story '{story_id}'.\n\
