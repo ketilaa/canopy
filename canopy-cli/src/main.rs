@@ -6,10 +6,12 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, MultiSelect, Select};
 
 use canopy_core::*;
 use canopy_llm::{
-    execute_implementation_step, extract_domain_from_stories, fix_file,
-    generate_scaffold_from_services, generate_stories_from_intent, generate_story_contract,
-    generate_story_plan, generate_story_spec, identify_architectural_questions,
-    services_need_jvm, suggest_domain_entities, suggest_roles, LlmClient,
+    execute_implementation_step, execute_implementation_stub, execute_implementation_with_test,
+    extract_domain_from_stories, fix_file, generate_scaffold_from_services,
+    generate_stories_from_intent, generate_story_contract, generate_story_plan, generate_story_spec,
+    generate_unit_test_stub, identify_architectural_questions, services_need_jvm,
+    skill_for_build_system, skill_for_technology, skills_for_architecture, suggest_domain_entities,
+    suggest_roles, testing_skill_for_file_with_adrs, LlmClient,
 };
 use canopy_storage::*;
 
@@ -248,6 +250,24 @@ fn cmd_init(debug: bool) -> Result<()> {
         .context("failed to save adr-001-deployment-style.yaml")?;
     println!("  Saved .canopy/decisions/adr-001-deployment-style.yaml");
 
+    // Testing strategy — pre-authored ADR written at adr-002
+    let testing_strategies = [
+        "Vitest + React Testing Library  (React/Vite projects)",
+        "Jest + React Testing Library    (React/CRA or non-Vite)",
+        "Angular TestBed + Jasmine       (Angular projects)",
+        "None — backend only             (Spring Boot uses JUnit 5 implicitly)",
+    ];
+    let testing_idx = Select::with_theme(&theme)
+        .with_prompt("Frontend testing strategy")
+        .items(&testing_strategies)
+        .default(0)
+        .interact()
+        .context("failed to read testing strategy selection")?;
+    let testing_adr = testing_strategy_adr(testing_idx);
+    save_adr(2, "testing-strategy", &testing_adr)
+        .context("failed to save adr-002-testing-strategy.yaml")?;
+    println!("  Saved .canopy/decisions/adr-002-testing-strategy.yaml");
+
     // Bootstrap domain entities
     let client = build_client("intent", debug)?;
     print!("Suggesting domain entities... ");
@@ -341,6 +361,58 @@ fn deployment_style_adr(idx: usize) -> Adr {
             alternatives: vec![
                 "Kubernetes with local cluster (minikube or kind)".to_string(),
                 "Native processes per service".to_string(),
+            ],
+        },
+    }
+}
+
+fn testing_strategy_adr(idx: usize) -> Adr {
+    match idx {
+        0 => Adr {
+            title: "Testing Strategy".to_string(),
+            decision: "Vitest + React Testing Library for frontend unit tests".to_string(),
+            reason: "Vitest is the natural testing companion for Vite-based React projects. \
+                     It shares the Vite config, runs natively in ES modules, and is significantly \
+                     faster than Jest for component tests. React Testing Library enforces \
+                     user-behaviour-oriented assertions over implementation details."
+                .to_string(),
+            alternatives: vec![
+                "Jest + React Testing Library".to_string(),
+                "Playwright (component mode)".to_string(),
+            ],
+        },
+        1 => Adr {
+            title: "Testing Strategy".to_string(),
+            decision: "Jest + React Testing Library for frontend unit tests".to_string(),
+            reason: "Jest is the most widely adopted JavaScript test runner. \
+                     It works well with Create-React-App and non-Vite React setups, \
+                     and has the broadest ecosystem of matchers and utilities."
+                .to_string(),
+            alternatives: vec![
+                "Vitest + React Testing Library".to_string(),
+                "Playwright (component mode)".to_string(),
+            ],
+        },
+        2 => Adr {
+            title: "Testing Strategy".to_string(),
+            decision: "Angular TestBed + Jasmine for frontend unit tests".to_string(),
+            reason: "Angular CLI bootstraps Jasmine + Karma by default. \
+                     TestBed provides first-class Angular dependency injection in tests. \
+                     Jasmine's BDD-style matchers align well with Angular component contracts."
+                .to_string(),
+            alternatives: vec![
+                "Jest with jest-preset-angular".to_string(),
+            ],
+        },
+        _ => Adr {
+            title: "Testing Strategy".to_string(),
+            decision: "Backend only — no dedicated frontend test framework required".to_string(),
+            reason: "The project has no frontend component at this stage. \
+                     Spring Boot tests use JUnit 5, AssertJ, and Mockito via spring-boot-starter-test."
+                .to_string(),
+            alternatives: vec![
+                "Vitest + React Testing Library".to_string(),
+                "Jest + React Testing Library".to_string(),
             ],
         },
     }
@@ -525,6 +597,228 @@ fn format_roots_context(packet: &roots_context::FeatureContextPacket) -> String 
     parts.join("\n")
 }
 
+/// True for Java implementation files that benefit from a unit-test TDD cycle.
+/// Excludes: build files, Spring Data repositories (interfaces), Application entry point,
+/// configuration classes, and anything already in the test source tree.
+fn is_tdd_candidate(file: &str) -> bool {
+    if !file.ends_with(".java") || !file.contains("/src/main/java/") {
+        return false;
+    }
+    let filename = std::path::Path::new(file)
+        .file_name().and_then(|n| n.to_str()).unwrap_or("");
+    !filename.ends_with("Application.java")
+        && !filename.ends_with("Repository.java")
+        && !filename.ends_with("Configuration.java")
+        && !filename.ends_with("Config.java")
+}
+
+/// Maps `src/main/java/.../Foo.java` → `src/test/java/.../FooTest.java`.
+fn derive_test_file_path(impl_file: &str) -> Option<String> {
+    if !impl_file.contains("/src/main/java/") {
+        return None;
+    }
+    let test_path = impl_file.replace("/src/main/java/", "/src/test/java/");
+    let p = std::path::Path::new(&test_path);
+    let stem = p.file_stem()?.to_str()?;
+    let parent = p.parent()?.to_str()?;
+    Some(format!("{}/{}Test.java", parent, stem))
+}
+
+/// Extracts the simple class name from a test file path (the file stem).
+fn test_class_name(test_file: &str) -> Option<String> {
+    std::path::Path::new(test_file)
+        .file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+}
+
+/// Returns a compile-only command (no test execution) for the service's build tool.
+fn compile_command_for_service(service: &ServiceEntry, _service_dir: &str) -> String {
+    let tech = service.technology.as_deref().unwrap_or("").to_lowercase();
+    if tech.contains("spring") || tech.contains("maven") || tech.contains("java") {
+        return "./mvnw test-compile -B".to_string();
+    }
+    if tech.contains("gradle") {
+        return "./gradlew compileTestJava".to_string();
+    }
+    "npx tsc --noEmit".to_string()
+}
+
+/// Returns a test command scoped to a single test class.
+fn test_class_command_for_service(service: &ServiceEntry, test_class: &str) -> String {
+    let tech = service.technology.as_deref().unwrap_or("").to_lowercase();
+    if tech.contains("spring") || tech.contains("maven") || tech.contains("java") {
+        return format!("./mvnw test -Dtest={} -B", test_class);
+    }
+    if tech.contains("gradle") {
+        return format!("./gradlew test --tests '*.{}'", test_class);
+    }
+    format!("npm test -- --testPathPattern={} --watchAll=false", test_class)
+}
+
+/// Runs a build/test command and iterates an LLM fix loop until it succeeds or max_iterations is hit.
+/// `skip_files` lists files that must not be modified (e.g. the unit test in the Green phase).
+/// `adrs` is used to resolve the correct testing skill when fixing test files.
+/// Returns true when the command exits successfully.
+fn run_fix_loop(
+    client: &LlmClient,
+    service: &ServiceEntry,
+    service_dir: &str,
+    build_cmd: &str,
+    service_source_files: &[String],
+    skip_files: &[String],
+    adrs: &[Adr],
+    arch_skills: &str,
+    max_iterations: usize,
+) -> bool {
+    for iteration in 0..max_iterations {
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(build_cmd)
+            .current_dir(service_dir)
+            .output();
+
+        let output = match output {
+            Ok(o) => o,
+            Err(e) => { eprintln!("  failed to run command: {e}"); return false; }
+        };
+
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        if output.status.success() {
+            println!("  ✓ {}", service.name);
+            return true;
+        }
+
+        let missing_pkgs = extract_missing_packages(&combined);
+        let mut fixed_any = false;
+        let broken_files: Vec<String> = extract_error_files(&combined, service_dir)
+            .into_iter()
+            .filter(|f| !skip_files.contains(f))
+            .collect();
+
+        if missing_pkgs.iter().any(|p| p.starts_with("javax.")) {
+            let n = migrate_javax_to_jakarta(service_dir);
+            if n > 0 {
+                println!("  migrated javax.* → jakarta.* in {n} file(s)");
+                fixed_any = true;
+            }
+        }
+
+        let pom_validation = extract_pom_validation_errors(&combined);
+        let unresolvable = extract_unresolvable_dependencies(&combined);
+        let non_javax: Vec<_> = missing_pkgs.iter().filter(|p| !p.starts_with("javax.")).collect();
+        if !pom_validation.is_empty() || !unresolvable.is_empty() || !non_javax.is_empty() {
+            let build_file = format!("{service_dir}/pom.xml");
+            if std::path::Path::new(&build_file).exists() {
+                let content = std::fs::read_to_string(&build_file).unwrap_or_default();
+                if !content.is_empty() {
+                    let mut error_lines = Vec::new();
+                    if !pom_validation.is_empty() {
+                        error_lines.push(format!(
+                            "Maven POM validation errors (artifact not in parent BOM — remove or replace with correct artifactId):\n{}",
+                            pom_validation.iter().map(|e| format!("  {e}")).collect::<Vec<_>>().join("\n")
+                        ));
+                    }
+                    if !unresolvable.is_empty() {
+                        error_lines.push(format!(
+                            "Unresolvable dependencies — do not exist on Maven Central. Remove from pom.xml:\n{}",
+                            unresolvable.iter().map(|c| format!("  - {c}")).collect::<Vec<_>>().join("\n")
+                        ));
+                    }
+                    if !non_javax.is_empty() {
+                        error_lines.push(format!(
+                            "Missing packages not in pom.xml:\n{}",
+                            non_javax.iter().map(|p| format!("  - {p}")).collect::<Vec<_>>().join("\n")
+                        ));
+                    }
+                    let errors = error_lines.join("\n\n");
+                    println!("  fixing pom.xml ({} pom, {} unresolvable, {} missing)",
+                        pom_validation.len(), unresolvable.len(), non_javax.len());
+                    let pom_skill = skill_for_build_system(&build_file);
+                    match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills) {
+                        Ok(fixed) => { let _ = std::fs::write(&build_file, &fixed); fixed_any = true; }
+                        Err(e) => eprintln!("    LLM fix failed for pom.xml: {e}"),
+                    }
+                }
+            }
+        }
+
+        if broken_files.is_empty() && !fixed_any {
+            eprintln!("  No fixable errors found — manual fix needed.");
+            eprintln!("{combined}");
+            return false;
+        }
+
+        if !broken_files.is_empty() {
+            println!("  iteration {}/{}: {} file(s) with errors",
+                iteration + 1, max_iterations, broken_files.len());
+        }
+
+        for file_path in &broken_files {
+            let content = match std::fs::read_to_string(file_path) {
+                Ok(c) => c,
+                Err(e) => { eprintln!("  cannot read {file_path}: {e}"); continue; }
+            };
+            let errors = errors_for_file(&combined, file_path);
+            if errors.trim().is_empty() {
+                eprintln!("  skipping {} — no matching error lines", file_path);
+                continue;
+            }
+            println!("    fixing {} ({} error line(s))", file_path, errors.lines().count());
+
+            let referenced: Vec<(String, String)> =
+                if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
+                    service_source_files.iter()
+                        .filter(|f| f.ends_with(".ts") || f.ends_with(".tsx"))
+                        .filter_map(|rel| {
+                            let full = format!("{service_dir}/{rel}");
+                            if full == *file_path { return None; }
+                            std::fs::read_to_string(&full).ok().map(|c| (rel.clone(), c))
+                        })
+                        .collect()
+                } else if file_path.ends_with(".java") {
+                    let imported: Vec<&str> = content.lines()
+                        .filter(|l| l.starts_with("import ") && !l.contains('*'))
+                        .filter_map(|l| l.trim_end_matches(';').rsplit('.').next())
+                        .collect();
+                    if let Some(surface) = roots::get_class_surface(&imported, service_dir) {
+                        vec![("type-surface (roots index)".to_string(), surface)]
+                    } else {
+                        service_source_files.iter()
+                            .filter(|f| f.ends_with(".java"))
+                            .filter_map(|rel| {
+                                let full = format!("{service_dir}/{rel}");
+                                if full == *file_path { return None; }
+                                let stem = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                                if !imported.contains(&stem) { return None; }
+                                std::fs::read_to_string(&full).ok().map(|c| (rel.clone(), c))
+                            })
+                            .collect()
+                    }
+                } else {
+                    vec![]
+                };
+
+            let tech = service.technology.as_deref().unwrap_or("");
+            let base_skill = skill_for_technology(tech, "", "", &service.name);
+            let test_skill = testing_skill_for_file_with_adrs(file_path, tech, adrs);
+            let fix_skill = if test_skill.is_empty() {
+                base_skill
+            } else {
+                format!("{base_skill}\n\n{test_skill}")
+            };
+            match fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills) {
+                Ok(fixed) => { let _ = std::fs::write(file_path, &fixed); }
+                Err(e) => eprintln!("    LLM fix failed for {file_path}: {e}"),
+            }
+        }
+    }
+    false
+}
+
 fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
 
@@ -549,6 +843,7 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
         .context("no services.yaml — run `canopy spec` first")?;
 
     let adrs = load_all_adrs().unwrap_or_default();
+    let arch_skills = skills_for_architecture(&adrs);
 
     // Detect the actual base package per JVM service from the scaffolded *Application.java.
     // This adapts to whatever naming convention the scaffold tool used (Spring Initializr
@@ -613,6 +908,9 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
     let client = build_client("developer", debug)?;
     let total = plan.steps.len();
     let mut written = 0usize;
+    let mut session_written: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    const MAX_FIX_ITERATIONS: usize = 5;
 
     roots::ensure_indexed();
 
@@ -624,178 +922,166 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
         println!("\n[{}/{}] {} {}", step.id, total, op_label, step.file);
         println!("  {}", step.description);
 
-        let current_content = if step.operation == "modify" {
-            std::fs::read_to_string(&step.file).ok()
-        } else {
-            None
+        // Resolve the service entry and directory for this step.
+        let step_service_name = step.service.rsplit('/').next().unwrap_or(&step.service).to_string();
+        let step_service = services.services.iter()
+            .find(|s| s.name == step_service_name || s.name == step.service);
+        let step_service_dir = match step_service.and_then(|s| s.component_type.as_deref()) {
+            Some("frontend") => format!("frontend/{}", step_service_name),
+            _ => format!("services/{}", step_service_name),
         };
 
-        let roots_context = roots::get_feature_context(&step.description)
-            .map(|p| format_roots_context(&p))
-            .filter(|s| !s.is_empty());
+        if is_tdd_candidate(&step.file) {
+            let test_file = match derive_test_file_path(&step.file) {
+                Some(p) => p,
+                None => {
+                    eprintln!("  cannot derive test path for {} — skipping TDD", step.file);
+                    continue;
+                }
+            };
+            let test_class = test_class_name(&test_file).unwrap_or_else(|| "Test".to_string());
 
-        let content = execute_implementation_step(
-            &client, story, &spec, &contract_yaml,
-            step, current_content.as_deref(), roots_context.as_deref(),
-            &service_packages, &services,
-        )
-        .with_context(|| format!("LLM call failed for step {}", step.id))?;
+            // ── RED PHASE ────────────────────────────────────────────────────────
+            println!("  [red] generating unit test: {}", test_file);
+            let test_content = generate_unit_test_stub(
+                &client, story, &spec, step, &test_file,
+                &service_packages, &services, &adrs,
+            ).with_context(|| format!("LLM call failed generating test for step {}", step.id))?;
 
-        let dest = std::path::Path::new(&step.file);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory for {}", step.file))?;
+            let test_dest = std::path::Path::new(&test_file);
+            if let Some(parent) = test_dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(test_dest, &test_content)
+                .with_context(|| format!("failed to write {}", test_file))?;
+            println!("  wrote {}", test_file);
+
+            println!("  [red] generating stub: {}", step.file);
+            let stub_content = execute_implementation_stub(
+                &client, story, &spec, &contract_yaml,
+                step, None, None,
+                &service_packages, &services, &session_written, &arch_skills,
+                &test_file, &test_content,
+            ).with_context(|| format!("LLM call failed generating stub for step {}", step.id))?;
+
+            let dest = std::path::Path::new(&step.file);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(dest, &stub_content)
+                .with_context(|| format!("failed to write {}", step.file))?;
+            println!("  wrote {}", step.file);
+            written += 1;
+            session_written.insert(step.file.clone(), stub_content);
+
+            if let Some(svc) = step_service {
+                if std::path::Path::new(&step_service_dir).exists() {
+                    let compile_cmd = compile_command_for_service(svc, &step_service_dir);
+                    println!("  [red] compiling: {} (in {})", compile_cmd, step_service_dir);
+                    let src_files = scan_service_source_files(&step_service_dir);
+                    // Both test and impl may be fixed during Red — no skip_files here.
+                    run_fix_loop(&client, svc, &step_service_dir, &compile_cmd,
+                        &src_files, &[], &adrs, &arch_skills, MAX_FIX_ITERATIONS);
+                }
+            }
+            roots::reindex();
+
+            // ── GREEN PHASE ──────────────────────────────────────────────────────
+            println!("  [green] implementing: {}", step.file);
+            let roots_context = roots::get_feature_context(&step.description)
+                .map(|p| format_roots_context(&p))
+                .filter(|s| !s.is_empty());
+
+            // Re-read test in case the Red fix loop modified it.
+            let test_content = std::fs::read_to_string(&test_file)
+                .unwrap_or(test_content);
+
+            let impl_content = execute_implementation_with_test(
+                &client, story, &spec, &contract_yaml,
+                step, None, roots_context.as_deref(),
+                &service_packages, &services, &session_written, &arch_skills,
+                &test_file, &test_content,
+            ).with_context(|| format!("LLM call failed for Green phase step {}", step.id))?;
+
+            std::fs::write(dest, &impl_content)
+                .with_context(|| format!("failed to write {}", step.file))?;
+            println!("  wrote {}", step.file);
+            session_written.insert(step.file.clone(), impl_content);
+
+            if let Some(svc) = step_service {
+                if std::path::Path::new(&step_service_dir).exists() {
+                    let test_cmd = test_class_command_for_service(svc, &test_class);
+                    println!("  [green] testing: {} (in {})", test_cmd, step_service_dir);
+                    let src_files = scan_service_source_files(&step_service_dir);
+                    // Green phase: never modify the unit test — it is the spec.
+                    let abs_test = std::fs::canonicalize(&test_file)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or(test_file.clone());
+                    run_fix_loop(&client, svc, &step_service_dir, &test_cmd,
+                        &src_files, &[test_file.clone(), abs_test], &adrs, &arch_skills, MAX_FIX_ITERATIONS);
+                }
+            }
+            roots::reindex();
+        } else {
+            // ── DIRECT IMPLEMENTATION (non-TDD candidates) ───────────────────────
+            let current_content = if step.operation == "modify" {
+                std::fs::read_to_string(&step.file).ok()
+            } else {
+                None
+            };
+            let roots_context = roots::get_feature_context(&step.description)
+                .map(|p| format_roots_context(&p))
+                .filter(|s| !s.is_empty());
+
+            let content = execute_implementation_step(
+                &client, story, &spec, &contract_yaml,
+                step, current_content.as_deref(), roots_context.as_deref(),
+                &service_packages, &services, &session_written, &arch_skills,
+            ).with_context(|| format!("LLM call failed for step {}", step.id))?;
+
+            let dest = std::path::Path::new(&step.file);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(dest, &content)
+                .with_context(|| format!("failed to write {}", step.file))?;
+            println!("  wrote {}", step.file);
+            written += 1;
+            session_written.insert(step.file.clone(), content);
+            roots::reindex();
         }
-        std::fs::write(dest, &content)
-            .with_context(|| format!("failed to write {}", step.file))?;
-        println!("  wrote {}", step.file);
-        written += 1;
 
         plan.steps[i].status = StepStatus::Done;
-        save_story_plan(story_id, &plan)
-            .context("failed to save plan progress")?;
-
-        roots::reindex();
+        save_story_plan(story_id, &plan).context("failed to save plan progress")?;
     }
 
     println!("\n{written} file(s) written.");
 
-    // Test/fix loop — run build+tests per service and fix compiler errors with LLM
+    // Final integration test pass — catches e2e tests and cross-service interaction issues.
     let implementable: Vec<_> = services.services.iter()
         .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
         .filter(|s| s.technology.is_some())
         .collect();
-
-    const MAX_FIX_ITERATIONS: usize = 5;
 
     for service in &implementable {
         let service_dir = match service.component_type.as_deref().unwrap_or("service") {
             "frontend" => format!("frontend/{}", service.name),
             _ => format!("services/{}", service.name),
         };
+        if !std::path::Path::new(&service_dir).exists() { continue; }
 
-        if !std::path::Path::new(&service_dir).exists() {
-            continue;
-        }
-
-        let test_cmd = test_command_for_service(service, &service_dir);
-        let service_source_files = scan_service_source_files(&service_dir);
-
-        // Ensure frontend dependencies are installed before building
         if !std::path::Path::new(&format!("{service_dir}/node_modules")).exists()
             && std::path::Path::new(&format!("{service_dir}/package.json")).exists()
         {
             println!("  running npm install in {service_dir}...");
-            let _ = std::process::Command::new("npm")
-                .arg("install")
-                .current_dir(&service_dir)
-                .status();
+            let _ = std::process::Command::new("npm").arg("install").current_dir(&service_dir).status();
         }
-        println!("\nRunning: {} (in {})", test_cmd, service_dir);
 
-        for iteration in 0..MAX_FIX_ITERATIONS {
-            let output = std::process::Command::new("bash")
-                .arg("-c")
-                .arg(&test_cmd)
-                .current_dir(&service_dir)
-                .output();
-
-            let output = match output {
-                Ok(o) => o,
-                Err(e) => { eprintln!("  failed to run test command: {e}"); break; }
-            };
-
-            let combined = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-
-            if output.status.success() {
-                println!("  ✓ {} passes", service.name);
-                break;
-            }
-
-            let missing_pkgs = extract_missing_packages(&combined);
-            let mut fixed_any = false;
-            let broken_files = extract_error_files(&combined, &service_dir);
-
-            // javax.* → jakarta.* is a mechanical rename, no LLM needed.
-            // Spring Boot 3+ dropped the javax.* namespace entirely.
-            if missing_pkgs.iter().any(|p| p.starts_with("javax.")) {
-                let n = migrate_javax_to_jakarta(&service_dir);
-                if n > 0 {
-                    println!("  migrated javax.* → jakarta.* in {n} file(s)");
-                    fixed_any = true;
-                }
-            }
-
-            // Remaining missing packages are genuine pom.xml gaps — let LLM add them.
-            let non_javax: Vec<_> = missing_pkgs.iter()
-                .filter(|p| !p.starts_with("javax."))
-                .collect();
-            if !non_javax.is_empty() {
-                let build_file = format!("{service_dir}/pom.xml");
-                if std::path::Path::new(&build_file).exists() {
-                    let content = match std::fs::read_to_string(&build_file) {
-                        Ok(c) => c,
-                        Err(e) => { eprintln!("  cannot read {build_file}: {e}"); String::new() }
-                    };
-                    if !content.is_empty() {
-                        let errors = format!(
-                            "The following packages are missing from the Maven dependencies:\n{}",
-                            non_javax.iter().map(|p| format!("  - {p}")).collect::<Vec<_>>().join("\n")
-                        );
-                        println!("  fixing pom.xml ({} missing package(s))", non_javax.len());
-                        match fix_file(&client, &build_file, &content, &errors, &service_source_files) {
-                            Ok(fixed) => {
-                                if let Err(e) = std::fs::write(&build_file, &fixed) {
-                                    eprintln!("    failed to write {build_file}: {e}");
-                                } else {
-                                    fixed_any = true;
-                                }
-                            }
-                            Err(e) => eprintln!("    LLM fix failed for {build_file}: {e}"),
-                        }
-                    }
-                }
-            }
-
-            if broken_files.is_empty() && !fixed_any {
-                eprintln!("  Tests failed but no fixable errors found — manual fix needed.");
-                eprintln!("{combined}");
-                break;
-            }
-
-            if !broken_files.is_empty() {
-                println!(
-                    "  iteration {}/{}: {} source file(s) with errors",
-                    iteration + 1, MAX_FIX_ITERATIONS, broken_files.len()
-                );
-            }
-
-            for file_path in &broken_files {
-                let content = match std::fs::read_to_string(file_path) {
-                    Ok(c) => c,
-                    Err(e) => { eprintln!("  cannot read {file_path}: {e}"); continue; }
-                };
-                let errors = errors_for_file(&combined, file_path);
-                if errors.trim().is_empty() {
-                    eprintln!("  skipping {} — in error list but no matching error lines found", file_path);
-                    continue;
-                }
-                println!("    fixing {} ({} error line(s))", file_path, errors.lines().count());
-
-                match fix_file(&client, file_path, &content, &errors, &service_source_files) {
-                    Ok(fixed) => {
-                        if let Err(e) = std::fs::write(file_path, &fixed) {
-                            eprintln!("    failed to write {file_path}: {e}");
-                        }
-                    }
-                    Err(e) => eprintln!("    LLM fix failed for {file_path}: {e}"),
-                }
-            }
-        }
+        let test_cmd = test_command_for_service(service, &service_dir);
+        let service_source_files = scan_service_source_files(&service_dir);
+        println!("\nFinal validation: {} (in {})", test_cmd, service_dir);
+        run_fix_loop(&client, service, &service_dir, &test_cmd,
+            &service_source_files, &[], &adrs, &arch_skills, MAX_FIX_ITERATIONS);
     }
 
     Ok(())
@@ -908,6 +1194,44 @@ fn migrate_javax_to_jakarta(service_dir: &str) -> usize {
         }
     }
     count
+}
+
+/// Detect Maven POM validation errors that fire before compilation.
+/// Pattern: [ERROR] 'dependencies.dependency.version' for X:jar is missing. @ line N
+/// These indicate an artifact that has no version and isn't managed by the parent BOM.
+fn extract_pom_validation_errors(output: &str) -> Vec<String> {
+    output.lines()
+        .filter(|line| line.contains("[ERROR]") && line.contains("is missing."))
+        .map(|line| line.trim().trim_start_matches("[ERROR]").trim().to_string())
+        .collect()
+}
+
+/// Extract Maven artifact coordinates that could not be resolved.
+/// Matches lines like:
+///   [ERROR]     Could not find artifact com.example:foo:jar:1.0-SNAPSHOT
+///   [ERROR] dependency: com.example:foo:jar:1.0-SNAPSHOT (compile)
+fn extract_unresolvable_dependencies(output: &str) -> Vec<String> {
+    let mut coords: Vec<String> = Vec::new();
+    for line in output.lines() {
+        if !line.contains("[ERROR]") {
+            continue;
+        }
+        if line.contains("Could not find artifact") || line.contains("Could not resolve") {
+            // Extract the coordinates — the groupId:artifactId:... token
+            if let Some(coord) = line
+                .split_whitespace()
+                .find(|tok| tok.matches(':').count() >= 2)
+            {
+                // Strip trailing parenthetical e.g. "(compile)"
+                let coord = coord.trim_end_matches(|c: char| c == ')' || c == '(');
+                let coord = coord.trim();
+                if !coord.is_empty() && !coords.contains(&coord.to_string()) {
+                    coords.push(coord.to_string());
+                }
+            }
+        }
+    }
+    coords
 }
 
 fn extract_missing_packages(output: &str) -> Vec<String> {

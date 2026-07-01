@@ -25,12 +25,30 @@ pub struct Scenario {
     pub constraints: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FieldValidation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_items: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldDef {
     pub name: String,
     #[serde(rename = "type")]
     pub field_type: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<FieldValidation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -577,8 +577,21 @@ mandatory — fields the actor MUST provide when registering the entity:
 optional — fields the actor MAY provide; nullable or defaulted:
   - These enrich the entity but are not required for it to exist.
 
-Field format: name (camelCase), type (uuid | string | integer | decimal | boolean | datetime),
-description (one sentence).
+Field format: name (camelCase), type (uuid | string | integer | decimal | boolean | datetime |
+"[string]" | "[uuid]"), description (one sentence), validation (see rules below).
+
+Validation rules — mandatory and optional fields MUST include a validation block.
+system_generated fields do NOT need a validation block.
+  string:    max_length (required — pick a domain-appropriate ceiling, e.g. 200 for a name,
+                         2000 for a description, 500 for a URL)
+             min_length (required — 1 for mandatory fields, 0 for optional)
+  integer:   min (required), max (required)
+  decimal:   min (required), max (required)
+  boolean:   omit validation block
+  uuid:      omit validation block
+  datetime:  omit validation block
+  "[string]": max_items (required), max_length (required — max length per individual item)
+  "[uuid]":  max_items (required)
 
 Scenario grounding rule — when entity_schema is present, BDD scenarios MUST be grounded in it:
 - "when" MUST explicitly name the mandatory fields the actor submits
@@ -614,14 +627,27 @@ entity_schema:                    # omit entirely if not a creation story
     - name: "<camelCase>"
       type: "<type>"
       description: "<one sentence>"
+      # no validation block for system_generated fields
   mandatory:
     - name: "<camelCase>"
       type: "<type>"
       description: "<one sentence>"
+      validation:
+        max_length: <N>       # string: required
+        min_length: <N>       # string: required (1 for mandatory)
+        min: <N>              # integer/decimal: required
+        max: <N>              # integer/decimal: required
+        max_items: <N>        # [string]/[uuid]: required
   optional:
     - name: "<camelCase>"
       type: "<type>"
       description: "<one sentence>"
+      validation:
+        max_length: <N>       # string: required
+        min_length: 0         # string: 0 for optional fields
+        min: <N>              # integer/decimal: required
+        max: <N>              # integer/decimal: required
+        max_items: <N>        # [string]/[uuid]: required
 scenarios:
   - id: "{story_id}-01"
     name: "<scenario name>"
@@ -715,6 +741,8 @@ Rules:
 - Use RESTful conventions: POST to create, GET to read, PUT/PATCH to update, DELETE to remove
 - Request bodies must include the mandatory and optional fields from entity_schema (if present)
 - Response schemas must include the system-generated fields set at creation
+- Map validation constraints from entity_schema onto OAS schema properties:
+    max_length → maxLength, min_length → minLength, min → minimum, max → maximum, max_items → maxItems
 - Include 400 Bad Request response with {{message, fields}} for validation failures
 - Include 201 Created with Location header for successful creation
 - Use $ref for reusable schemas
@@ -885,90 +913,943 @@ pub fn services_need_jvm(services: &ServicesRegistry) -> bool {
 }
 
 // ── Tech-stack skills ────────────────────────────────────────────────────────
-// Each skill is a rules block injected into the per-service plan prompt.
-// JVM skills receive dynamic package/path context; others are static strings.
-// Add new skills here; the matcher in `skill_for_technology` selects the right one.
+// Every tech-stack skill implements the same three-section contract:
+//   1. file_layout    — where files live and what each directory means
+//   2. namespace_rules — allowed/forbidden imports with examples
+//   3. layer_order    — the sequence in which files must be generated (dependency order)
+//
+// `notes` is optional: fix-loop guidance, scope constraints, etc.
+//
+// To add a new stack: implement a builder function that returns TechStackSkill,
+// fill all three required fields, add a match arm in skill_for_technology().
 
-fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> String {
-    format!(
-        "Tech stack rules — Spring Boot 3 (Jakarta EE):\n\
-         - Build file:    services/{service_name}/pom.xml  ← this exact path, never just pom.xml\n\
-         - Base package:  {pkg}  ← use this exact string in every `package` declaration\n\
-         - Source root:   services/{service_name}/src/main/java/{pkg_path}/\n\
-         - Test root:     services/{service_name}/src/test/java/{pkg_path}/\n\
-         - Example paths: services/{service_name}/src/main/java/{pkg_path}/domain/Product.java\n\
-                          services/{service_name}/src/main/java/{pkg_path}/controller/ProductController.java\n\
-                          services/{service_name}/src/test/java/{pkg_path}/ProductControllerIT.java\n\
-         - Sub-packages:  {pkg}.domain   {pkg}.repository\n\
-                          {pkg}.dto      {pkg}.service   {pkg}.controller\n\
-         - Every .java file's package declaration MUST be exactly '{pkg}' or one of its sub-packages\n\
-         - If an existing file has any other package declaration, correct it to match\n\
-         - @SpringBootApplication class MUST be at services/{service_name}/src/main/java/{pkg_path}/*Application.java\n\
-           (directly in the base package, never inside a sub-package like service/ or controller/)\n\
-         - Namespace: jakarta.* everywhere — NEVER import javax.*\n\
-         - One public type per .java file; file name MUST match the class name exactly\n\
-         - pom.xml MUST include: spring-boot-starter-data-jpa, spring-boot-starter-validation,\n\
-           postgresql (runtime scope), lombok\n\
-         - Validation: jakarta.validation.constraints.* (@NotBlank, @NotNull, @Positive, etc.)\n\
-         - Integration tests: @SpringBootTest + @AutoConfigureMockMvc",
-        pkg = pkg,
-        pkg_path = pkg_path,
-        service_name = service_name,
-    )
+pub struct TechStackSkill {
+    pub name: String,
+    /// Where files live; directory conventions; one-type-per-file rules.
+    pub file_layout: String,
+    /// Allowed and forbidden imports/namespaces with concrete examples.
+    pub namespace_rules: String,
+    /// Ordered list of layers with rationale — the LLM generates in this sequence.
+    pub layer_order: String,
+    /// Optional extra rules: scope constraints, fix-loop guidance, etc.
+    pub notes: Option<String>,
 }
 
-const SKILL_REACT_VITE: &str = "\
-Tech stack rules — React + TypeScript (Vite scaffold):
-- File paths in steps are relative to the PROJECT ROOT — always include the full prefix,
-  e.g. frontend/admin-portal/src/api/ProductApi.ts
-- ALL .ts and .tsx files MUST live under the service's src/ directory
-- Minimal layout for a story: one API client, one form component, one App.tsx update — nothing more
-- API client: <prefix>/src/api/<Entity>Api.ts — typed fetch(), request and response interfaces inline
-- Form component: <prefix>/src/components/<Entity>Form.tsx — controlled inputs, validation, error display
-- Wire up: modify <prefix>/src/App.tsx to render the form component
-- Import paths inside source files are relative to the file's position — never use ../..
-- STRICT SCOPE — do NOT add: custom hooks, page components, route files, store/redux slices,
-  utility/validator modules, CSS files, or any abstraction not required by the story.
-  The form component handles its own state and calls the API client directly.";
+impl TechStackSkill {
+    pub fn render(&self) -> String {
+        let notes_section = match &self.notes {
+            Some(n) if !n.is_empty() => format!("\n\nAdditional rules:\n{n}"),
+            _ => String::new(),
+        };
+        format!(
+            "Tech stack — {name}:\n\
+             \n\
+             File layout:\n{layout}\n\
+             \n\
+             Namespace / import rules:\n{ns}\n\
+             \n\
+             Layer order — generate files in this sequence:\n{order}{notes}",
+            name  = self.name,
+            layout = self.file_layout,
+            ns    = self.namespace_rules,
+            order = self.layer_order,
+            notes = notes_section,
+        )
+    }
+}
 
-const SKILL_ANGULAR: &str = "\
-Tech stack rules — Angular:
-- File paths in steps are relative to the PROJECT ROOT — always include the full prefix
-- Source root is src/app/ inside the service directory
-- Feature folder per domain concept: module, component, service, and model in one folder
-- Services: @Injectable({ providedIn: 'root' }) unless feature-scoped
-- HTTP: inject HttpClient — never call fetch() directly
-- Prefer reactive forms (FormBuilder) over template-driven forms for non-trivial inputs
-- Typed HTTP responses: use generics on HttpClient methods";
+fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> TechStackSkill {
+    TechStackSkill {
+        name: "Spring Boot 3 (Jakarta EE)".to_string(),
+        file_layout: format!(
+            "  Build file:  services/{sn}/pom.xml\n\
+             Source root: services/{sn}/src/main/java/{pp}/\n\
+             Test root:   services/{sn}/src/test/java/{pp}/\n\
+             Layers:      {p}.domain  {p}.repository  {p}.dto  {p}.service  {p}.controller\n\
+             One public type per .java file; file name must match the class name exactly.\n\
+             @SpringBootApplication lives in {p} directly — never inside a sub-package.",
+            sn = service_name, pp = pkg_path, p = pkg
+        ),
+        namespace_rules: format!(
+            "  jakarta.* everywhere — NEVER import javax.* (will not compile under Jakarta EE 9+)\n\
+             - jakarta.servlet.http.HttpServletRequest  (NOT javax.servlet.http.HttpServletRequest)\n\
+             - jakarta.validation.constraints.*  (@NotBlank, @NotNull, @Positive, ...)\n\
+             - jakarta.persistence.*  (@Entity, @Id, @GeneratedValue, @Column, ...)\n\
+             - jakarta.annotation.*  (@PostConstruct, ...)\n\
+             Every package declaration must be exactly {p} or a sub-package of it.",
+            p = pkg
+        ),
+        layer_order: format!(
+            "  1. services/{sn}/pom.xml     — complete Maven POM; must end with </project>\n\
+             2. {pp}/domain/         — @Entity classes with @Id and @GeneratedValue\n\
+             3. {pp}/repository/     — JpaRepository interfaces\n\
+             4. {pp}/dto/            — request/response classes with validation annotations\n\
+             5. {pp}/service/        — @Service business logic\n\
+             6. {pp}/controller/     — @RestController endpoints matching OAS contract\n\
+             7. src/test/**/*IT.java — @SpringBootTest integration tests (end-to-end only)\n\
+                Do NOT plan *Test.java files — the TDD loop generates them automatically.\n\
+             Reason: each layer imports from the one above; generate strictly in this order.",
+            sn = service_name, pp = pkg_path
+        ),
+        notes: Some(format!(
+            "  pom.xml required starters: spring-boot-starter-web, spring-boot-starter-data-jpa,\n\
+             spring-boot-starter-validation, h2 (runtime scope), spring-boot-starter-test (test scope).\n\
+             (Maven structure and dependency validity rules are in the Maven build skill below.)\n\
+             Integration tests: import DTOs from {p}.dto — never define local classes that shadow them.\n\
+             Include all java.util.* and annotation imports. Test only OAS-declared endpoints.\n\
+             Validation annotation type-safety rules (violations cause UnexpectedTypeException at runtime):\n\
+             - @Positive / @Min / @Max / @DecimalMin / @DecimalMax — ONLY on numeric types\n\
+               (int, Integer, long, Long, BigDecimal, Double, etc.)\n\
+               NEVER on String, List, Set, Collection, or any other non-numeric type.\n\
+             - For a non-null, non-empty collection:  @NotNull + @NotEmpty  (NOT @Positive)\n\
+             - For a non-blank string:               @NotBlank  (NOT @NotNull alone)\n\
+             - For a non-null object reference:      @NotNull",
+            p = pkg
+        )),
+    }
+}
 
-const SKILL_NODE_EXPRESS: &str = "\
-Tech stack rules — Node.js / Express (TypeScript):
-- File paths in steps are relative to the PROJECT ROOT — always include the full prefix
-- Source root is src/ inside the service directory
-- Layout: src/routes/ for Express routers, src/services/ for business logic,
-  src/models/ for type interfaces, src/middleware/ for cross-cutting concerns
-- Use async/await throughout — no raw .then() chains in route handlers
-- Validate input at the route boundary (e.g. zod or joi schema)
-- Central error-handling middleware in src/middleware/errorHandler.ts";
+fn react_vite_skill() -> TechStackSkill {
+    TechStackSkill {
+        name: "React + TypeScript (Vite)".to_string(),
+        file_layout:
+            "  All .ts/.tsx files live under <service-prefix>/src/\n\
+             Canonical layout for one story:\n\
+             - <prefix>/src/api/<Entity>Api.ts         — typed fetch() client + interfaces\n\
+             - <prefix>/src/components/<Entity>Form.tsx — controlled form component\n\
+             - <prefix>/src/App.tsx                    — renders the form\n\
+             File paths in plan steps are relative to the PROJECT ROOT;\n\
+             always include the full prefix (e.g. frontend/admin-portal/src/api/ProductApi.ts)."
+            .to_string(),
+        namespace_rules:
+            "  Imports are relative to the file's position inside src/:\n\
+             - App.tsx:          import ProductForm from './components/ProductForm'\n\
+             - ProductForm.tsx:  import { registerProduct } from '../api/ProductApi'\n\
+             Never use '../../' — all source files are siblings or children within src/.\n\
+             HTTP: use fetch() only — no axios, ky, or any other HTTP library.\n\
+             Do not import a file that does not exist yet."
+            .to_string(),
+        layer_order:
+            "  1. src/api/<Entity>Api.ts         — request/response interfaces + fetch function\n\
+             2. src/components/<Entity>Form.tsx  — imports from api/; no other new deps\n\
+             3. src/App.tsx                      — imports and renders the form component\n\
+             4. tests (if any)\n\
+             Reason: each file imports from the previous; generating out of order causes type mismatches."
+            .to_string(),
+        notes: Some(
+            "  STRICT SCOPE — do NOT add unless the story explicitly requires it:\n\
+             custom hooks, page components, route files, Redux/Zustand slices,\n\
+             utility modules, CSS files, or any abstraction not named in the acceptance criteria.\n\
+             The form component handles its own state and calls the API client directly.\n\
+             Fix-loop — TS2322 on a JSX element means this file passes props the component does not accept.\n\
+             Check the referenced files for the component's actual Props type.\n\
+             React.FC or React.FC<{}> with no type parameter accepts NO props.\n\
+             Remove the offending props from the JSX call in THIS file — do NOT modify the component.\n\
+             Also remove state variables and handlers that only existed to feed those removed props."
+            .to_string()
+        ),
+    }
+}
 
-/// Build the skill block for the given technology, injecting dynamic package context for JVM.
-/// Returns an empty string if no built-in skill matches (LLM gets no extra rules).
-pub fn skill_for_technology(tech: &str, pkg: &str, pkg_path: &str, service_name: &str) -> String {
+fn angular_skill() -> TechStackSkill {
+    TechStackSkill {
+        name: "Angular".to_string(),
+        file_layout:
+            "  Source root: <service-prefix>/src/app/\n\
+             Feature folder per domain concept (one folder per entity/use-case):\n\
+             - src/app/<feature>/<feature>.module.ts\n\
+             - src/app/<feature>/<feature>.service.ts\n\
+             - src/app/<feature>/<feature>.component.ts / .html\n\
+             - src/app/<feature>/<feature>.model.ts\n\
+             File paths in plan steps are relative to the PROJECT ROOT."
+            .to_string(),
+        namespace_rules:
+            "  Import only from Angular packages and local files:\n\
+             - @angular/core        (@Component, @Injectable, @Input, @OnInit, ...)\n\
+             - @angular/common/http (HttpClient, HttpClientModule)\n\
+             - @angular/forms       (FormBuilder, Validators, ReactiveFormsModule)\n\
+             Never call fetch() directly — inject HttpClient and use typed generics:\n\
+               this.http.post<ProductResponse>('/products', body)\n\
+             Services: @Injectable({ providedIn: 'root' }) unless feature-lazy-loaded."
+            .to_string(),
+        layer_order:
+            "  1. <feature>.model.ts      — TypeScript interfaces (no Angular deps)\n\
+             2. <feature>.service.ts     — @Injectable; imports HttpClient and model\n\
+             3. <feature>.module.ts      — NgModule; imports HttpClientModule, ReactiveFormsModule\n\
+             4. <feature>.component.ts   — @Component; injects service\n\
+             5. <feature>.component.html — template; no logic, only bindings\n\
+             Reason: component depends on service; service depends on model."
+            .to_string(),
+        notes: Some(
+            "  Prefer reactive forms (FormBuilder) over template-driven for non-trivial inputs.\n\
+             Use RxJS operators (map, catchError) in service methods; subscribe in components.\n\
+             Unsubscribe in ngOnDestroy or use the async pipe to avoid memory leaks."
+            .to_string()
+        ),
+    }
+}
+
+fn node_express_skill() -> TechStackSkill {
+    TechStackSkill {
+        name: "Node.js / Express (TypeScript)".to_string(),
+        file_layout:
+            "  Source root: <service-prefix>/src/\n\
+             - src/models/      — TypeScript interfaces (pure types, no runtime deps)\n\
+             - src/services/    — business logic; no Express imports\n\
+             - src/routes/      — Express routers; thin request/response handling\n\
+             - src/middleware/  — cross-cutting (errorHandler, auth, logging)\n\
+             - src/index.ts     — entry point; registers routers and middleware\n\
+             File paths in plan steps are relative to the PROJECT ROOT."
+            .to_string(),
+        namespace_rules:
+            "  ES module imports throughout — never use require().\n\
+             Validate input at the route boundary with zod:\n\
+             - define a zod schema in the route file\n\
+             - call schema.parse(req.body); let zod throw propagate to the error handler\n\
+             async/await everywhere — no raw .then() chains in route handlers."
+            .to_string(),
+        layer_order:
+            "  1. src/models/      — interfaces only; no deps\n\
+             2. src/services/    — imports models; no Express deps\n\
+             3. src/routes/      — imports services; mounts on Express router\n\
+             4. src/middleware/errorHandler.ts — depends on nothing\n\
+             5. src/index.ts     — assembles app; imports routes and middleware\n\
+             6. tests            — import routes or services\n\
+             Reason: services must not import from routes; routes must not import from index."
+            .to_string(),
+        notes: None,
+    }
+}
+
+// ── Testing Skills ───────────────────────────────────────────────────────────
+//
+// Testing skills encode the exact framework choices, annotation patterns, and
+// assertion style for each technology. They are injected at three points:
+//   1. unit_test_stub_prompt  — drives TDD Red phase test generation
+//   2. fix_prompt             — guides the fix loop when repairing test files
+//   3. plan_prompt_for_service — tells the planner which test files to include
+//
+// Adding a new skill: write a const (or fn for dynamic content), add a match arm
+// in unit_testing_skill() / integration_testing_skill() / testing_skill_for_file().
+
+const SPRING_BOOT_UNIT_TEST_COMMON: &str = "\
+=== Testing Skill: Spring Boot unit tests (JUnit Jupiter + AssertJ + Mockito) ===
+
+Framework stack — all available from spring-boot-starter-test, no extra deps needed:
+  JUnit Jupiter 5     org.junit.jupiter.api.{Test,BeforeEach,AfterEach,Nested,DisplayName}
+  AssertJ             static import org.assertj.core.api.Assertions.*
+  Mockito             static import org.mockito.Mockito.* + org.mockito.ArgumentMatchers.*
+  MockMvc             org.springframework.test.web.servlet.{MockMvc,MockMvcRequestBuilders,ResultMatchers}
+  Jakarta Validation  jakarta.validation.Validation.buildDefaultValidatorFactory().getValidator()
+
+Static imports — include all relevant ones in every test file:
+  import static org.assertj.core.api.Assertions.*;
+  import static org.mockito.ArgumentMatchers.*;
+  import static org.mockito.Mockito.*;
+  import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+  import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+Assertion style — AssertJ everywhere; never bare JUnit assertions:
+  assertThat(response.getId()).isNotNull()
+  assertThat(response.getName()).isEqualTo(\"Widget\")
+  assertThat(violations).isEmpty()
+  assertThat(violations).extracting(v -> v.getPropertyPath().toString()).contains(\"name\")
+  assertThatThrownBy(() -> service.method(arg)).isInstanceOf(ResponseStatusException.class)
+
+Forbidden — these indicate a mistake, fix them immediately:
+  - @SpringBootTest in unit tests → use @WebMvcTest / @DataJpaTest / @ExtendWith(MockitoExtension)
+  - org.junit.Test or @RunWith    → JUnit 4; use org.junit.jupiter.api.Test and @ExtendWith
+  - assertEquals / assertTrue     → use assertThat() from AssertJ
+  - javax.*                       → jakarta.* only (Spring Boot 3 / Jakarta EE 9+)";
+
+const SPRING_BOOT_INTEGRATION_TEST_SKILL: &str = "\
+=== Testing Skill: Spring Boot integration tests ===
+
+Guiding principle: prefer focused slice tests; use @SpringBootTest sparingly.
+
+@SpringBootTest — full application context, all beans wired, real HTTP or RANDOM_PORT:
+  @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+  @AutoConfigureMockMvc
+  class ProductRegistrationIT {
+    @Autowired MockMvc mockMvc;
+    // Tests the full stack: controller → service → repository → H2 in one shot.
+    // Reserve for end-to-end scenarios that slice tests cannot cover.
+  }
+
+Prefer focused slice tests for targeted scenarios (faster, more isolated):
+  @WebMvcTest(FooController.class)  → controller + HTTP layer; no JPA, no full context
+  @DataJpaTest                      → repository + H2 only; no web or service layer
+  @JsonTest                         → Jackson serialization only
+  @RestClientTest                   → REST client only
+
+Integration test file naming convention: *IT.java (not *Test.java).
+These are the LAST steps in the implementation plan — they exercise the full stack.
+
+Assertions: AssertJ + MockMvc (same as unit tests, see unit test skill above).";
+
+const REACT_VITEST_UNIT_TEST_SKILL: &str = "\
+=== Testing Skill: React + TypeScript — Vitest + React Testing Library ===
+Skill trigger keyword: vitest\n\
+=== Testing Skill: React + TypeScript (Vitest + React Testing Library) ===
+
+Framework stack:
+  vitest                      — test runner (replaces Jest in Vite projects)
+  @testing-library/react      — render(), screen, waitFor()
+  @testing-library/user-event — userEvent.type(), userEvent.click()
+  @testing-library/jest-dom   — .toBeInTheDocument(), .toHaveValue(), etc.
+
+Standard imports:
+  import { describe, it, expect, vi, beforeEach } from 'vitest'
+  import { render, screen, waitFor } from '@testing-library/react'
+  import userEvent from '@testing-library/user-event'
+
+Component test pattern:
+  describe('ProductForm', () => {
+    it('should submit form data when all required fields are filled', async () => {
+      const onSubmit = vi.fn()
+      render(<ProductForm onSubmit={onSubmit} />)
+      await userEvent.type(screen.getByLabelText(/name/i), 'Widget')
+      await userEvent.click(screen.getByRole('button', { name: /submit/i }))
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'Widget' }))
+    })
+  })
+
+API function test pattern (mock fetch globally):
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 201,
+      headers: { get: (h: string) => h === 'Location' ? '/api/products/uuid' : null },
+      json: async () => ({ id: 'uuid', name: 'Widget' })
+    }))
+  })
+
+Forbidden:
+  - jest.fn() → vi.fn()
+  - enzyme → use @testing-library/react
+  - testing implementation details (state, refs) → test via the DOM only";
+
+const REACT_JEST_UNIT_TEST_SKILL: &str = "\
+=== Testing Skill: React + TypeScript — Jest + React Testing Library ===
+Skill trigger keyword: jest (react)
+
+Framework stack:
+  jest                        — test runner (jest.fn(), jest.mock())
+  @testing-library/react      — render(), screen, waitFor()
+  @testing-library/user-event — userEvent.type(), userEvent.click()
+  @testing-library/jest-dom   — .toBeInTheDocument(), .toHaveValue(), etc.
+
+Standard imports:
+  import { describe, it, expect, jest, beforeEach } from '@jest/globals'
+  import { render, screen, waitFor } from '@testing-library/react'
+  import userEvent from '@testing-library/user-event'
+
+Component test pattern:
+  describe('ProductForm', () => {
+    it('should submit form data when all required fields are filled', async () => {
+      const onSubmit = jest.fn()
+      render(<ProductForm onSubmit={onSubmit} />)
+      await userEvent.type(screen.getByLabelText(/name/i), 'Widget')
+      await userEvent.click(screen.getByRole('button', { name: /submit/i }))
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'Widget' }))
+    })
+  })
+
+API function test pattern (mock fetch globally):
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 201,
+      headers: { get: (h: string) => h === 'Location' ? '/api/products/uuid' : null },
+      json: async () => ({ id: 'uuid', name: 'Widget' })
+    } as Response)
+  })
+
+Forbidden:
+  - vi.fn() → jest.fn()
+  - enzyme → use @testing-library/react
+  - testing implementation details (state, refs) → test via the DOM only";
+
+const ANGULAR_UNIT_TEST_SKILL: &str = "\
+=== Testing Skill: Angular (TestBed + Jasmine / Jest) ===
+
+Component tests via TestBed:
+  beforeEach(() => TestBed.configureTestingModule({
+    declarations: [ProductFormComponent],
+    imports: [ReactiveFormsModule, HttpClientTestingModule],
+    providers: [{ provide: ProductService, useValue: mockProductService }]
+  }).compileComponents())
+  const fixture = TestBed.createComponent(ProductFormComponent)
+  fixture.detectChanges()
+  const el: HTMLElement = fixture.nativeElement
+
+Service tests:
+  beforeEach(() => TestBed.configureTestingModule({
+    imports: [HttpClientTestingModule],
+    providers: [ProductService]
+  }))
+  service = TestBed.inject(ProductService)
+  httpMock = TestBed.inject(HttpTestingController)
+  afterEach(() => httpMock.verify())
+
+Assertion: jasmine expect() or jest expect() depending on project config.
+Prefer Angular Testing Library (@testing-library/angular) for behaviour-driven tests.";
+
+const NODE_EXPRESS_UNIT_TEST_SKILL: &str = "\
+=== Testing Skill: Node.js / Express (Jest + Supertest) ===
+
+Framework stack:
+  jest      — test runner and mocking (jest.fn(), jest.mock())
+  supertest — HTTP integration: request(app).post('/api/...')
+
+Route / integration test pattern:
+  import request from 'supertest'
+  import { app } from '../app'
+
+  describe('POST /api/products', () => {
+    it('returns 201 with Location header when payload is valid', async () => {
+      const res = await request(app).post('/api/products')
+        .send({ name: 'Widget', price: 29.99 })
+        .set('Content-Type', 'application/json')
+      expect(res.status).toBe(201)
+      expect(res.headers.location).toMatch(/\\/api\\/products\\//)
+    })
+    it('returns 400 when mandatory field is missing', async () => {
+      const res = await request(app).post('/api/products').send({})
+      expect(res.status).toBe(400)
+    })
+  })
+
+Service unit test pattern (mock repository):
+  jest.mock('../repository/ProductRepository')
+  const mockRepo = jest.mocked(ProductRepository)
+  mockRepo.save.mockResolvedValue({ id: 'uuid', ...payload })";
+
+fn spring_boot_unit_test_skill(layer: &str) -> String {
+    let layer_pattern = match layer {
+        "controller" =>
+            "Layer pattern — @WebMvcTest (web slice only, no JPA or service beans):\n\
+             \n  @WebMvcTest(FooController.class)\n\
+               class FooControllerTest {\n\
+                 @Autowired MockMvc mockMvc;\n\
+                 @Autowired ObjectMapper objectMapper;\n\
+                 @MockBean FooService fooService;\n\
+             \n    @Test\n\
+                 void should_return_201_and_location_when_data_is_valid() throws Exception {\n\
+                   when(fooService.create(any())).thenReturn(savedDto);\n\
+                   mockMvc.perform(post(\"/api/foos\")\n\
+                           .contentType(MediaType.APPLICATION_JSON)\n\
+                           .content(objectMapper.writeValueAsString(validRequest)))\n\
+                       .andExpect(status().isCreated())\n\
+                       .andExpect(header().exists(\"Location\"))\n\
+                       .andExpect(jsonPath(\"$.id\").isNotEmpty());\n\
+                 }\n\
+             \n    @Test\n\
+                 void should_return_400_when_mandatory_field_is_missing() throws Exception {\n\
+                   mockMvc.perform(post(\"/api/foos\")\n\
+                           .contentType(MediaType.APPLICATION_JSON).content(\"{}\"))\n\
+                       .andExpect(status().isBadRequest());\n\
+                 }\n\
+               }",
+        "service" =>
+            "Layer pattern — @ExtendWith(MockitoExtension.class) (pure unit, no Spring context):\n\
+             \n  @ExtendWith(MockitoExtension.class)\n\
+               class FooServiceTest {\n\
+                 @Mock FooRepository fooRepository;\n\
+                 @InjectMocks FooService fooService;\n\
+             \n    @Test\n\
+                 void should_persist_entity_and_return_response_when_data_is_valid() {\n\
+                   Foo saved = new Foo(); saved.setId(UUID.randomUUID());\n\
+                   when(fooRepository.save(any(Foo.class))).thenReturn(saved);\n\
+                   FooResponse response = fooService.create(request);\n\
+                   assertThat(response.getId()).isNotNull();\n\
+                   verify(fooRepository).save(any(Foo.class));\n\
+                 }\n\
+               }",
+        "dto" | "domain" =>
+            "Layer pattern — plain JUnit 5, no Spring context; test Bean Validation constraints:\n\
+             \n  class FooRequestTest {\n\
+                 private Validator validator;\n\
+             \n    @BeforeEach void setUp() {\n\
+                   validator = Validation.buildDefaultValidatorFactory().getValidator();\n\
+                 }\n\
+             \n    @Test void should_pass_when_all_mandatory_fields_are_present() {\n\
+                   FooRequest req = buildValidRequest(); // set all mandatory fields\n\
+                   assertThat(validator.validate(req)).isEmpty();\n\
+                 }\n\
+             \n    @Test void should_fail_when_name_is_blank() {\n\
+                   FooRequest req = buildValidRequest(); req.setName(\"\");\n\
+                   assertThat(validator.validate(req))\n\
+                       .extracting(v -> v.getPropertyPath().toString()).contains(\"name\");\n\
+                 }\n\
+               }",
+        _ => "Layer pattern: choose @WebMvcTest / @ExtendWith(MockitoExtension) / plain JUnit 5 based on what the class does.",
+    };
+    format!("{SPRING_BOOT_UNIT_TEST_COMMON}\n\n{layer_pattern}")
+}
+
+/// Returns the unit testing skill for the given technology and layer.
+/// Used in: TDD Red phase test generation, fix loop for unit test files.
+/// Layer values: "controller" | "service" | "dto" | "domain" | "" (generic)
+pub fn unit_testing_skill(tech: &str, layer: &str) -> String {
     let t = tech.to_lowercase();
     if t.contains("spring") || t.contains("quarkus") || t.contains("micronaut")
-        || (t.contains("java") && !t.contains("javascript"))
-        || t.contains("kotlin")
+        || (t.contains("java") && !t.contains("javascript")) || t.contains("kotlin")
     {
-        spring_boot_skill(pkg, pkg_path, service_name)
+        spring_boot_unit_test_skill(layer)
     } else if t.contains("react") || t.contains("vite") {
-        SKILL_REACT_VITE.to_string()
+        REACT_VITEST_UNIT_TEST_SKILL.to_string()
     } else if t.contains("angular") {
-        SKILL_ANGULAR.to_string()
+        ANGULAR_UNIT_TEST_SKILL.to_string()
     } else if t.contains("node") || t.contains("express") || t.contains("nest") {
-        SKILL_NODE_EXPRESS.to_string()
+        NODE_EXPRESS_UNIT_TEST_SKILL.to_string()
     } else {
         String::new()
     }
+}
+
+/// Returns the integration testing skill for the given technology.
+/// Used in: plan prompt (for *IT.java steps), fix loop for integration test files.
+pub fn integration_testing_skill(tech: &str) -> String {
+    let t = tech.to_lowercase();
+    if t.contains("spring") || t.contains("quarkus") || t.contains("micronaut")
+        || (t.contains("java") && !t.contains("javascript")) || t.contains("kotlin")
+    {
+        SPRING_BOOT_INTEGRATION_TEST_SKILL.to_string()
+    } else if t.contains("react") || t.contains("vite") {
+        "Integration tests: use Playwright or Cypress for full end-to-end browser tests. \
+         Use msw (Mock Service Worker) for API-level integration tests within Vitest.".to_string()
+    } else if t.contains("node") || t.contains("express") {
+        "Integration tests: use Jest + Supertest against the full Express app (see unit test skill — \
+         Supertest tests already exercise the HTTP + service + repository stack).".to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Returns the appropriate testing skill when fixing a test file.
+/// Detects unit vs integration by file name convention (*IT.java = integration).
+/// Returns empty string for non-test files — no testing skill needed.
+pub fn testing_skill_for_file(file_path: &str, tech: &str) -> String {
+    testing_skill_for_file_with_adrs(file_path, tech, &[])
+}
+
+/// ADR-aware variant of testing_skill_for_file.
+/// When a "Testing Strategy" ADR exists its decision overrides the technology-based default
+/// (e.g. "jest" keyword routes React to the Jest skill instead of the Vitest skill).
+pub fn testing_skill_for_file_with_adrs(file_path: &str, tech: &str, adrs: &[Adr]) -> String {
+    let is_test_file =
+        file_path.ends_with("Test.java")
+        || file_path.ends_with("IT.java")
+        || file_path.ends_with(".test.ts")
+        || file_path.ends_with(".test.tsx")
+        || file_path.ends_with(".spec.ts")
+        || file_path.ends_with(".spec.tsx");
+    if !is_test_file {
+        return String::new();
+    }
+    if file_path.ends_with("IT.java") {
+        integration_testing_skill(tech)
+    } else {
+        testing_skill_from_adrs(adrs, tech, "")
+    }
+}
+
+/// Resolves the unit testing skill for the given technology, consulting ADRs first.
+///
+/// The "Testing Strategy" ADR generated by `canopy init` encodes the chosen framework
+/// as a keyword in its `decision` field. Recognised keywords (checked before falling back
+/// to the technology default):
+///   "vitest"   → Vitest + React Testing Library  (React/Vite projects)
+///   "jest"     → Jest + React Testing Library    (React/CRA or non-Vite)
+///   "angular"  → Angular TestBed + Jasmine
+///
+/// Falls back to unit_testing_skill(tech, layer) when no ADR is found.
+pub fn testing_skill_from_adrs(adrs: &[Adr], tech: &str, layer: &str) -> String {
+    let adr = adrs.iter().find(|a| a.title.to_lowercase().contains("testing strategy"));
+    if let Some(adr) = adr {
+        let d = adr.decision.to_lowercase();
+        let t = tech.to_lowercase();
+        let is_react = t.contains("react") || t.contains("vite");
+        if is_react && d.contains("vitest") {
+            return REACT_VITEST_UNIT_TEST_SKILL.to_string();
+        }
+        if is_react && d.contains("jest") && !d.contains("vitest") {
+            return REACT_JEST_UNIT_TEST_SKILL.to_string();
+        }
+        if (t.contains("angular") || d.contains("angular testbed")) && !is_react {
+            return ANGULAR_UNIT_TEST_SKILL.to_string();
+        }
+    }
+    unit_testing_skill(tech, layer)
+}
+
+/// Return the rendered skill block for the given technology.
+/// Returns an empty string if no built-in skill matches (LLM gets no extra rules).
+/// JVM skills receive dynamic package context; others are technology-only.
+/// To add a new stack: implement a builder function, add a match arm here.
+pub fn skill_for_technology(tech: &str, pkg: &str, pkg_path: &str, service_name: &str) -> String {
+    let t = tech.to_lowercase();
+    let skill: Option<TechStackSkill> =
+        if t.contains("spring") || t.contains("quarkus") || t.contains("micronaut")
+            || (t.contains("java") && !t.contains("javascript"))
+            || t.contains("kotlin")
+        {
+            Some(spring_boot_skill(pkg, pkg_path, service_name))
+        } else if t.contains("react") || t.contains("vite") {
+            Some(react_vite_skill())
+        } else if t.contains("angular") {
+            Some(angular_skill())
+        } else if t.contains("node") || t.contains("express") || t.contains("nest") {
+            Some(node_express_skill())
+        } else {
+            None
+        };
+    skill.map(|s| s.render()).unwrap_or_default()
+}
+
+// ── Architecture skills ───────────────────────────────────────────────────────
+// Architecture skills are orthogonal to tech-stack skills.
+// They capture cross-cutting patterns that apply regardless of language or framework.
+// Contract: every architecture skill fills three required sections:
+//   vocabulary      — terms this pattern introduces and their precise meaning in code
+//   structural_rules — naming, layering, and dependency rules
+//   anti_patterns   — explicit prohibitions that prevent the most common mistakes
+//
+// Skills are derived from ADR decisions (keyword matching on the architecture-style ADR).
+// To add a new architecture skill: implement a builder, add keyword detection below.
+
+pub struct ArchitectureSkill {
+    pub name: String,
+    /// Terms this pattern introduces and their precise meaning in code.
+    pub vocabulary: String,
+    /// Naming, layering, and dependency rules.
+    pub structural_rules: String,
+    /// Explicit prohibitions — what NOT to do.
+    pub anti_patterns: String,
+}
+
+impl ArchitectureSkill {
+    pub fn render(&self) -> String {
+        format!(
+            "Architecture pattern — {name}:\n\
+             \n\
+             Vocabulary:\n{vocab}\n\
+             \n\
+             Structural rules:\n{rules}\n\
+             \n\
+             Anti-patterns (never do these):\n{anti}",
+            name  = self.name,
+            vocab = self.vocabulary,
+            rules = self.structural_rules,
+            anti  = self.anti_patterns,
+        )
+    }
+}
+
+fn ddd_skill() -> ArchitectureSkill {
+    ArchitectureSkill {
+        name: "Domain-Driven Design (DDD)".to_string(),
+        vocabulary:
+            "  Aggregate root: the single entry point to a cluster of related entities; holds invariants.\n\
+             Entity: has identity (@Id), mutable state, lifecycle — modelled in domain/.\n\
+             Value object: no identity, equality by value, immutable — use Java records.\n\
+             Repository: one per aggregate root; returns fully-constructed aggregates.\n\
+             Application service (@Service): orchestrates use cases, translates domain ↔ DTO.\n\
+             Domain service: stateless; expresses a business operation that spans multiple entities."
+            .to_string(),
+        structural_rules:
+            "  Use the ubiquitous language from the stories and domain registry in all identifiers —\n\
+             class names, method names, field names. No technical synonyms (ProductData, ProductInfo)\n\
+             when the agreed term is Product.\n\
+             Business invariants live in the aggregate, not in the application service or controller.\n\
+             DTOs live at the API boundary (dto/); never expose domain entities in REST responses.\n\
+             Access nested entities only through their aggregate root — never inject a nested entity's\n\
+             repository directly.\n\
+             Repositories return domain objects; the service layer maps them to DTOs for callers."
+            .to_string(),
+        anti_patterns:
+            "  No business logic in controllers or repositories — controllers translate HTTP;\n\
+             repositories translate persistence.\n\
+             No anemic domain model — an entity that is only getters/setters with all logic in\n\
+             services is not DDD; move invariants into the entity.\n\
+             No getById that silently returns null — throw a domain exception (ProductNotFoundException)\n\
+             or return Optional with explicit handling at the call site."
+            .to_string(),
+    }
+}
+
+fn event_orientation_skill() -> ArchitectureSkill {
+    ArchitectureSkill {
+        name: "Event Orientation".to_string(),
+        vocabulary:
+            "  Domain event: a fact that happened — immutable, past tense, e.g. ProductRegistered.\n\
+             Event publisher: the service layer that emits events after successful persistence.\n\
+             Event listener: a separate class that reacts to one event; one concern per listener.\n\
+             Transactional boundary: the unit-of-work that must complete before an event is visible."
+            .to_string(),
+        structural_rules:
+            "  Name events in past tense using domain language: ProductRegistered, OrderPlaced.\n\
+             Define event classes in the domain layer alongside the aggregate they describe.\n\
+             Publish events from the service layer after the aggregate is persisted — never before.\n\
+             Use @TransactionalEventListener(phase = AFTER_COMMIT) so listeners fire only on\n\
+             successful commit; this prevents phantom events from rolled-back transactions.\n\
+             Event payload: include the aggregate ID always; carry only what consumers need —\n\
+             do not copy the full aggregate state.\n\
+             One listener class per consuming concern; listeners must not call back into the\n\
+             publishing service (no circular event chains)."
+            .to_string(),
+        anti_patterns:
+            "  Never publish events before the database write commits — a rollback after publish\n\
+             creates phantom events that consumers act on against data that was never saved.\n\
+             Never use events for synchronous responses — if the caller needs a return value,\n\
+             use a direct service call, not an event.\n\
+             Never import ApplicationEventPublisher into the domain model — it is infrastructure;\n\
+             the domain emits events as return values or via a domain service; the application\n\
+             service calls the publisher.\n\
+             ApplicationEventPublisher is included via spring-boot-starter — no extra Maven\n\
+             dependency is needed or should be added."
+            .to_string(),
+    }
+}
+
+fn microservices_skill() -> ArchitectureSkill {
+    ArchitectureSkill {
+        name: "Microservices".to_string(),
+        vocabulary:
+            "  Bounded context: the domain scope of one service — it owns its data and its language.\n\
+             Service contract: the OAS API surface and the domain events a service publishes;\n\
+             the only things other services may depend on.\n\
+             Anti-corruption layer: an adapter that translates between two bounded contexts so\n\
+             their models stay independent."
+            .to_string(),
+        structural_rules:
+            "  Each service owns exactly one database schema — no other service reads or writes\n\
+             its tables directly.\n\
+             Cross-service state changes: prefer async domain events over synchronous HTTP calls.\n\
+             Synchronous HTTP (OAS contract) is acceptable for queries needing an immediate response.\n\
+             A service's domain model classes are never imported by another service — duplicate\n\
+             the fields you need as local DTOs rather than sharing a domain library.\n\
+             Service names are kebab-case and match the bounded context they represent."
+            .to_string(),
+        anti_patterns:
+            "  No shared database between services — even read-only access couples services to\n\
+             each other's schema evolution.\n\
+             No distributed transactions — use eventual consistency and compensating events.\n\
+             No shared domain model library — a common-domain JAR couples release cycles and\n\
+             violates bounded context autonomy.\n\
+             No direct method calls into another service's internal classes — only through its\n\
+             published OAS contract or domain events."
+            .to_string(),
+    }
+}
+
+/// Derive active architecture skills from the project's ADR decisions.
+/// Scans each ADR for keywords and maps them to the corresponding skill.
+/// Returns the rendered skills joined as a single string for prompt injection.
+pub fn skills_for_architecture(adrs: &[Adr]) -> String {
+    let text: String = adrs.iter()
+        .map(|a| format!("{} {}", a.title, a.decision).to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut skills: Vec<ArchitectureSkill> = Vec::new();
+    if text.contains("domain-driven") || text.contains("domain driven") || text.contains("ddd") {
+        skills.push(ddd_skill());
+    }
+    if text.contains("event-driven") || text.contains("event driven") || text.contains("domain event") {
+        skills.push(event_orientation_skill());
+    }
+    if text.contains("microservice") {
+        skills.push(microservices_skill());
+    }
+
+    if skills.is_empty() {
+        return String::new();
+    }
+    skills.iter().map(|s| s.render()).collect::<Vec<_>>().join("\n\n")
+}
+
+// ── Build system skills ───────────────────────────────────────────────────────
+// Build system skills are orthogonal to tech-stack and architecture skills.
+// They capture how to write and fix build manifests correctly.
+// The pom.xml fix loop only needs the build skill — not the tech-stack skill.
+// The step prompt for a build file gets both: tech skill (which deps) + build skill (how to write).
+//
+// Contract: every build system skill fills three required sections:
+//   manifest_contract — required sections, completeness rules, validity constraints
+//   dependency_rules  — allowed registries/coordinates, scope keywords, version management
+//   anti_patterns     — hallucination patterns this build system is prone to
+//
+// Detection: skill_for_build_system(file_path) matches by file name.
+// To add a new build system: implement a builder, add a match arm in skill_for_build_system().
+
+pub struct BuildSystemSkill {
+    pub name: String,
+    /// Required sections, completeness rules, structural validity constraints.
+    pub manifest_contract: String,
+    /// Allowed registries, coordinate rules, scope keywords, version management.
+    pub dependency_rules: String,
+    /// Hallucination patterns to avoid — specific to this build system.
+    pub anti_patterns: String,
+}
+
+impl BuildSystemSkill {
+    pub fn render(&self) -> String {
+        format!(
+            "Build system — {name}:\n\
+             \n\
+             Manifest contract:\n{manifest}\n\
+             \n\
+             Dependency rules:\n{deps}\n\
+             \n\
+             Anti-patterns (never do these):\n{anti}",
+            name     = self.name,
+            manifest = self.manifest_contract,
+            deps     = self.dependency_rules,
+            anti     = self.anti_patterns,
+        )
+    }
+}
+
+fn maven_skill() -> BuildSystemSkill {
+    BuildSystemSkill {
+        name: "Maven (pom.xml)".to_string(),
+        manifest_contract:
+            "  The pom.xml must be a complete, well-formed XML file ending with </project>.\n\
+             A truncated POM is a fatal parse error — Maven refuses to read it.\n\
+             Required sections in order:\n\
+             - <modelVersion>4.0.0</modelVersion>\n\
+             - <parent> block (Spring Boot BOM, if applicable)\n\
+             - <groupId>, <artifactId>, <version>, <name>\n\
+             - <properties> with <java.version>17</java.version>\n\
+             - <dependencies> with all required starters\n\
+             - <build> with <plugins> containing spring-boot-maven-plugin\n\
+             When spring-boot-starter-parent is the <parent>, do NOT add <version> on\n\
+             managed starters — the BOM manages them."
+            .to_string(),
+        dependency_rules:
+            "  Only use groupIds that exist on Maven Central:\n\
+             - org.springframework.boot  (starters — no explicit version needed with BOM)\n\
+             - com.h2database            (h2, scope: runtime)\n\
+             - org.projectlombok        (lombok, optional: true)\n\
+             - com.fasterxml.jackson.*  (jackson-databind etc.)\n\
+             - org.junit.*              (scope: test)\n\
+             - org.assertj.*            (scope: test)\n\
+             - org.mockito.*            (scope: test)\n\
+             Scope keywords: omit for compile (default), <scope>test</scope> for test-only,\n\
+             <scope>runtime</scope> for runtime-only."
+            .to_string(),
+        anti_patterns:
+            "  Never add a <dependency> whose <groupId> matches or is derived from the project's\n\
+             own <groupId> — your own classes are not published JARs.\n\
+             Domain event classes (ProductCreated, OrderPlaced) live in the service's own\n\
+             domain/ package — never add them as a Maven dependency.\n\
+             ApplicationEventPublisher is in spring-context, already on the classpath via\n\
+             spring-boot-starter — no extra <dependency> is needed or should be added.\n\
+             Never truncate the file — the closing </project> tag is mandatory."
+            .to_string(),
+    }
+}
+
+fn gradle_skill() -> BuildSystemSkill {
+    BuildSystemSkill {
+        name: "Gradle (Groovy/Kotlin DSL)".to_string(),
+        manifest_contract:
+            "  Required block order: plugins {}, java {} toolchain, repositories {}, dependencies {}.\n\
+             java {\n\
+               toolchain { languageVersion = JavaLanguageVersion.of(17) }\n\
+             }\n\
+             repositories { mavenCentral() }\n\
+             The file must be syntactically complete — Gradle fails silently on unterminated blocks."
+            .to_string(),
+        dependency_rules:
+            "  Configuration keywords: implementation (compile), testImplementation (test-only),\n\
+             runtimeOnly (runtime-only), annotationProcessor (APT — e.g. Lombok).\n\
+             Spring Boot Gradle plugin manages versions — omit explicit version strings for\n\
+             Spring Boot managed dependencies.\n\
+             Same groupId restrictions as Maven: only well-known Maven Central groupIds."
+            .to_string(),
+        anti_patterns:
+            "  Never use the deprecated compile configuration (removed in Gradle 7) — use implementation.\n\
+             Same invented-coordinate prohibitions as Maven: no groupIds derived from the project,\n\
+             no domain event JARs, no ApplicationEventPublisher dependency."
+            .to_string(),
+    }
+}
+
+fn npm_skill() -> BuildSystemSkill {
+    BuildSystemSkill {
+        name: "npm (package.json)".to_string(),
+        manifest_contract:
+            "  Required fields: name, version, \"private\": true (for apps), scripts,\n\
+             dependencies, devDependencies.\n\
+             scripts must include \"build\" and \"dev\".\n\
+             TypeScript projects must include \"type-check\": \"tsc --noEmit\" in scripts.\n\
+             Must be valid JSON — trailing commas cause a parse failure."
+            .to_string(),
+        dependency_rules:
+            "  dependencies: runtime packages that ship to production (react, react-dom).\n\
+             devDependencies: build tools and type stubs (vite, typescript, @types/*).\n\
+             @types/* packages always belong in devDependencies, never dependencies.\n\
+             Never use file: or link: references unless this is a configured monorepo workspace.\n\
+             Only reference packages published to registry.npmjs.org."
+            .to_string(),
+        anti_patterns:
+            "  Never add a package reference for files in your own src/ — those are TypeScript\n\
+             imports, not npm packages.\n\
+             Never add axios, node-fetch, or other HTTP client libraries unless the story\n\
+             explicitly requires them — use the built-in fetch().\n\
+             Never add @types/react to dependencies — it belongs in devDependencies."
+            .to_string(),
+    }
+}
+
+fn dotnet_skill() -> BuildSystemSkill {
+    BuildSystemSkill {
+        name: ".NET (csproj / MSBuild)".to_string(),
+        manifest_contract:
+            "  Opening tag for web APIs: <Project Sdk=\"Microsoft.NET.Sdk.Web\">\n\
+             Required <PropertyGroup> elements:\n\
+             - <TargetFramework>net8.0</TargetFramework>\n\
+             - <Nullable>enable</Nullable>\n\
+             - <ImplicitUsings>enable</ImplicitUsings>\n\
+             <PackageReference> elements go inside an <ItemGroup>.\n\
+             Must be well-formed XML."
+            .to_string(),
+        dependency_rules:
+            "  Only packages from NuGet.org.\n\
+             <ProjectReference> only for .csproj files that actually exist in the solution —\n\
+             verify the path before adding.\n\
+             Use Microsoft.AspNetCore.* packages — never Microsoft.AspNet.* (legacy, pre-.NET Core)."
+            .to_string(),
+        anti_patterns:
+            "  Never add a <PackageReference> for types defined within the same project or solution.\n\
+             Never reference a <ProjectReference> path that does not exist on disk.\n\
+             Never use Microsoft.AspNet.* — the correct namespace is Microsoft.AspNetCore.*"
+            .to_string(),
+    }
+}
+
+/// Return the rendered build system skill for the given build file path.
+/// Detected by file name; returns empty string if no built-in skill matches.
+/// To add a new build system: implement a builder, add a match arm here.
+pub fn skill_for_build_system(file_path: &str) -> String {
+    let name = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let skill: Option<BuildSystemSkill> = if name == "pom.xml" {
+        Some(maven_skill())
+    } else if name == "build.gradle" || name == "build.gradle.kts"
+           || name == "settings.gradle" || name == "settings.gradle.kts" {
+        Some(gradle_skill())
+    } else if name == "package.json" {
+        Some(npm_skill())
+    } else if file_path.ends_with(".csproj") {
+        Some(dotnet_skill())
+    } else {
+        None
+    };
+    skill.map(|s| s.render()).unwrap_or_default()
 }
 
 fn plan_prompt_for_service(
@@ -979,6 +1860,7 @@ fn plan_prompt_for_service(
     adrs: &[Adr],
     existing_files: &[String],
     service_packages: &std::collections::HashMap<String, String>,
+    arch_skills: &str,
 ) -> String {
     let tech = service.technology.as_deref().unwrap_or("unknown");
     let is_front = service.component_type.as_deref() == Some("frontend");
@@ -1039,6 +1921,20 @@ fn plan_prompt_for_service(
     } else {
         format!("\n{skill}\n")
     };
+    let arch_section = if arch_skills.is_empty() {
+        String::new()
+    } else {
+        format!("\n{arch_skills}\n")
+    };
+    let it_skill = integration_testing_skill(tech);
+    let testing_section = format!(
+        "\nTesting plan rules:\n\
+         - Unit test files (*Test.java / *.test.ts) are auto-generated per class by the TDD loop.\n\
+           DO NOT include unit test files in this plan.\n\
+         - Integration test files (*IT.java) test the full stack end-to-end.\n\
+           Include them as the LAST step(s) in the plan.\n\
+         {it_skill}\n"
+    );
 
     format!(
         "Generate implementation steps for service '{sname}' as part of story '{story_id}'.\n\
@@ -1047,7 +1943,9 @@ fn plan_prompt_for_service(
          \n\
          Service: {sname}  Technology: {tech}\n\
          {location_line}\n\
-         {skill_section}\n\
+         {skill_section}\
+         {arch_section}\
+         {testing_section}\n\
          Entity schema:\n{schema_yaml}\n\
          BDD scenarios:\n{scenarios_yaml}\n\
          OAS Contract:\n{contract_yaml}\n\
@@ -1067,7 +1965,9 @@ fn plan_prompt_for_service(
          Rules:\n\
          - `operation` is create for new files, modify for files in the existing list above\n\
          - One step per file — no duplicates\n\
-         - Order: build config → domain → data layer → service → API → tests\n\
+         - Order for backend: build config → domain → data layer → service → controller → tests\n\
+         - Order for frontend: build config → API client (src/api/) → components (src/components/) → App wiring (App.tsx) → tests\n\
+           Reason: each file imports from the previous; generate in dependency order so types are available\n\
          - description must name the specific classes, fields, and annotations\n\
          - ALL string values must be quoted with double quotes — every id, service, file, operation, and description\n\
          - Never use block scalars (>- or |) — always use a single quoted string on one line\n\
@@ -1083,6 +1983,7 @@ fn plan_prompt_for_service(
         tech = tech,
         location_line = location_line,
         skill_section = skill_section,
+        arch_section = arch_section,
         schema_yaml = schema_yaml,
         scenarios_yaml = scenarios_yaml,
         contract_yaml = contract_yaml,
@@ -1167,10 +2068,12 @@ pub fn generate_story_plan(
         .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
         .collect();
 
+    let arch_skills = skills_for_architecture(adrs);
+
     let mut all_steps: Vec<ImplementationStep> = Vec::new();
     for service in &active {
         let prompt = plan_prompt_for_service(
-            service, story, spec, contract_yaml, adrs, existing_files, service_packages,
+            service, story, spec, contract_yaml, adrs, existing_files, service_packages, &arch_skills,
         );
         let raw = client.complete_large(&prompt)?;
         let mut steps = parse_plan_steps(&raw)?;
@@ -1215,6 +2118,9 @@ fn step_prompt(
     roots_context: Option<&str>,
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
+    session_written: &std::collections::HashMap<String, String>,
+    arch_skills: &str,
+    test_hint: Option<(&str, &str, bool)>,
 ) -> String {
     let schema_yaml = spec.entity_schema.as_ref()
         .map(|s| serde_yaml::to_string(s).unwrap_or_default())
@@ -1239,46 +2145,34 @@ fn step_prompt(
         .unwrap_or_else(|| service_name.replace('-', "_"));
     let pkg_path = pkg.replace('.', "/");
 
-    let tech_rules = if is_frontend {
-        format!(
-            "Technology rules (React + TypeScript, Vite scaffold):\n\
-             - Source root is src/ — ALL .ts/.tsx files live under src/\n\
-             - Layout: src/api/<Entity>Api.ts, src/components/<Entity>Form.tsx, src/App.tsx\n\
-             - Import paths are always relative to the file's location inside src/\n\
-               e.g. App.tsx imports: import ProductForm from './components/ProductForm'\n\
-               e.g. App.tsx imports: import {{ registerProduct }} from './api/ProductApi'\n\
-             - Never use '../../' — all project files are siblings or children inside src/\n\
-             - This file's location: {file_path}\n\
-             - Complete TypeScript — no 'any' types unless unavoidable\n\
-             - Use fetch() for HTTP calls — no external HTTP libraries\n\
-             - Idiomatic React with hooks (useState, useCallback)\n\
-             - Form validation: enforce required fields client-side before submission\n\
-             - Show success message after successful operation\n\
-             - Show field-level error messages from 400 responses\n\
-             - Do not import files that do not exist yet",
-            file_path = step.file
-        )
+    let tech_rules = skill_for_technology(technology, &pkg, &pkg_path, service_name);
+    // For build manifest files, also inject the build system skill.
+    // The tech skill says WHICH dependencies belong; the build skill says HOW to write the file.
+    let build_rules = skill_for_build_system(&step.file);
+
+    // For frontend (TypeScript) steps, include all sibling .ts/.tsx files written earlier
+    // in this session. Roots does not index TypeScript, so this is the only way to give
+    // the model knowledge of existing component signatures and exported types.
+    let sibling_section = if is_frontend {
+        let mut siblings: Vec<String> = session_written.iter()
+            .filter(|(path, _)| {
+                (path.ends_with(".ts") || path.ends_with(".tsx"))
+                    && path.as_str() != step.file
+            })
+            .map(|(path, content)| format!("--- {} ---\n{}", path, content))
+            .collect();
+        siblings.sort();
+        if siblings.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\nFiles already written for this frontend \
+                 (match their component signatures and exported types exactly):\n\n{}\n",
+                siblings.join("\n\n")
+            )
+        }
     } else {
-        format!(
-            "Technology rules (Spring Boot, Java, Maven):\n\
-             - Base package: {pkg}  ← use this exact string in every package declaration\n\
-             - Source root:  src/main/java/{pkg_path}/\n\
-             - Test root:    src/test/java/{pkg_path}/\n\
-             - Sub-packages: {pkg}.domain  {pkg}.repository  {pkg}.service  {pkg}.controller\n\
-             - Every file's package declaration must be exactly '{pkg}' or a sub-package of it\n\
-             - If the current file contains a different package declaration, correct it to match the above\n\
-             - Complete, compilable Java — no stubs, no TODO placeholders — include all imports\n\
-             - NAMESPACE: Spring Boot 3+ uses jakarta.* — NEVER use javax.*\n\
-               Use jakarta.validation.*, jakarta.persistence.*, jakarta.servlet.*, jakarta.annotation.*\n\
-             - REST endpoints must match OAS contract paths and HTTP methods exactly\n\
-             - 201 Created with Location header on successful creation\n\
-             - 400 Bad Request with {{message: String, fields: List<String>}} on validation failure\n\
-             - Use Hibernate Validator annotations (@NotBlank, @NotNull, @Min) on request DTOs\n\
-             - Publish domain events via ApplicationEventPublisher\n\
-             - For pom.xml modifications: preserve all existing content, only add missing dependencies\n\
-             - Required Spring Boot dependencies if missing: spring-boot-starter-data-jpa, \
-               spring-boot-starter-validation, h2 (test scope), lombok"
-        )
+        String::new()
     };
 
     let current_section = match current_content {
@@ -1296,6 +2190,28 @@ fn step_prompt(
         _ => String::new(),
     };
 
+    let test_hint_section = match test_hint {
+        Some((tf, tc, true)) => format!(
+            "\nSTUB ONLY — return a compilable skeleton, no business logic:\n\
+             - Declare every class, field, constructor, and method the unit test below references.\n\
+             - Method bodies: `return null;` for objects, `return 0;` for numbers, `return false;` for booleans, `return List.of();` for collections.\n\
+             - Do NOT implement any logic — the Green phase replaces this stub with the real implementation.\n\
+             \n\
+             Unit test this stub must compile against:\n\
+             --- {tf} ---\n\
+             {tc}\n"
+        ),
+        Some((tf, tc, false)) => format!(
+            "\nGREEN PHASE — implement to make all unit tests below pass.\n\
+             Read the test file carefully: every assertion is a requirement.\n\
+             \n\
+             Unit tests that must pass:\n\
+             --- {tf} ---\n\
+             {tc}\n"
+        ),
+        None => String::new(),
+    };
+
     format!(
         "Generate the complete content of file '{file}'.\n\
          \n\
@@ -1309,10 +2225,13 @@ fn step_prompt(
          {schema_yaml}\n\
          OAS Contract:\n\
          {contract_yaml}\n\
+         {sibling_section}\
          {current_section}\
-         {roots_section}\n\
+         {roots_section}\
+         {test_hint_section}\n\
          {tech_rules}\n\
-         \n\
+         {build_rules}\n\
+         {arch_rules}\n\
          Return ONLY the raw file content — no JSON wrapper, no markdown, no code fences, no explanation.",
         file = step.file,
         operation = step.operation,
@@ -1324,10 +2243,33 @@ fn step_prompt(
         technology = technology,
         schema_yaml = schema_yaml,
         contract_yaml = contract_yaml,
+        sibling_section = sibling_section,
         current_section = current_section,
         roots_section = roots_section,
+        test_hint_section = test_hint_section,
         tech_rules = tech_rules,
+        build_rules = build_rules,
+        arch_rules = arch_skills,
     )
+}
+
+fn strip_code_fences(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let after_open = trimmed
+        .trim_start_matches("```java")
+        .trim_start_matches("```typescript")
+        .trim_start_matches("```tsx")
+        .trim_start_matches("```ts")
+        .trim_start_matches("```xml")
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```properties")
+        .trim_start_matches("```")
+        .trim_start();
+    if let Some(pos) = after_open.rfind("\n```") {
+        after_open[..pos].to_string()
+    } else {
+        after_open.trim_end_matches("```").trim_end().to_string()
+    }
 }
 
 pub fn execute_implementation_step(
@@ -1340,29 +2282,170 @@ pub fn execute_implementation_step(
     roots_context: Option<&str>,
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
+    session_written: &std::collections::HashMap<String, String>,
+    arch_skills: &str,
 ) -> Result<String, LlmError> {
-    let prompt = step_prompt(story, spec, contract_yaml, step, current_content, roots_context, service_packages, services);
-    let raw = client.complete_large(&prompt)?;
-    let trimmed = raw.trim();
-    let after_open = trimmed
-        .trim_start_matches("```java")
-        .trim_start_matches("```typescript")
-        .trim_start_matches("```tsx")
-        .trim_start_matches("```ts")
-        .trim_start_matches("```xml")
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```properties")
-        .trim_start_matches("```")
-        .trim_start();
-    let content = if let Some(pos) = after_open.rfind("\n```") {
-        &after_open[..pos]
-    } else {
-        after_open.trim_end_matches("```").trim_end()
-    };
-    Ok(content.to_string())
+    let prompt = step_prompt(
+        story, spec, contract_yaml, step, current_content, roots_context,
+        service_packages, services, session_written, arch_skills, None,
+    );
+    Ok(strip_code_fences(&client.complete_large(&prompt)?))
 }
 
-fn fix_prompt(file_path: &str, content: &str, errors: &str, existing_files: &[String]) -> String {
+fn unit_test_stub_prompt(
+    story: &UserStory,
+    spec: &IntentSpec,
+    step: &ImplementationStep,
+    test_file: &str,
+    service_packages: &std::collections::HashMap<String, String>,
+    _services: &ServicesRegistry,
+    adrs: &[Adr],
+) -> String {
+    let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
+    let pkg = service_packages.get(service_name)
+        .cloned()
+        .unwrap_or_else(|| service_name.replace('-', "_"));
+
+    let impl_file = &step.file;
+    let class_name = std::path::Path::new(impl_file.as_str())
+        .file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
+    let test_class = format!("{}Test", class_name);
+
+    let layer = if impl_file.contains("/controller/") { "controller" }
+        else if impl_file.contains("/service/") { "service" }
+        else if impl_file.contains("/dto/") { "dto" }
+        else if impl_file.contains("/domain/") { "domain" }
+        else { "class" };
+
+    let schema_yaml = spec.entity_schema.as_ref()
+        .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+        .unwrap_or_default();
+    let scenarios_yaml = serde_yaml::to_string(&spec.scenarios).unwrap_or_default();
+
+    let service_entry = _services.services.iter()
+        .find(|s| s.name == service_name || s.name == step.service);
+    let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+    let test_skill = testing_skill_from_adrs(adrs, technology, layer);
+
+    format!(
+        "Generate a JUnit 5 unit test class '{test_class}' to drive TDD for '{impl_class}'.\n\
+         \n\
+         Implementation file : {impl_file}\n\
+         Test file to create : {test_file}\n\
+         Layer               : {layer}\n\
+         Package base        : {pkg}\n\
+         Service             : {service_name}\n\
+         \n\
+         Story: As a {as_a}, I want {want}, so that {so_that}.\n\
+         \n\
+         Entity schema:\n\
+         {schema_yaml}\n\
+         BDD scenarios — one @Test method per scenario:\n\
+         {scenarios_yaml}\n\
+         \n\
+         {test_skill}\n\
+         \n\
+         Method naming: should_<expected_outcome>_when_<condition>  (snake_case)\n\
+         \n\
+         Body structure:\n\
+         // Arrange — build minimal valid inputs from entity schema field definitions\n\
+         // Act     — call the method under test\n\
+         // Assert  — verify the 'then' clause of the BDD scenario\n\
+         \n\
+         IMPORTANT:\n\
+         - Write REAL assertions that verify actual behaviour.\n\
+         - Tests will be Red naturally because the stub returns null/0/false.\n\
+           The Green phase makes them pass. Do NOT use Assertions.fail().\n\
+         - Package declaration: derive sub-package from the test file path.\n\
+         - Import {impl_class} from its package under {pkg}.\n\
+         - Use jakarta.* everywhere — never javax.*\n\
+         \n\
+         Return ONLY the raw Java file content — no code fences, no explanation.",
+        test_class = test_class,
+        impl_class = class_name,
+        impl_file = impl_file,
+        test_file = test_file,
+        layer = layer,
+        pkg = pkg,
+        service_name = service_name,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        schema_yaml = schema_yaml,
+        scenarios_yaml = scenarios_yaml,
+        test_skill = test_skill,
+    )
+}
+
+pub fn generate_unit_test_stub(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    step: &ImplementationStep,
+    test_file: &str,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+) -> Result<String, LlmError> {
+    let prompt = unit_test_stub_prompt(story, spec, step, test_file, service_packages, services, adrs);
+    Ok(strip_code_fences(&client.complete_large(&prompt)?))
+}
+
+pub fn execute_implementation_stub(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    current_content: Option<&str>,
+    roots_context: Option<&str>,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+    session_written: &std::collections::HashMap<String, String>,
+    arch_skills: &str,
+    test_file: &str,
+    test_content: &str,
+) -> Result<String, LlmError> {
+    let prompt = step_prompt(
+        story, spec, contract_yaml, step, current_content, roots_context,
+        service_packages, services, session_written, arch_skills,
+        Some((test_file, test_content, true)),
+    );
+    Ok(strip_code_fences(&client.complete_large(&prompt)?))
+}
+
+pub fn execute_implementation_with_test(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    current_content: Option<&str>,
+    roots_context: Option<&str>,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+    session_written: &std::collections::HashMap<String, String>,
+    arch_skills: &str,
+    test_file: &str,
+    test_content: &str,
+) -> Result<String, LlmError> {
+    let prompt = step_prompt(
+        story, spec, contract_yaml, step, current_content, roots_context,
+        service_packages, services, session_written, arch_skills,
+        Some((test_file, test_content, false)),
+    );
+    Ok(strip_code_fences(&client.complete_large(&prompt)?))
+}
+
+fn fix_prompt(
+    file_path: &str,
+    content: &str,
+    errors: &str,
+    existing_files: &[String],
+    referenced_files: &[(String, String)],
+    skill: &str,
+    arch_skills: &str,
+) -> String {
     let ext = std::path::Path::new(file_path)
         .extension()
         .and_then(|e| e.to_str())
@@ -1377,14 +2460,23 @@ fn fix_prompt(file_path: &str, content: &str, errors: &str, existing_files: &[St
         "\n- A Java source file contains exactly one top-level type declaration\n\
          - Nothing may appear after the final closing brace of the top-level class/interface/enum/record\n\
          - Remove any stray import statements, package declarations, or class bodies that appear after that brace\n\
-         - The file must begin with the package declaration"
+         - The file must begin with the package declaration\n\
+         - Constructor mismatch: look at the referenced file to find the available constructor(s).\n\
+           If only a no-args constructor is present, use: Foo f = new Foo(); f.setField(value); ...\n\
+           Do NOT call a multi-arg constructor that is not declared in the referenced file.\n\
+           Do NOT add a new constructor to a class that lives in a referenced file — only fix THIS file."
     } else if file_path.ends_with("pom.xml") {
-        "\n- Add the required <dependency> blocks inside <dependencies>\n\
-         - Use the correct groupId/artifactId/version for each missing package\n\
-         - For javax.validation use jakarta.validation-api or spring-boot-starter-validation\n\
-         - For javax.persistence use jakarta.persistence-api or spring-boot-starter-data-jpa\n\
-         - Do not remove any existing dependencies\n\
-         - Keep the XML well-formed"
+        "\n- Only use dependencies from well-known Maven Central groupIds:\n\
+           org.springframework.boot, com.h2database, org.projectlombok, com.fasterxml.jackson.*,\n\
+           org.junit.*, org.assertj.*, org.mockito.*\n\
+         - Remove any dependency whose groupId is derived from this project — those are not published artifacts\n\
+         - Domain event classes (e.g. ProductCreated) are in the service's own domain/ package; they are NOT\n\
+           a separate JAR — remove any such dependency\n\
+         - ApplicationEventPublisher is in spring-context (via spring-boot-starter); no extra dep needed\n\
+         - For javax.validation use spring-boot-starter-validation\n\
+         - For javax.persistence use spring-boot-starter-data-jpa\n\
+         - Do not remove existing valid dependencies\n\
+         - Keep the XML well-formed and end with </project>"
     } else {
         ""
     };
@@ -1396,6 +2488,35 @@ fn fix_prompt(file_path: &str, content: &str, errors: &str, existing_files: &[St
     } else {
         String::new()
     };
+    // For TypeScript errors: include the content of related files so the model can fix
+    // cross-file type mismatches (e.g. a missing props interface in an imported component).
+    let referenced_section = if !referenced_files.is_empty() {
+        let parts: Vec<String> = referenced_files.iter()
+            .map(|(path, c)| format!("--- {} ---\n{}", path, c))
+            .collect();
+        let label = if ext == "java" {
+            "Referenced files — check these for available constructors, setter methods, and field types \
+             before writing any new() calls or method invocations:"
+        } else {
+            "Referenced files — check these for the correct component signatures and exported types:"
+        };
+        format!(
+            "\n{label}\n\n{}\n",
+            parts.join("\n\n")
+        )
+    } else {
+        String::new()
+    };
+    let skill_section = if skill.is_empty() {
+        String::new()
+    } else {
+        format!("\n{skill}\n")
+    };
+    let arch_section = if arch_skills.is_empty() {
+        String::new()
+    } else {
+        format!("\n{arch_skills}\n")
+    };
     format!(
         "Fix the {lang} file below so that all listed errors are resolved.\n\
          \n\
@@ -1403,7 +2524,10 @@ fn fix_prompt(file_path: &str, content: &str, errors: &str, existing_files: &[St
          \n\
          Errors:\n\
          {errors}\n\
-         {files_section}\n\
+         {files_section}\
+         {referenced_section}\
+         {skill_section}\
+         {arch_section}\n\
          Current content:\n\
          {content}\n\
          \n\
@@ -1422,8 +2546,11 @@ pub fn fix_file(
     content: &str,
     errors: &str,
     existing_files: &[String],
+    referenced_files: &[(String, String)],
+    skill: &str,
+    arch_skills: &str,
 ) -> Result<String, LlmError> {
-    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files))?;
+    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills))?;
     let stripped = raw
         .trim()
         .trim_start_matches("```java")
