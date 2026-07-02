@@ -1038,7 +1038,9 @@ fn react_vite_skill() -> TechStackSkill {
              - ProductForm.tsx:  import { registerProduct } from '../api/ProductApi'\n\
              Never use '../../' — all source files are siblings or children within src/.\n\
              HTTP: use fetch() only — no axios, ky, or any other HTTP library.\n\
-             Do not import a file that does not exist yet."
+             Do not import a file that does not exist yet.\n\
+             A file MUST NOT import from its own path — no self-imports.\n\
+             NEVER write 'import React from \"react\"' — the project uses the automatic JSX transform (React 17+); React is in scope without importing it."
             .to_string(),
         layer_order:
             "  1. src/api/<Entity>Api.ts         — request/response interfaces + fetch function\n\
@@ -1052,6 +1054,8 @@ fn react_vite_skill() -> TechStackSkill {
              custom hooks, page components, route files, Redux/Zustand slices,\n\
              utility modules, CSS files, or any abstraction not named in the acceptance criteria.\n\
              The form component handles its own state and calls the API client directly.\n\
+             The FIRST LINE of every file MUST be valid TypeScript/TSX code.\n\
+             NEVER write a language label ('tsx', 'typescript', 'ts') as the first line.\n\
              Fix-loop — TS2322 on a JSX element means this file passes props the component does not accept.\n\
              Check the referenced files for the component's actual Props type.\n\
              React.FC or React.FC<{}> with no type parameter accepts NO props.\n\
