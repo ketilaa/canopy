@@ -2178,6 +2178,7 @@ fn plan_prompt_for_service(
          If in doubt, leave it out.\n\
          \n\
          ### YAML Format\n\
+         The response MUST start with the root key \"steps:\" — never a bare list.\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
          description MUST be a single quoted string on one line — never a YAML list.\n\
