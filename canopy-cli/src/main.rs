@@ -11,7 +11,7 @@ use canopy_llm::{
     generate_stories_from_intent, generate_story_contract, generate_story_plan, generate_story_spec,
     generate_unit_test_stub, identify_architectural_questions, services_need_jvm,
     skill_for_build_system, skill_for_technology, skills_for_architecture, suggest_domain_entities,
-    suggest_roles, testing_skill_for_file_with_adrs, LlmClient,
+    suggest_roles, testing_skill_for_file_with_adrs, LlmClient, StepResult,
 };
 use canopy_storage::*;
 
@@ -1182,7 +1182,7 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
             let test_content = std::fs::read_to_string(&test_file)
                 .unwrap_or(test_content);
 
-            let impl_content = execute_implementation_with_test(
+            let StepResult { content: impl_content, summary: impl_summary } = execute_implementation_with_test(
                 &client, story, &spec, &contract_yaml,
                 step, None, roots_context.as_deref(),
                 &service_packages, &services, &session_written, &arch_skills,
@@ -1192,6 +1192,7 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
             std::fs::write(dest, &impl_content)
                 .with_context(|| format!("failed to write {}", step.file))?;
             println!("  wrote {}", step.file);
+            if let Some(s) = &impl_summary { println!("  summary: {}", s); }
             session_written.insert(step.file.clone(), impl_content);
 
             if let Some(svc) = step_service {
@@ -1219,7 +1220,7 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
                 .map(|p| format_roots_context(&p))
                 .filter(|s| !s.is_empty());
 
-            let content = execute_implementation_step(
+            let StepResult { content, summary } = execute_implementation_step(
                 &client, story, &spec, &contract_yaml,
                 step, current_content.as_deref(), roots_context.as_deref(),
                 &service_packages, &services, &session_written, &arch_skills,
@@ -1232,6 +1233,7 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
             std::fs::write(dest, &content)
                 .with_context(|| format!("failed to write {}", step.file))?;
             println!("  wrote {}", step.file);
+            if let Some(s) = &summary { println!("  summary: {}", s); }
             written += 1;
             session_written.insert(step.file.clone(), content);
             roots::reindex();

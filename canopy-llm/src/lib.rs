@@ -2597,7 +2597,12 @@ fn step_prompt(
          {tech_rules}\n\
          {build_rules}\n\
          {arch_rules}\n\
-         Return ONLY the raw file content — no JSON wrapper, no markdown, no code fences, no explanation.",
+         Write the file content first — complete and ready to save.\n\
+         Then append exactly this separator on its own line:\n\
+         <<<CANOPY_SUMMARY>>>\n\
+         Then one line: what you implemented and the key decision you made (max 20 words).\n\
+         Then one line: why — the reason behind that decision (max 20 words).\n\
+         No code fences, no markdown, no extra text outside the file content and summary.",
         file = step.file,
         operation = step.operation,
         description = step.description,
@@ -2616,6 +2621,26 @@ fn step_prompt(
         build_rules = build_rules,
         arch_rules = arch_skills,
     )
+}
+
+pub struct StepResult {
+    pub content: String,
+    pub summary: Option<String>,
+}
+
+const STEP_SEPARATOR: &str = "<<<CANOPY_SUMMARY>>>";
+
+fn split_step_response(raw: &str) -> StepResult {
+    let stripped = strip_code_fences(raw);
+    match stripped.find(STEP_SEPARATOR) {
+        None => StepResult { content: stripped, summary: None },
+        Some(pos) => {
+            let content = stripped[..pos].trim_end().to_string();
+            let after = stripped[pos + STEP_SEPARATOR.len()..].trim().to_string();
+            let summary = if after.is_empty() { None } else { Some(after) };
+            StepResult { content, summary }
+        }
+    }
 }
 
 fn strip_code_fences(raw: &str) -> String {
@@ -2649,12 +2674,12 @@ pub fn execute_implementation_step(
     services: &ServicesRegistry,
     session_written: &std::collections::HashMap<String, String>,
     arch_skills: &str,
-) -> Result<String, LlmError> {
+) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, session_written, arch_skills, None,
     );
-    Ok(strip_code_fences(&client.complete_large(&prompt)?))
+    Ok(split_step_response(&client.complete_large(&prompt)?))
 }
 
 fn unit_test_stub_prompt(
@@ -2793,13 +2818,13 @@ pub fn execute_implementation_with_test(
     arch_skills: &str,
     test_file: &str,
     test_content: &str,
-) -> Result<String, LlmError> {
+) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, session_written, arch_skills,
         Some((test_file, test_content, false)),
     );
-    Ok(strip_code_fences(&client.complete_large(&prompt)?))
+    Ok(split_step_response(&client.complete_large(&prompt)?))
 }
 
 fn fix_prompt(
