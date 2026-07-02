@@ -1358,6 +1358,13 @@ const NODE_EXPRESS_UNIT_TEST_SKILL: &str = "\
 
 Trigger keyword: jest (node)
 
+Required project setup (must exist before tests run):
+  package.json devDependencies: jest, ts-jest, @types/jest, supertest, @types/supertest, @types/node
+  package.json test script: \"jest --forceExit\"
+  jest.config.js in service root:
+    module.exports = { preset: 'ts-jest', testEnvironment: 'node',
+                       testMatch: ['**/tests/**/*.test.ts'] };
+
 Framework stack:
   jest      — test runner and mocking (jest.fn(), jest.mock())
   supertest — HTTP integration: request(app).post('/api/...')
@@ -2115,13 +2122,19 @@ fn plan_prompt_for_service(
     } else if is_node {
         format!(
             "\nTesting plan rules:\n\
+             - If any test files are in the plan, you MUST also:\n\
+               a) Modify package.json to add to devDependencies: jest, ts-jest, @types/jest,\n\
+                  supertest, @types/supertest, @types/node. Set the test script to \"jest --forceExit\".\n\
+               b) Create jest.config.js in the service root (BEFORE any test files):\n\
+                  module.exports = {{ preset: 'ts-jest', testEnvironment: 'node',\n\
+                                      testMatch: ['**/tests/**/*.test.ts'] }};\n\
              - Include one unit test file (*.test.ts) per service module.\n\
                Unit tests mock the repository and test business logic in isolation.\n\
                Example: tests/productService.test.ts\n\
              - Include one route test file (*.test.ts) per route module using Supertest.\n\
                Route tests import {{ app }} from src/app.ts and exercise the full HTTP stack.\n\
                Example: tests/productRoutes.test.ts\n\
-             - Route test files are the LAST step(s) in the plan.\n\
+             - Order: package.json → jest.config.js → source files → test files (LAST).\n\
              - Do NOT include a test file for src/app.ts or src/index.ts.\n"
         )
     } else if is_react {
