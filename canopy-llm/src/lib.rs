@@ -1164,7 +1164,9 @@ fn node_express_skill() -> TechStackSkill {
         name: "Node.js / Express (TypeScript)".to_string(),
         file_layout:
             "  Source root: <service-prefix>/src/\n\
-             - src/models/           — TypeScript interfaces (pure types, no runtime deps)\n\
+             - src/models/           — TypeScript interfaces and type aliases ONLY; NO factory functions, \
+NO runtime code, NO imports from npm packages; IDs are plain strings — the repository generates them;\
+export every interface the service layer needs, including request DTOs (e.g. ProductCreationRequest)\n\
              - src/events/           — domain event interfaces (one file per event, e.g. ProductCreated.ts)\n\
              - src/repositories/     — data access layer; all database calls live here; no Express imports\n\
              - src/infrastructure/   — infrastructure utilities (e.g. EventPublisher.ts wrapping kafkajs)\n\
@@ -1179,12 +1181,57 @@ fn node_express_skill() -> TechStackSkill {
             "  ES module imports throughout — never use require().\n\
              NEVER use TypeScript path aliases (@services/..., @app/..., @src/..., etc.) — \
              there is no paths config in tsconfig.json; use only relative imports.\n\
+             \n\
+             IMPORT PATH DERIVATION — depends_on entries are PROJECT-ROOT paths, not import specifiers.\n\
+             Example: generating src/repositories/ProductRepository.ts with\n\
+               depends_on: [\"services/product/src/models/Product.ts\"]\n\
+             Correct import:  import { Product } from '../models/Product'     ✓  relative from repositories/ to models/\n\
+             WRONG:           import { Product } from '@services/product/src/models/Product'  ✗  path alias — invalid\n\
+             WRONG:           import { Product } from 'services/product/src/models/Product'   ✗  not a node module\n\
+             Rule: strip the service prefix (e.g. services/product/) from both paths, then compute\n\
+             the relative path between the two src/ locations.\n\
+             \n\
+             IMPORT DEPTH — all src/ subdirectories are siblings; one dot-dot only:\n\
+               src/services/ProductService.ts → import { Product } from '../models/Product'       ✓\n\
+               src/services/ProductService.ts → import { ProductRepository } from '../repositories/ProductRepository' ✓\n\
+               NEVER: import ... from '../../models/...'   ✗  two dots goes ABOVE src/ entirely\n\
+             \n\
+             NO EXTERNAL UTILITIES — do not import moment, uuid, nanoid, or any package not in package.json.\n\
+               Timestamps: new Date()             ✓\n\
+               IDs:        crypto.randomUUID()    ✓  (built-in Node.js — no import needed)\n\
+             \n\
+             Product (and all model interfaces) are INTERFACES, not classes — never call Product.create().\n\
+             The repository creates Product instances as plain object literals:\n\
+               const product: Product = { id: crypto.randomUUID(), createdAt: new Date(), modifiedAt: null, ...fields }\n\
+             \n\
+             Route handlers MUST include next in the signature:\n\
+               router.post('/products', async (req: Request, res: Response, next: NextFunction) => {\n\
+             Pass all errors to next(err) — never catch-and-respond in the route body.\n\
+             \n\
+             EXPORT STYLE — all source files use NAMED exports:\n\
+               export class ProductService { ... }      ✓\n\
+               export interface Product { ... }         ✓\n\
+               export const errorHandler = ...          ✓\n\
+             EXCEPTION: src/app.ts uses default export: export default app\n\
+             NEVER: export default class ProductService  ✗  causes TS2613/TS2614 in importers\n\
+             \n\
              Tests live in tests/ (one level below service root). \
              From tests/, source files are always at ../src/..., never ../../src/...\n\
              Validate input at the route boundary with zod:\n\
              - define a zod schema in the route file\n\
-             - call schema.parse(req.body); let zod throw propagate to the error handler\n\
+             - call schema.parse(req.body); pass errors to next(err) so the error handler responds\n\
              async/await everywhere — no raw .then() chains in route handlers.\n\
+             Route handlers must pass errors via next(err), not catch-and-return.\n\
+             src/middleware/errorHandler.ts: import { ZodError } from 'zod' — use instanceof ZodError,\n\
+             NOT z.ZodError (z is not imported in middleware; ZodError is a named export from 'zod').\n\
+             Infrastructure lifecycle (connect/disconnect) belongs in the caller, not as a private field\n\
+             the route accesses — create EventPublisher as a local variable in the route handler.\n\
+             \n\
+             tsconfig.json MUST include in compilerOptions:\n\
+               \"types\": [\"jest\", \"node\"]\n\
+             and at top level:\n\
+               \"include\": [\"src/**/*\", \"tests/**/*\"]\n\
+             Without this, TypeScript cannot find describe/it/expect/jest globals.\n\
              CRITICAL: src/app.ts builds and exports the Express app without calling app.listen().\n\
              src/index.ts is the ONLY file that calls app.listen().\n\
              This separation is required so Supertest can import app without starting a server."

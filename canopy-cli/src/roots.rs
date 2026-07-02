@@ -4,10 +4,15 @@ use roots_storage::Store;
 const INDEX_PATH: &str = ".roots/index.db";
 
 fn workspace_id() -> String {
-    std::env::current_dir()
+    std::fs::read_to_string(".roots/config.toml")
         .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "workspace".to_string())
+        .and_then(|content| {
+            content.lines()
+                .find(|l| l.trim_start().starts_with("active_workspace"))
+                .and_then(|l| l.splitn(2, '=').nth(1))
+                .map(|v| v.trim().trim_matches('"').to_string())
+        })
+        .unwrap_or_else(|| "default".to_string())
 }
 
 fn open_store() -> Option<Store> {
