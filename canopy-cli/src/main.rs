@@ -1536,6 +1536,19 @@ fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
                 }
             }
         }
+        // ts-jest / tsc watch: path/to/File.ts:line:col - error TSxxxx: ...
+        // Leading whitespace is common in jest output; "declared here" refs lack "- error TS".
+        if line.contains(" - error TS") || line.contains(" - warning TS") {
+            let trimmed = line.trim_start();
+            if let Some(colon_pos) = trimmed.find(':') {
+                let path = &trimmed[..colon_pos];
+                if path.ends_with(".ts") || path.ends_with(".tsx") {
+                    if let Some(resolved) = resolve(path) {
+                        if !files.contains(&resolved) { files.push(resolved); }
+                    }
+                }
+            }
+        }
     }
     files
 }
