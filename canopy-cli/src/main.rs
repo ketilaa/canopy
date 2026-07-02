@@ -65,6 +65,52 @@ enum Commands {
     },
 }
 
+fn uuid_v4() -> String {
+    let mut buf = [0u8; 16];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read;
+        let _ = f.read_exact(&mut buf);
+    }
+    buf[6] = (buf[6] & 0x0f) | 0x40;
+    buf[8] = (buf[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+        buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]
+    )
+}
+
+fn iso_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, mo, d, h, mi, s) = epoch_to_parts(secs);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
+}
+
+fn epoch_to_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+    let s = secs % 60; let secs = secs / 60;
+    let mi = secs % 60; let secs = secs / 60;
+    let h = secs % 24; let days = secs / 24;
+    let mut year = 1970u64;
+    let mut rem = days;
+    loop {
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let dy = if leap { 366 } else { 365 };
+        if rem < dy { break; }
+        rem -= dy; year += 1;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let months = [31u64,if leap{29}else{28},31,30,31,30,31,31,30,31,30,31];
+    let mut mo = 1u64;
+    for &days_in_month in &months {
+        if rem < days_in_month { break; }
+        rem -= days_in_month; mo += 1;
+    }
+    (year, mo, rem + 1, h, mi, s)
+}
+
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
     match canopy_storage::load_config()
         .context("failed to read .canopy/config.yaml")?
@@ -843,7 +889,7 @@ fn test_class_command_for_service(service: &ServiceEntry, test_class: &str) -> S
 /// `skip_files` lists files that must not be modified (e.g. the unit test in the Green phase).
 /// `adrs` is used to resolve the correct testing skill when fixing test files.
 /// Returns true when the command exits successfully.
-fn run_fix_loop(
+fn run_fix_loop_logged(
     client: &LlmClient,
     service: &ServiceEntry,
     service_dir: &str,
@@ -853,6 +899,51 @@ fn run_fix_loop(
     adrs: &[Adr],
     arch_skills: &str,
     max_iterations: usize,
+    fix_log_dir: Option<&std::path::Path>,
+    step_label: &str,
+) -> bool {
+    let mut telemetry_iterations: Vec<String> = Vec::new();
+    let mut total_iterations = 0usize;
+
+    let result = run_fix_loop_inner(
+        client, service, service_dir, build_cmd, service_source_files,
+        skip_files, adrs, arch_skills, max_iterations,
+        &mut telemetry_iterations, &mut total_iterations,
+    );
+
+    if let Some(log_dir) = fix_log_dir {
+        let label = step_label.rsplit('/').next().unwrap_or(step_label)
+            .replace('.', "_");
+        let log_path = log_dir.join(format!("{}-{}.yaml", service.name, label));
+        let tech = service.technology.as_deref().unwrap_or("unknown");
+        let passed = if result { "true" } else { "false" };
+        let iterations_yaml = if telemetry_iterations.is_empty() {
+            "  - iteration: 1\n    errors: []\n    result: pass\n".to_string()
+        } else {
+            telemetry_iterations.join("")
+        };
+        let content = format!(
+            "service: \"{}\"\ntechnology: \"{}\"\nstep: \"{}\"\ntotal_iterations: {}\npassed: {}\niterations:\n{}",
+            service.name, tech, step_label, total_iterations, passed, iterations_yaml
+        );
+        let _ = std::fs::write(&log_path, content);
+    }
+
+    result
+}
+
+fn run_fix_loop_inner(
+    client: &LlmClient,
+    service: &ServiceEntry,
+    service_dir: &str,
+    build_cmd: &str,
+    service_source_files: &[String],
+    skip_files: &[String],
+    adrs: &[Adr],
+    arch_skills: &str,
+    max_iterations: usize,
+    telemetry: &mut Vec<String>,
+    total_iterations: &mut usize,
 ) -> bool {
     for iteration in 0..max_iterations {
         let output = std::process::Command::new("bash")
@@ -929,6 +1020,34 @@ fn run_fix_loop(
                     }
                 }
             }
+        }
+
+        // Collect telemetry for this iteration
+        *total_iterations += 1;
+        {
+            let error_patterns: Vec<String> = combined.lines()
+                .filter(|l| {
+                    let lo = l.to_lowercase();
+                    lo.contains("error") || lo.contains("cannot find") || lo.contains("is not assignable")
+                })
+                .take(5)
+                .map(|l| format!("    - \"{}\"", l.trim().replace('"', "'")))
+                .collect();
+            let files_yaml = broken_files.iter()
+                .map(|f| format!("    - \"{}\"", f))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let patterns_yaml = if error_patterns.is_empty() {
+                "    - \"(no matching error lines)\"".to_string()
+            } else {
+                error_patterns.join("\n")
+            };
+            telemetry.push(format!(
+                "  - iteration: {}\n    files_with_errors:\n{}\n    error_patterns:\n{}\n",
+                iteration + 1,
+                if files_yaml.is_empty() { "    []".to_string() } else { files_yaml },
+                patterns_yaml,
+            ));
         }
 
         if broken_files.is_empty() && !fixed_any {
@@ -1044,6 +1163,23 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
             println!("Detected package for {name}: {pkg}");
         }
     }
+
+    // Create a session log directory for this implementation run
+    let session_id = uuid_v4();
+    let session_log_dir = canopy_storage::storage_dir()
+        .join("logs")
+        .join(&session_id);
+    let fix_log_dir = session_log_dir.join("fix-loops");
+    std::fs::create_dir_all(&fix_log_dir).ok();
+    {
+        let meta = format!(
+            "story_id: \"{}\"\nstarted_at: \"{}\"\n",
+            story_id,
+            iso_now()
+        );
+        let _ = std::fs::write(session_log_dir.join("session.yaml"), meta);
+    }
+    println!("Session: {}", session_id);
 
     // Load or generate implementation plan
     let mut plan = match load_story_plan(story_id) {
@@ -1166,8 +1302,9 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
                     println!("  [red] compiling: {} (in {})", compile_cmd, step_service_dir);
                     let src_files = scan_service_source_files(&step_service_dir);
                     // Both test and impl may be fixed during Red — no skip_files here.
-                    run_fix_loop(&client, svc, &step_service_dir, &compile_cmd,
-                        &src_files, &[], &adrs, &arch_skills, MAX_FIX_ITERATIONS);
+                    run_fix_loop_logged(&client, svc, &step_service_dir, &compile_cmd,
+                        &src_files, &[], &adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        Some(&fix_log_dir), &format!("red-{}", step.file));
                 }
             }
             roots::reindex();
@@ -1204,8 +1341,9 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
                     let abs_test = std::fs::canonicalize(&test_file)
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or(test_file.clone());
-                    run_fix_loop(&client, svc, &step_service_dir, &test_cmd,
-                        &src_files, &[test_file.clone(), abs_test], &adrs, &arch_skills, MAX_FIX_ITERATIONS);
+                    run_fix_loop_logged(&client, svc, &step_service_dir, &test_cmd,
+                        &src_files, &[test_file.clone(), abs_test], &adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        Some(&fix_log_dir), &format!("green-{}", step.file));
                 }
             }
             roots::reindex();
@@ -1270,8 +1408,9 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
         let test_cmd = test_command_for_service(service, &service_dir);
         let service_source_files = scan_service_source_files(&service_dir);
         println!("\nFinal validation: {} (in {})", test_cmd, service_dir);
-        run_fix_loop(&client, service, &service_dir, &test_cmd,
-            &service_source_files, &[], &adrs, &arch_skills, MAX_FIX_ITERATIONS);
+        run_fix_loop_logged(&client, service, &service_dir, &test_cmd,
+            &service_source_files, &[], &adrs, &arch_skills, MAX_FIX_ITERATIONS,
+            Some(&fix_log_dir), &format!("final-{}", service.name));
     }
 
     Ok(())
