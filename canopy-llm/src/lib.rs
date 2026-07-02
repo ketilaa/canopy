@@ -25,6 +25,7 @@ pub struct LlmClient {
     debug: bool,
     provider: LlmProvider,
     base_url: String,
+    log_path: Option<std::path::PathBuf>,
 }
 
 impl LlmClient {
@@ -35,6 +36,7 @@ impl LlmClient {
             debug,
             provider: LlmProvider::Ollama,
             base_url: "http://localhost:11434".to_string(),
+            log_path: None,
         }
     }
 
@@ -53,7 +55,13 @@ impl LlmClient {
             debug,
             provider: cfg.provider.clone(),
             base_url,
+            log_path: None,
         }
+    }
+
+    pub fn with_log_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.log_path = Some(path.into());
+        self
     }
 
     pub fn complete(&self, prompt: &str) -> Result<String, LlmError> {
@@ -94,6 +102,29 @@ impl LlmClient {
             eprintln!("──────────────────────────────────────────────────────────");
             eprintln!("{text}");
             eprintln!("╚════════════════════════════════════════════════════════╝\n");
+
+            if let Some(log_path) = &self.log_path {
+                let ts = llm_timestamp();
+                let entry = format!(
+                    "\n[{ts}] ╔══ LLM INPUT ═══════════════════════════════════════════╗\n\
+                     {prompt}\n\
+                     [{ts}] ╚════════════════════════════════════════════════════════╝\n\
+                     [{ts}] ╔══ LLM OUTPUT ══════════════════════════════════════════╗\n\
+                     [{ts}]   model:         {model}\n\
+                     [{ts}]   input tokens:  {input_tokens}\n\
+                     [{ts}]   output tokens: {output_tokens}\n\
+                     [{ts}] ──────────────────────────────────────────────────────────\n\
+                     {text}\n\
+                     [{ts}] ╚════════════════════════════════════════════════════════╝\n"
+                );
+                if let Some(parent) = log_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                    let _ = f.write_all(entry.as_bytes());
+                }
+            }
         }
 
         Ok(text)
@@ -145,6 +176,30 @@ impl LlmClient {
             .to_string();
         Ok((text, json))
     }
+}
+
+/// UTC timestamp formatted as YYYY-MM-DDTHH:MM:SSZ using only std.
+fn llm_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let s = (secs % 60) as u32;
+    let m = ((secs / 60) % 60) as u32;
+    let h = ((secs / 3600) % 24) as u32;
+    // civil_from_days — Howard Hinnant's algorithm
+    let z = (secs / 86400) as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let yr = if mo <= 2 { y + 1 } else { y };
+    format!("{yr:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 fn stories_from_intent_prompt(

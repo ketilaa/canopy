@@ -120,7 +120,7 @@ fn epoch_to_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
 }
 
 fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
-    match canopy_storage::load_config()
+    let client = match canopy_storage::load_config()
         .context("failed to read .canopy/config.yaml")?
     {
         Some(cfg) => {
@@ -130,9 +130,14 @@ fn build_client(agent: &str, debug: bool) -> Result<LlmClient> {
                     agent
                 )
             })?;
-            Ok(LlmClient::from_agent_config(&agent_cfg, debug))
+            LlmClient::from_agent_config(&agent_cfg, debug)
         }
-        None => Ok(LlmClient::default_local(debug)),
+        None => LlmClient::default_local(debug),
+    };
+    if debug {
+        Ok(client.with_log_path(".canopy/logs/llm-debug.log"))
+    } else {
+        Ok(client)
     }
 }
 
