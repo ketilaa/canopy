@@ -2251,9 +2251,58 @@ fn layer_weight(file: &str) -> u8 {
     else if f.contains("/repository/") { 2 }
     else if f.contains("/dto/") || f.contains("request") || f.contains("response") { 3 }
     else if f.contains("/service/") { 4 }
-    else if f.contains("/controller/") || f.contains("/api/") { 5 }
+    else if f.contains("/controller/") { 5 }
     else if f.contains("test") || f.contains("spec") { 6 }
     else { 3 }
+}
+
+fn frontend_tier(file: &str) -> u8 {
+    let f = file.to_lowercase();
+    if f.contains(".test.") || f.contains("/tests/") { return 3; }
+    if f.contains("/api/") { return 0; }
+    if f.ends_with("app.tsx") || f.ends_with("app.ts")
+        || f.ends_with("main.tsx") || f.ends_with("main.ts") { return 2; }
+    if f.contains("/components/") { return 1; }
+    1 // unknown frontend file — treat as component tier
+}
+
+fn derive_frontend_test_path(source_file: &str) -> Option<String> {
+    let src_idx = source_file.find("/src/")?;
+    let service_root = &source_file[..src_idx];
+    let filename = source_file.rsplit('/').next()?;
+    let test_filename = if filename.ends_with(".tsx") {
+        format!("{}.test.tsx", &filename[..filename.len() - 4])
+    } else if filename.ends_with(".ts") {
+        format!("{}.test.ts", &filename[..filename.len() - 3])
+    } else {
+        return None;
+    };
+    Some(format!("{}/tests/{}", service_root, test_filename))
+}
+
+fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, service_name: &str) {
+    let mut to_inject: Vec<ImplementationStep> = Vec::new();
+    for step in steps.iter() {
+        let f = &step.file;
+        if f.to_lowercase().contains(".test.") { continue; }
+        let needs_test = f.contains("/src/api/") || f.contains("/src/components/");
+        if !needs_test { continue; }
+        if let Some(test_path) = derive_frontend_test_path(f) {
+            if steps.iter().any(|s| s.file == test_path) { continue; }
+            if to_inject.iter().any(|s| s.file == test_path) { continue; }
+            let component_name = f.rsplit('/').next().unwrap_or("")
+                .trim_end_matches(".tsx").trim_end_matches(".ts").to_string();
+            to_inject.push(ImplementationStep {
+                id: String::new(),
+                service: service_name.to_string(),
+                file: test_path,
+                operation: "create".to_string(),
+                description: format!("Unit tests for {}", component_name),
+                status: StepStatus::Pending,
+            });
+        }
+    }
+    steps.extend(to_inject);
 }
 
 pub fn generate_story_plan(
@@ -2288,6 +2337,9 @@ pub fn generate_story_plan(
                 step.operation = "modify".to_string();
             }
         }
+        if service.component_type.as_deref() == Some("frontend") {
+            inject_missing_frontend_tests(&mut steps, &service.name);
+        }
         all_steps.extend(steps);
     }
 
@@ -2300,8 +2352,10 @@ pub fn generate_story_plan(
             .unwrap_or(false)
     };
     all_steps.sort_by_key(|s| {
-        let tier = if is_frontend_service(&s.service) { 1u8 } else { 0u8 };
-        (tier, layer_weight(&s.file))
+        let is_fe = is_frontend_service(&s.service);
+        let service_tier = if is_fe { 1u8 } else { 0u8 };
+        let file_tier = if is_fe { frontend_tier(&s.file) } else { layer_weight(&s.file) };
+        (service_tier, file_tier)
     });
 
     for (i, step) in all_steps.iter_mut().enumerate() {
