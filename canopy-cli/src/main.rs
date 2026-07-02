@@ -878,6 +878,40 @@ fn test_class_name(test_file: &str) -> Option<String> {
         .file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
 }
 
+/// Builds the sibling context section for an implementation step prompt.
+///
+/// Tries Roots symbol surfaces first (compact). Falls back to reading full file
+/// content from session_written or disk when Roots is unavailable.
+fn build_sibling_section(
+    deps: &[String],
+    service_dir: &str,
+    session_written: &std::collections::HashMap<String, String>,
+) -> String {
+    if deps.is_empty() {
+        return String::new();
+    }
+    let prefix = format!("{}/", service_dir);
+    let rel_paths: Vec<String> = deps.iter()
+        .filter_map(|d| d.strip_prefix(&prefix).map(|s| s.to_string()))
+        .collect();
+
+    if let Some(surface) = roots::get_ts_module_surface(&rel_paths, service_dir) {
+        return surface;
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    for dep in deps {
+        let rel = dep.strip_prefix(&prefix).unwrap_or(dep.as_str());
+        let content = session_written.get(dep)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(dep).ok());
+        if let Some(c) = content {
+            parts.push(format!("// {}\n{}", rel, c));
+        }
+    }
+    parts.join("\n\n")
+}
+
 /// Returns a compile-only command (no test execution) for the service's build tool.
 fn compile_command_for_service(service: &ServiceEntry, _service_dir: &str) -> String {
     let tech = service.technology.as_deref().unwrap_or("").to_lowercase();
@@ -1285,10 +1319,11 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
             println!("  wrote {}", test_file);
 
             println!("  [red] generating stub: {}", step.file);
+            let stub_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let stub_content = execute_implementation_stub(
                 &client, story, &spec, &contract_yaml,
                 step, None, None,
-                &service_packages, &services, &session_written, &arch_skills,
+                &service_packages, &services, &stub_siblings, &arch_skills,
                 &test_file, &test_content,
             ).with_context(|| format!("LLM call failed generating stub for step {}", step.id))?;
 
@@ -1325,10 +1360,11 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
             let test_content = std::fs::read_to_string(&test_file)
                 .unwrap_or(test_content);
 
+            let green_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let StepResult { content: impl_content, summary: impl_summary } = execute_implementation_with_test(
                 &client, story, &spec, &contract_yaml,
                 step, None, roots_context.as_deref(),
-                &service_packages, &services, &session_written, &arch_skills,
+                &service_packages, &services, &green_siblings, &arch_skills,
                 &test_file, &test_content,
             ).with_context(|| format!("LLM call failed for Green phase step {}", step.id))?;
 
@@ -1364,10 +1400,11 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 .map(|p| format_roots_context(&p))
                 .filter(|s| !s.is_empty());
 
+            let step_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let StepResult { content, summary } = execute_implementation_step(
                 &client, story, &spec, &contract_yaml,
                 step, current_content.as_deref(), roots_context.as_deref(),
-                &service_packages, &services, &session_written, &arch_skills,
+                &service_packages, &services, &step_siblings, &arch_skills,
             ).with_context(|| format!("LLM call failed for step {}", step.id))?;
 
             let dest = std::path::Path::new(&step.file);

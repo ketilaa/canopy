@@ -2506,7 +2506,7 @@ fn step_prompt(
     roots_context: Option<&str>,
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
-    session_written: &std::collections::HashMap<String, String>,
+    sibling_section: &str,
     arch_skills: &str,
     test_hint: Option<(&str, &str, bool)>,
 ) -> String {
@@ -2538,30 +2538,9 @@ fn step_prompt(
     // The tech skill says WHICH dependencies belong; the build skill says HOW to write the file.
     let build_rules = skill_for_build_system(&step.file);
 
-    // For frontend (TypeScript) steps, include all sibling .ts/.tsx files written earlier
-    // in this session. Roots does not index TypeScript, so this is the only way to give
-    // the model knowledge of existing component signatures and exported types.
-    let sibling_section = if is_frontend {
-        let mut siblings: Vec<String> = session_written.iter()
-            .filter(|(path, _)| {
-                (path.ends_with(".ts") || path.ends_with(".tsx"))
-                    && path.as_str() != step.file
-            })
-            .map(|(path, content)| format!("--- {} ---\n{}", path, content))
-            .collect();
-        siblings.sort();
-        if siblings.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "\nFiles already written for this frontend \
-                 (match their component signatures and exported types exactly):\n\n{}\n",
-                siblings.join("\n\n")
-            )
-        }
-    } else {
-        String::new()
-    };
+    // sibling_section is built by the CLI layer using Roots symbol surfaces
+    // (falling back to full file content when the index is unavailable).
+    let sibling_section = sibling_section;
 
     let current_section = match current_content {
         Some(content) => format!(
@@ -2695,12 +2674,12 @@ pub fn execute_implementation_step(
     roots_context: Option<&str>,
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
-    session_written: &std::collections::HashMap<String, String>,
+    sibling_section: &str,
     arch_skills: &str,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
-        service_packages, services, session_written, arch_skills, None,
+        service_packages, services, sibling_section, arch_skills, None,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
@@ -2814,14 +2793,14 @@ pub fn execute_implementation_stub(
     roots_context: Option<&str>,
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
-    session_written: &std::collections::HashMap<String, String>,
+    sibling_section: &str,
     arch_skills: &str,
     test_file: &str,
     test_content: &str,
 ) -> Result<String, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
-        service_packages, services, session_written, arch_skills,
+        service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, true)),
     );
     Ok(strip_code_fences(&client.complete_large(&prompt)?))
@@ -2837,14 +2816,14 @@ pub fn execute_implementation_with_test(
     roots_context: Option<&str>,
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
-    session_written: &std::collections::HashMap<String, String>,
+    sibling_section: &str,
     arch_skills: &str,
     test_file: &str,
     test_content: &str,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
-        service_packages, services, session_written, arch_skills,
+        service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, false)),
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
