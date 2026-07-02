@@ -2180,6 +2180,7 @@ fn plan_prompt_for_service(
          ### YAML Format\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
+         description MUST be a single quoted string on one line — never a YAML list.\n\
          description MUST name specific classes, fields, and annotations.\n\
          EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n\
          depends_on: YAML sequence — NEVER wrap in quotes; use [] for none or a proper list.\n",
@@ -2327,7 +2328,13 @@ fn parse_plan_steps(raw: &str) -> Result<Vec<ImplementationStep>, LlmError> {
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    let fixed = dedup_yaml_keys(&fix_yaml_colon_in_scalars(&fix_yaml_list_indentation(&fix_broken_quoted_continuations(&fix_quoted_depends_on(stripped)))));
+    // If the model omitted the `steps:` root key and emitted a bare sequence, wrap it.
+    let wrapped: std::borrow::Cow<str> = if stripped.starts_with("- ") || stripped.starts_with("- id:") {
+        std::borrow::Cow::Owned(format!("steps:\n{}", stripped))
+    } else {
+        std::borrow::Cow::Borrowed(stripped)
+    };
+    let fixed = dedup_yaml_keys(&fix_yaml_colon_in_scalars(&fix_yaml_list_indentation(&fix_broken_quoted_continuations(&fix_quoted_depends_on(&wrapped)))));
     #[derive(serde::Deserialize)]
     struct PlanResponse { steps: Vec<ImplementationStep> }
     let parsed: PlanResponse = serde_yaml::from_str(&fixed)
