@@ -3066,7 +3066,7 @@ fn technology_to_command(
                  npm install --save-dev typescript ts-node @types/express @types/node \
                    jest ts-jest @types/jest supertest @types/supertest && \
                  npx tsc --init && \
-                 npx ts-jest config:init && \
+                 npx --yes ts-jest config:init && \
                  npm pkg set scripts.test=\"jest --forceExit\" \
                              scripts.build=\"tsc --noEmit\" \
                              scripts.dev=\"ts-node src/index.ts\""
