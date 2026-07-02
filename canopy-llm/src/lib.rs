@@ -2122,19 +2122,15 @@ fn plan_prompt_for_service(
     } else if is_node {
         format!(
             "\nTesting plan rules:\n\
-             - If any test files are in the plan, you MUST also:\n\
-               a) Modify package.json to add to devDependencies: jest, ts-jest, @types/jest,\n\
-                  supertest, @types/supertest, @types/node. Set the test script to \"jest --forceExit\".\n\
-               b) Create jest.config.js in the service root (BEFORE any test files):\n\
-                  module.exports = {{ preset: 'ts-jest', testEnvironment: 'node',\n\
-                                      testMatch: ['**/tests/**/*.test.ts'] }};\n\
+             - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
+               installed by `canopy scaffold` — do NOT create jest.config.js as a plan step.\n\
              - Include one unit test file (*.test.ts) per service module.\n\
                Unit tests mock the repository and test business logic in isolation.\n\
                Example: tests/productService.test.ts\n\
              - Include one route test file (*.test.ts) per route module using Supertest.\n\
                Route tests import {{ app }} from src/app.ts and exercise the full HTTP stack.\n\
                Example: tests/productRoutes.test.ts\n\
-             - Order: package.json → jest.config.js → source files → test files (LAST).\n\
+             - Test files MUST be the last steps in the plan.\n\
              - Do NOT include a test file for src/app.ts or src/index.ts.\n"
         )
     } else if is_react {
@@ -3063,7 +3059,18 @@ fn technology_to_command(
         || t.contains("koa") || t.contains("hapi")
     {
         (
-            format!("mkdir -p {name} && cd {name} && npm init -y && npm install express && touch index.js"),
+            format!(
+                "mkdir -p {name} && cd {name} && \
+                 npm init -y && \
+                 npm install express zod && \
+                 npm install --save-dev typescript ts-node @types/express @types/node \
+                   jest ts-jest @types/jest supertest @types/supertest && \
+                 npx tsc --init && \
+                 npx ts-jest config:init && \
+                 npm pkg set scripts.test=\"jest --forceExit\" \
+                             scripts.build=\"tsc --noEmit\" \
+                             scripts.dev=\"ts-node src/index.ts\""
+            ),
             format!("{name}/"),
         )
     } else if t.contains("python") || t.contains("django") || t.contains("flask") || t.contains("fastapi") {
