@@ -25,6 +25,14 @@ struct Cli {
     /// Print each LLM prompt, response, model, and token counts to stderr
     #[arg(long, global = true)]
     llm_debug: bool,
+}
+
+/// Used only for parsing commands typed inside the REPL.
+#[derive(Parser)]
+#[command(name = "canopy")]
+struct ReplCli {
+    #[arg(long, global = true)]
+    llm_debug: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -137,31 +145,28 @@ fn unix_timestamp() -> String {
         .to_string()
 }
 
-fn dispatch(cmd: Commands, debug: bool) -> Result<()> {
-    match cmd {
-        Commands::Init                         => cmd_init(debug),
-        Commands::Domain                       => cmd_domain_show(),
-        Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
-        Commands::Implement { story_id }       => cmd_implement(&story_id, debug),
-        Commands::Stories                      => cmd_stories(),
-        Commands::Intent { statement }         => cmd_intent(statement, debug),
-        Commands::Spec { story_id }            => cmd_spec(&story_id, debug),
-    }
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let debug = cli.llm_debug;
-    match cli.command {
-        Some(cmd) => dispatch(cmd, debug),
-        None => run_repl(debug),
-    }
+    run_repl(cli.llm_debug)
 }
 
 fn run_repl(debug: bool) -> Result<()> {
     use std::io::{BufRead, Write};
 
+    // Session created once for the lifetime of this canopy invocation.
+    let session_id = uuid_v4();
+    let session_log_dir = canopy_storage::storage_dir()
+        .join("logs")
+        .join(&session_id);
+    let fix_log_dir = session_log_dir.join("fix-loops");
+    let _ = std::fs::create_dir_all(&fix_log_dir);
+    let _ = std::fs::write(
+        session_log_dir.join("session.yaml"),
+        format!("started_at: \"{}\"\n", iso_now()),
+    );
+
     println!("canopy  —  type a command or 'exit'");
+    println!("Session: {}", session_id);
 
     // Roots: initialise and index the repository once for the whole session.
     print!("Checking Roots index... ");
@@ -185,15 +190,24 @@ fn run_repl(debug: bool) -> Result<()> {
         if trimmed.is_empty() { continue; }
         if matches!(trimmed, "exit" | "quit") { break; }
 
-        // Re-use clap to parse the typed command, prepending the binary name.
+        // Parse the typed command using ReplCli, prepending the binary name.
         let mut args = vec!["canopy"];
         if debug { args.push("--llm-debug"); }
         args.extend(trimmed.split_whitespace());
 
-        match Cli::try_parse_from(args) {
+        match ReplCli::try_parse_from(args) {
             Ok(cli) => {
                 if let Some(cmd) = cli.command {
-                    if let Err(e) = dispatch(cmd, debug) {
+                    let result = match cmd {
+                        Commands::Init                         => cmd_init(debug),
+                        Commands::Domain                       => cmd_domain_show(),
+                        Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
+                        Commands::Implement { story_id }       => cmd_implement(&story_id, debug, &fix_log_dir),
+                        Commands::Stories                      => cmd_stories(),
+                        Commands::Intent { statement }         => cmd_intent(statement, debug),
+                        Commands::Spec { story_id }            => cmd_spec(&story_id, debug),
+                    };
+                    if let Err(e) = result {
                         eprintln!("  error: {e:#}");
                     }
                 }
@@ -1123,7 +1137,7 @@ fn run_fix_loop_inner(
     false
 }
 
-fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
+fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> Result<()> {
     let theme = ColorfulTheme::default();
 
     let stories = load_user_stories()
@@ -1164,22 +1178,6 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
         }
     }
 
-    // Create a session log directory for this implementation run
-    let session_id = uuid_v4();
-    let session_log_dir = canopy_storage::storage_dir()
-        .join("logs")
-        .join(&session_id);
-    let fix_log_dir = session_log_dir.join("fix-loops");
-    std::fs::create_dir_all(&fix_log_dir).ok();
-    {
-        let meta = format!(
-            "story_id: \"{}\"\nstarted_at: \"{}\"\n",
-            story_id,
-            iso_now()
-        );
-        let _ = std::fs::write(session_log_dir.join("session.yaml"), meta);
-    }
-    println!("Session: {}", session_id);
 
     // Load or generate implementation plan
     let mut plan = match load_story_plan(story_id) {
