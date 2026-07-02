@@ -1100,13 +1100,15 @@ fn node_express_skill() -> TechStackSkill {
         name: "Node.js / Express (TypeScript)".to_string(),
         file_layout:
             "  Source root: <service-prefix>/src/\n\
-             - src/models/        — TypeScript interfaces (pure types, no runtime deps)\n\
-             - src/repositories/  — data access layer; all database calls live here; no Express imports\n\
-             - src/services/      — business logic; depends on repositories; no Express imports\n\
-             - src/routes/        — Express routers; thin request/response handling; validate with zod\n\
-             - src/middleware/    — cross-cutting (errorHandler, auth, logging)\n\
-             - src/app.ts         — builds and exports the Express app; MUST NOT call app.listen()\n\
-             - src/index.ts       — entry point; imports app and calls app.listen()\n\
+             - src/models/           — TypeScript interfaces (pure types, no runtime deps)\n\
+             - src/events/           — domain event interfaces (one file per event, e.g. ProductCreated.ts)\n\
+             - src/repositories/     — data access layer; all database calls live here; no Express imports\n\
+             - src/infrastructure/   — infrastructure utilities (e.g. EventPublisher.ts wrapping kafkajs)\n\
+             - src/services/         — business logic; depends on repositories and infrastructure; no Express imports\n\
+             - src/routes/           — Express routers; thin request/response handling; validate with zod\n\
+             - src/middleware/       — cross-cutting (errorHandler, auth, logging)\n\
+             - src/app.ts            — builds and exports the Express app; MUST NOT call app.listen()\n\
+             - src/index.ts          — entry point; imports app and calls app.listen()\n\
              File paths in plan steps are relative to the PROJECT ROOT."
             .to_string(),
         namespace_rules:
@@ -1120,14 +1122,16 @@ fn node_express_skill() -> TechStackSkill {
              This separation is required so Supertest can import { app } without starting a server."
             .to_string(),
         layer_order:
-            "  1. src/models/        — interfaces only; no deps\n\
-             2. src/repositories/  — imports models; all DB calls; no Express deps\n\
-             3. src/services/      — imports models and repositories; no Express deps\n\
-             4. src/routes/        — imports services; mounts on Express router; validates with zod\n\
-             5. src/middleware/errorHandler.ts — depends on nothing; must be created before app.ts\n\
-             6. src/app.ts         — assembles the Express app; imports routes and middleware\n\
-             7. src/index.ts       — starts the server; imports app; calls app.listen()\n\
-             8. tests/             — import app from src/app.ts; use Supertest for route tests\n\
+            "  1. src/models/           — interfaces only; no deps\n\
+             2. src/events/           — domain event interfaces; no deps\n\
+             3. src/repositories/     — imports models; all DB calls; no Express deps\n\
+             4. src/infrastructure/   — imports events and external clients (e.g. kafkajs); no Express deps\n\
+             5. src/services/         — imports models, events, repositories, infrastructure; no Express deps\n\
+             6. src/routes/           — imports services; mounts on Express router; validates with zod\n\
+             7. src/middleware/errorHandler.ts — depends on nothing; must be created before app.ts\n\
+             8. src/app.ts            — assembles the Express app; imports routes and middleware\n\
+             9. src/index.ts          — starts the server; imports app; calls app.listen()\n\
+             10. tests/               — import app from src/app.ts; use Supertest for route tests\n\
              Reason: services must not import from routes; app.ts must not call listen()."
             .to_string(),
         notes: None,
@@ -1620,35 +1624,71 @@ impl ArchitectureSkill {
     }
 }
 
-fn ddd_skill() -> ArchitectureSkill {
-    ArchitectureSkill {
-        name: "Domain-Driven Design (DDD)".to_string(),
-        vocabulary:
-            "  Aggregate root: the single entry point to a cluster of related entities; holds invariants.\n\
-             Entity: has identity (@Id), mutable state, lifecycle — modelled in domain/.\n\
-             Value object: no identity, equality by value, immutable — use Java records.\n\
-             Repository: one per aggregate root; returns fully-constructed aggregates.\n\
-             Application service (@Service): orchestrates use cases, translates domain ↔ DTO.\n\
-             Domain service: stateless; expresses a business operation that spans multiple entities."
-            .to_string(),
-        structural_rules:
-            "  Use the ubiquitous language from the stories and domain registry in all identifiers —\n\
-             class names, method names, field names. No technical synonyms (ProductData, ProductInfo)\n\
-             when the agreed term is Product.\n\
-             Business invariants live in the aggregate, not in the application service or controller.\n\
-             DTOs live at the API boundary (dto/); never expose domain entities in REST responses.\n\
-             Access nested entities only through their aggregate root — never inject a nested entity's\n\
-             repository directly.\n\
-             Repositories return domain objects; the service layer maps them to DTOs for callers."
-            .to_string(),
-        anti_patterns:
-            "  No business logic in controllers or repositories — controllers translate HTTP;\n\
-             repositories translate persistence.\n\
-             No anemic domain model — an entity that is only getters/setters with all logic in\n\
-             services is not DDD; move invariants into the entity.\n\
-             No getById that silently returns null — throw a domain exception (ProductNotFoundException)\n\
-             or return Optional with explicit handling at the call site."
-            .to_string(),
+fn ddd_skill_for_tech(tech: &str) -> ArchitectureSkill {
+    let t = tech.to_lowercase();
+    let is_node = t.contains("node") || t.contains("express") || t.contains("nest");
+    let is_front = t.contains("react") || t.contains("angular") || t.contains("vite");
+
+    if is_node && !is_front {
+        ArchitectureSkill {
+            name: "Domain-Driven Design (DDD)".to_string(),
+            vocabulary:
+                "  Aggregate root: the single entry point to a cluster of related entities; holds invariants.\n\
+                 Entity: has identity (id field), mutable state, lifecycle — modelled as a TypeScript interface or class.\n\
+                 Value object: no identity, equality by value, immutable — use a readonly TypeScript interface.\n\
+                 Repository: one per aggregate root; returns fully-constructed aggregates.\n\
+                 Application service: orchestrates use cases, translates domain ↔ DTO; a plain class, not a framework annotation.\n\
+                 Domain service: stateless; expresses a business operation that spans multiple entities."
+                .to_string(),
+            structural_rules:
+                "  Use the ubiquitous language from the stories and domain registry in all identifiers —\n\
+                 class names, method names, field names. No technical synonyms (ProductData, ProductInfo)\n\
+                 when the agreed term is Product.\n\
+                 Business invariants live in the aggregate, not in the application service or route handler.\n\
+                 DTOs live at the API boundary (returned from routes); never expose domain entities directly in REST responses.\n\
+                 Access nested entities only through their aggregate root.\n\
+                 Repositories return domain objects; the service layer maps them to response shapes for callers."
+                .to_string(),
+            anti_patterns:
+                "  No business logic in route handlers or repositories — route handlers translate HTTP;\n\
+                 repositories translate persistence.\n\
+                 No anemic domain model — a type that is only fields with all logic in services is not DDD;\n\
+                 move invariants into the entity or service.\n\
+                 No findById that silently returns undefined without handling — throw a typed domain error\n\
+                 (e.g. ProductNotFoundError) or return a discriminated union with explicit handling at the call site."
+                .to_string(),
+        }
+    } else {
+        // Spring / JVM variant (also used as default)
+        ArchitectureSkill {
+            name: "Domain-Driven Design (DDD)".to_string(),
+            vocabulary:
+                "  Aggregate root: the single entry point to a cluster of related entities; holds invariants.\n\
+                 Entity: has identity (@Id), mutable state, lifecycle — modelled in domain/.\n\
+                 Value object: no identity, equality by value, immutable — use Java records.\n\
+                 Repository: one per aggregate root; returns fully-constructed aggregates.\n\
+                 Application service (@Service): orchestrates use cases, translates domain ↔ DTO.\n\
+                 Domain service: stateless; expresses a business operation that spans multiple entities."
+                .to_string(),
+            structural_rules:
+                "  Use the ubiquitous language from the stories and domain registry in all identifiers —\n\
+                 class names, method names, field names. No technical synonyms (ProductData, ProductInfo)\n\
+                 when the agreed term is Product.\n\
+                 Business invariants live in the aggregate, not in the application service or controller.\n\
+                 DTOs live at the API boundary (dto/); never expose domain entities in REST responses.\n\
+                 Access nested entities only through their aggregate root — never inject a nested entity's\n\
+                 repository directly.\n\
+                 Repositories return domain objects; the service layer maps them to DTOs for callers."
+                .to_string(),
+            anti_patterns:
+                "  No business logic in controllers or repositories — controllers translate HTTP;\n\
+                 repositories translate persistence.\n\
+                 No anemic domain model — an entity that is only getters/setters with all logic in\n\
+                 services is not DDD; move invariants into the entity.\n\
+                 No getById that silently returns null — throw a domain exception (ProductNotFoundException)\n\
+                 or return Optional with explicit handling at the call site."
+                .to_string(),
+        }
     }
 }
 
@@ -1675,7 +1715,7 @@ fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
                    The service step MUST come after the event type and publisher steps.\n\
                  Topic name: use the value from the Topic Naming Convention ADR (e.g. product-events).\n\
                  Event payload: include the aggregate ID; carry only what consumers need.\n\
-                 Add the Kafka client dependency (kafkajs) to package.json in step 1 if not already present."
+                 Add the Kafka client dependency (kafkajs) to the package.json step if not already present."
                 .to_string(),
             anti_patterns:
                 "  Never publish before the database write completes.\n\
@@ -1763,7 +1803,7 @@ pub fn skills_for_architecture(adrs: &[Adr], tech: &str) -> String {
 
     let mut skills: Vec<ArchitectureSkill> = Vec::new();
     if text.contains("domain-driven") || text.contains("domain driven") || text.contains("ddd") {
-        skills.push(ddd_skill());
+        skills.push(ddd_skill_for_tech(tech));
     }
     if text.contains("event-driven") || text.contains("event driven") || text.contains("domain event") {
         skills.push(event_orientation_skill_for_tech(tech));
