@@ -1424,13 +1424,18 @@ fn test_command_for_service(service: &ServiceEntry, service_dir: &str) -> String
     if tech.contains("gradle") {
         return "./gradlew test".to_string();
     }
-    // Frontend: check package.json scripts to pick the right command
+    let is_frontend = service.component_type.as_deref() == Some("frontend");
     let pkg_path = format!("{service_dir}/package.json");
     if let Ok(pkg) = std::fs::read_to_string(&pkg_path) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&pkg) {
             let scripts = json.get("scripts");
             if scripts.and_then(|s| s.get("test")).is_some() {
-                return "npm test -- --watchAll=false".to_string();
+                // --watchAll=false is a CRA/Vite flag; plain jest doesn't accept it
+                return if is_frontend {
+                    "npm test -- --watchAll=false".to_string()
+                } else {
+                    "npx jest --forceExit".to_string()
+                };
             }
             if scripts.and_then(|s| s.get("build")).is_some() {
                 return "npm run build".to_string();
