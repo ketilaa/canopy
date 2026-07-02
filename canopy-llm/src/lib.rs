@@ -2154,24 +2154,29 @@ fn plan_prompt_for_service(
            operation: create\n\
            description: <specific description of what this file contains>\n\
          \n\
-         Rules:\n\
-         - `operation` is create for new files, modify for files in the existing list above\n\
-         - One step per file — no duplicates\n\
-         - Order for backend: build config → domain/event types → data layer → infrastructure (publisher) → service → route handler → middleware → entry point → tests\n\
-         - Frontend order — generate in import-dependency order (each file after everything it imports):\n\
-           src/api/ has no local imports → first; src/components/ imports src/api/ → second;\n\
-           App.tsx imports components → third; tests/ → last.\n\
-           A component step before its API client is a missing-import error.\n\
-         - description must name the specific classes, fields, and annotations\n\
-         - ALL string values must be quoted with double quotes — every id, service, file, operation, and description\n\
-         - Never use block scalars (>- or |) — always use a single quoted string on one line\n\
-         - STRICT SCOPE: only include files that are directly required to implement this story.\n\
-           Do NOT include: README, HELP.md, .gitignore, CSS files, config files (tsconfig, vite.config),\n\
-           scaffolding artifacts, or any file that does not contain logic for this story.\n\
-           No event listeners or consumers unless the story explicitly requires consuming an event.\n\
-           When an event broker ADR exists and the story publishes a domain event: follow the backend\n\
-           ordering above (event type and publisher steps precede the service step); no broker → event type only.\n\
-           If in doubt, leave it out.\n",
+         ### Operations\n\
+         MUST use operation: modify for every file in the existing list above; create for all others.\n\
+         One step per file — no duplicates.\n\
+         \n\
+         ### Step Ordering\n\
+         Backend:  build config → domain/event types → data layer → infrastructure (publisher) → service → route handler → middleware → entry point → tests\n\
+           When a broker ADR exists and the story publishes a domain event:\n\
+             event type and publisher steps MUST precede the service step.\n\
+         Frontend: src/api/ → src/components/ → App.tsx / main.tsx → tests/\n\
+           Each file MUST come after everything it imports.\n\
+           A component before its API client MUST NOT appear — it is a missing-import error.\n\
+         \n\
+         ### Scope\n\
+         Include ONLY files with logic for this story.\n\
+         MUST NOT include: README, HELP.md, .gitignore, CSS, tsconfig, vite.config, scaffolding artifacts.\n\
+         MUST NOT include event listeners or consumers unless the story explicitly requires consuming an event.\n\
+         No broker ADR → event type file only, no publisher infrastructure.\n\
+         If in doubt, leave it out.\n\
+         \n\
+         ### YAML Format\n\
+         ALL string values MUST use double quotes — id, service, file, operation, description.\n\
+         MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
+         description MUST name specific classes, fields, and annotations.\n",
         sname = service.name,
         story_id = story.id,
         as_a = story.as_a,
