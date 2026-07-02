@@ -1144,7 +1144,7 @@ fn node_express_skill() -> TechStackSkill {
 // assertion style for each technology. They are injected at three points:
 //   1. unit_test_stub_prompt  — drives TDD Red phase test generation
 //   2. fix_prompt             — guides the fix loop when repairing test files
-//   3. plan_prompt_for_service — tells the planner which test files to include
+//   3. plan discovery prompt    — tells the planner which test files to include
 //
 // Adding a new skill: write a const (or fn for dynamic content), add a match arm
 // in unit_testing_skill() / integration_testing_skill() / testing_skill_for_file().
@@ -2129,7 +2129,8 @@ fn plan_prompt_for_service(
     };
 
     format!(
-        "Generate implementation steps for service '{sname}' as part of story '{story_id}'.\n\
+        "Discover every file that must be created or modified to implement story '{story_id}' \
+         in service '{sname}'. Do NOT order them — just enumerate what is needed.\n\
          \n\
          Story: As a {as_a}, I want {want}, so that {so_that}.\n\
          \n\
@@ -2149,34 +2150,28 @@ fn plan_prompt_for_service(
          \n\
          steps:\n\
          - id: \"1\"\n\
-           service: {sname}\n\
-           file: <path/relative/to/project/root>\n\
-           operation: create\n\
-           description: <specific description of what this file contains>\n\
+           service: \"{sname}\"\n\
+           file: \"<path/relative/to/project/root>\"\n\
+           operation: \"create\"\n\
+           description: \"<what this file contains — name specific classes, fields, methods>\"\n\
          \n\
          ### Operations\n\
          MUST use operation: modify for every file in the existing list above; create for all others.\n\
          One step per file — no duplicates.\n\
          \n\
-         ### Step Ordering\n\
-         Backend:  build config → domain/event types → data layer → infrastructure (publisher) → service → route handler → middleware → entry point → tests\n\
-           When a broker ADR exists and the story publishes a domain event:\n\
-             event type and publisher steps MUST precede the service step.\n\
-         Frontend: src/api/ → src/components/ → App.tsx / main.tsx → tests/\n\
-           Each file MUST come after everything it imports.\n\
-           A component before its API client MUST NOT appear — it is a missing-import error.\n\
-         \n\
          ### Scope\n\
          Include ONLY files with logic for this story.\n\
          MUST NOT include: README, HELP.md, .gitignore, CSS, tsconfig, vite.config, scaffolding artifacts.\n\
          MUST NOT include event listeners or consumers unless the story explicitly requires consuming an event.\n\
+         Broker ADR present + story publishes a domain event → MUST include both the event type file (src/events/) AND the publisher utility (src/infrastructure/).\n\
          No broker ADR → event type file only, no publisher infrastructure.\n\
          If in doubt, leave it out.\n\
          \n\
          ### YAML Format\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
-         description MUST name specific classes, fields, and annotations.\n",
+         description MUST name specific classes, fields, and annotations.\n\
+         EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n",
         sname = service.name,
         story_id = story.id,
         as_a = story.as_a,
@@ -2192,6 +2187,71 @@ fn plan_prompt_for_service(
         adrs_summary = adrs_summary,
         existing_note = existing_note,
     )
+}
+
+fn ordering_prompt_for_service(steps: &[ImplementationStep], service_name: &str, tech: &str) -> String {
+    let t = tech.to_lowercase();
+    let is_front = t.contains("react") || t.contains("angular") || t.contains("vite") || t.contains("vue");
+    let is_node  = t.contains("node") || t.contains("express") || t.contains("nest");
+
+    let layer_rule = if is_front {
+        "Frontend — sort by import dependency:\n\
+         src/api/ (no local imports) → src/components/ (imports api/) → App.tsx / main.tsx → tests/\n\
+         A file must appear after every file it imports."
+    } else if is_node {
+        "Backend — sort by layer:\n\
+         build config → models → events → repositories → infrastructure → services → routes → middleware → app entry point → tests\n\
+         Event type and publisher files must precede the service file that publishes events."
+    } else {
+        "Backend — sort by layer:\n\
+         build config → domain → data layer → service → controller → tests\n\
+         Each file must appear after every file it depends on."
+    };
+
+    let file_list = steps.iter()
+        .map(|s| format!("  - \"{}\"", s.file))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "Order these implementation files for service '{service_name}' ({tech}).\n\
+         Each file must appear AFTER every file it imports or depends on.\n\
+         \n\
+         {layer_rule}\n\
+         \n\
+         Files to order (every file must appear exactly once):\n\
+         {file_list}\n\
+         \n\
+         Return ONLY valid YAML — no prose, no code fences.\n\
+         order:\n\
+         - \"<file-path>\"\n",
+        service_name = service_name,
+        tech = tech,
+        layer_rule = layer_rule,
+        file_list = file_list,
+    )
+}
+
+fn apply_ordering(raw: &str, mut steps: Vec<ImplementationStep>) -> Vec<ImplementationStep> {
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```yaml")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    #[derive(serde::Deserialize)]
+    struct OrderResponse { order: Vec<String> }
+    let Ok(parsed) = serde_yaml::from_str::<OrderResponse>(stripped) else {
+        return steps; // ordering failed — fall back to discovery order; code sort corrects it
+    };
+    let mut ordered: Vec<ImplementationStep> = Vec::with_capacity(steps.len());
+    for path in &parsed.order {
+        if let Some(pos) = steps.iter().position(|s| &s.file == path) {
+            ordered.push(steps.remove(pos));
+        }
+    }
+    ordered.extend(steps); // any file the LLM omitted goes at the end
+    ordered
 }
 
 /// Merge orphaned continuation lines back into the preceding quoted scalar.
@@ -2323,21 +2383,30 @@ pub fn generate_story_plan(
     for service in &active {
         let tech = service.technology.as_deref().unwrap_or("unknown");
         let arch_skills = skills_for_architecture(adrs, tech);
-        let prompt = plan_prompt_for_service(
+        // Phase 1: Discover what files are needed (no ordering pressure)
+        let disc_prompt = plan_prompt_for_service(
             service, story, spec, contract_yaml, adrs, existing_files, service_packages, &arch_skills,
         );
-        let raw = client.complete_large(&prompt)?;
-        let mut steps = parse_plan_steps(&raw)?;
+        let disc_raw = client.complete_large(&disc_prompt)?;
+        let mut steps = parse_plan_steps(&disc_raw)?;
         for step in &mut steps {
             step.service = service.name.clone();
-            // Normalise operation: any value that isn't exactly "modify" becomes "create"
             if step.operation.to_lowercase() != "modify" {
                 step.operation = "create".to_string();
             } else {
                 step.operation = "modify".to_string();
             }
         }
-        if service.component_type.as_deref() == Some("frontend") {
+
+        let is_front_svc = service.component_type.as_deref() == Some("frontend");
+
+        // Phase 2: Order by import dependency (small, focused prompt)
+        let order_prompt = ordering_prompt_for_service(&steps, &service.name, tech);
+        if let Ok(order_raw) = client.complete(&order_prompt) {
+            steps = apply_ordering(&order_raw, steps);
+        }
+
+        if is_front_svc {
             inject_missing_frontend_tests(&mut steps, &service.name);
         }
         all_steps.extend(steps);
