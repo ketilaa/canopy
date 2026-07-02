@@ -1801,12 +1801,19 @@ pub fn skills_for_architecture(adrs: &[Adr], tech: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
 
+    let t = tech.to_lowercase();
+    let is_frontend = t.contains("react") || t.contains("angular") || t.contains("vite") || t.contains("vue");
+
     let mut skills: Vec<ArchitectureSkill> = Vec::new();
-    if text.contains("domain-driven") || text.contains("domain driven") || text.contains("ddd") {
-        skills.push(ddd_skill_for_tech(tech));
-    }
-    if text.contains("event-driven") || text.contains("event driven") || text.contains("domain event") {
-        skills.push(event_orientation_skill_for_tech(tech));
+    // DDD and event orientation are backend concerns — frontends post to APIs, they do not own
+    // aggregates or publish domain events directly to a broker.
+    if !is_frontend {
+        if text.contains("domain-driven") || text.contains("domain driven") || text.contains("ddd") {
+            skills.push(ddd_skill_for_tech(tech));
+        }
+        if text.contains("event-driven") || text.contains("event driven") || text.contains("domain event") {
+            skills.push(event_orientation_skill_for_tech(tech));
+        }
     }
     if text.contains("microservice") {
         skills.push(microservices_skill());
