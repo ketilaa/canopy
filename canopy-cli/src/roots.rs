@@ -33,20 +33,6 @@ pub fn ensure_indexed() {
     let _ = std::process::Command::new("roots").arg("index").status();
 }
 
-/// Returns entity names (Class, Interface, Enum) from the Roots index.
-/// Returns None when no index exists or the index is empty.
-pub fn entity_vocabulary() -> Option<Vec<String>> {
-    let store = open_store()?;
-    let ws = workspace_id();
-    let symbols = store.dump_all(&ws).ok()?;
-    let names: Vec<String> = symbols
-        .into_iter()
-        .filter(|s| matches!(s.kind.as_str(), "class" | "interface" | "enum"))
-        .map(|s| s.name)
-        .collect();
-    if names.is_empty() { None } else { Some(names) }
-}
-
 /// Returns a feature context packet for the given goal, or None when no index exists.
 pub fn get_feature_context(goal: &str) -> Option<FeatureContextPacket> {
     let store = open_store()?;
