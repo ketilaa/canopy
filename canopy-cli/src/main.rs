@@ -1013,11 +1013,11 @@ fn run_fix_loop_inner(
             Err(e) => { eprintln!("  failed to run command: {e}"); return false; }
         };
 
-        let combined = format!(
+        let combined = strip_ansi(format!(
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        );
+        ));
 
         if output.status.success() {
             println!("  ✓ {}", service.name);
@@ -1491,6 +1491,24 @@ fn test_command_for_service(service: &ServiceEntry, service_dir: &str) -> String
         }
     }
     "npx tsc --noEmit".to_string()
+}
+
+/// Remove ANSI escape sequences from a string so error pattern matching works on raw text.
+fn strip_ansi(s: impl AsRef<str>) -> String {
+    let s = s.as_ref();
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next(); // consume '['
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() { break; }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
