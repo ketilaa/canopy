@@ -867,9 +867,14 @@ fn fix_yaml_colon_in_scalars(yaml: &str) -> String {
             let value = rest.trim_end();
             // type: [string] — LLM uses bracket notation for array types but YAML parses
             // it as an inline sequence. Quote any unquoted bracket-enclosed type annotation.
+            // Quote bracket-wrapped type annotations like `type: [string]` but NOT
+            // real YAML inline sequences like `depends_on: ["path/to/file.ts"]`.
+            // Real sequences contain quoted strings inside; type annotations do not.
+            let inner = &value[1..value.len()-1];
             if value.starts_with('[') && value.ends_with(']')
                 && !value.starts_with("[\n")
-                && !value[1..value.len()-1].contains(", ")
+                && !inner.contains('"')
+                && !inner.contains('\'')
             {
                 return format!("{}\"{}\"", key_part, value);
             }
