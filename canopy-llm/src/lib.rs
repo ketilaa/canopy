@@ -2128,6 +2128,14 @@ fn plan_prompt_for_service(
         )
     };
 
+    let event_scope_rule = if is_front {
+        "MUST NOT include event type files, publisher utilities, or any broker/Kafka/Redpanda infrastructure — this is a frontend service; it communicates via HTTP only.\n"
+    } else {
+        "MUST NOT include event listeners or consumers unless the story explicitly requires consuming an event.\n\
+         Broker ADR present + story publishes a domain event → MUST include both the event type file (src/events/) AND the publisher utility (src/infrastructure/).\n\
+         No broker ADR → event type file only, no publisher infrastructure.\n"
+    };
+
     format!(
         "Discover every file that must be created or modified to implement story '{story_id}' \
          in service '{sname}'. Do NOT order them — just enumerate what is needed.\n\
@@ -2154,6 +2162,8 @@ fn plan_prompt_for_service(
            file: \"<path/relative/to/project/root>\"\n\
            operation: \"create\"\n\
            description: \"<what this file contains — name specific classes, fields, methods>\"\n\
+           depends_on:\n\
+           - \"<file this step imports — omit if none>\"\n\
          \n\
          ### Operations\n\
          MUST use operation: modify for every file in the existing list above; create for all others.\n\
@@ -2162,16 +2172,15 @@ fn plan_prompt_for_service(
          ### Scope\n\
          Include ONLY files with logic for this story.\n\
          MUST NOT include: README, HELP.md, .gitignore, CSS, tsconfig, vite.config, scaffolding artifacts.\n\
-         MUST NOT include event listeners or consumers unless the story explicitly requires consuming an event.\n\
-         Broker ADR present + story publishes a domain event → MUST include both the event type file (src/events/) AND the publisher utility (src/infrastructure/).\n\
-         No broker ADR → event type file only, no publisher infrastructure.\n\
+         {event_scope_rule}\
          If in doubt, leave it out.\n\
          \n\
          ### YAML Format\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
          description MUST name specific classes, fields, and annotations.\n\
-         EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n",
+         EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n\
+         depends_on: list every file this step directly imports; empty list [] if none.\n",
         sname = service.name,
         story_id = story.id,
         as_a = story.as_a,
@@ -2186,6 +2195,7 @@ fn plan_prompt_for_service(
         contract_yaml = contract_yaml,
         adrs_summary = adrs_summary,
         existing_note = existing_note,
+        event_scope_rule = event_scope_rule,
     )
 }
 
@@ -2358,6 +2368,7 @@ fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, service_na
                 file: test_path,
                 operation: "create".to_string(),
                 description: format!("Unit tests for {}", component_name),
+                depends_on: vec![f.clone()],
                 status: StepStatus::Pending,
             });
         }

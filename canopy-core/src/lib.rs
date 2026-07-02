@@ -294,8 +294,36 @@ pub struct ImplementationStep {
     pub file: String,
     pub operation: String,
     pub description: String,
+    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
+    pub depends_on: Vec<String>,
     #[serde(default)]
     pub status: StepStatus,
+}
+
+fn deserialize_string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Vec<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a sequence or empty-list string")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Vec<String>, E> {
+            let t = v.trim();
+            if t == "[]" || t.is_empty() { Ok(vec![]) } else { Ok(vec![t.to_string()]) }
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
+            let mut out = Vec::new();
+            while let Some(s) = seq.next_element()? { out.push(s); }
+            Ok(out)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Vec<String>, E> { Ok(vec![]) }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Vec<String>, E> { Ok(vec![]) }
+    }
+    deserializer.deserialize_any(V)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
