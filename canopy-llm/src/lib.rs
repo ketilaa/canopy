@@ -2016,15 +2016,20 @@ fn plan_prompt_for_service(
     let tech = service.technology.as_deref().unwrap_or("unknown");
     let is_front = service.component_type.as_deref() == Some("frontend");
 
+    let is_jvm_tech = tech.contains("spring") || tech.contains("java") || tech.contains("kotlin")
+        || tech.contains("quarkus") || tech.contains("micronaut");
     let (pkg, pkg_path) = if is_front {
         (String::new(), String::new())
     } else if let Some(detected) = service_packages.get(&service.name) {
         (detected.clone(), detected.replace('.', "/"))
-    } else {
-        // Scaffold not found — fall back to Spring Initializr convention (hyphen → underscore)
+    } else if is_jvm_tech {
+        // JVM service without a detected scaffold — fall back to Spring Initializr convention
         let p = service.name.replace('-', "_");
         eprintln!("Warning: no scaffolded package detected for '{}'; using fallback '{}'", service.name, p);
         (p.clone(), p.replace('.', "/"))
+    } else {
+        // Non-JVM services don't have a Java package — pkg is unused by their skill
+        (String::new(), String::new())
     };
 
     let skill = skill_for_technology(tech, &pkg, &pkg_path, &service.name);
