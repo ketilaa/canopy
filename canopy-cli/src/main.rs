@@ -1659,6 +1659,7 @@ fn parse_ts_imports(content: &str, file_path: &str, service_dir: &str) -> Vec<St
             format!("{}/index.ts", base),
             format!("{}/index.tsx",base),
         ] {
+            if candidate == &file_rel { continue; } // skip self-imports
             if std::path::Path::new(&format!("{}/{}", service_dir, candidate)).exists() {
                 if !result.contains(candidate) {
                     result.push(candidate.clone());
