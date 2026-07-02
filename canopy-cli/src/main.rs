@@ -1020,7 +1020,6 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
         .context("no services.yaml — run `canopy spec` first")?;
 
     let adrs = load_all_adrs().unwrap_or_default();
-    let arch_skills = skills_for_architecture(&adrs);
 
     // Detect the actual base package per JVM service from the scaffolded *Application.java.
     // This adapts to whatever naming convention the scaffold tool used (Spring Initializr
@@ -1103,6 +1102,8 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
         let step_service_name = step.service.rsplit('/').next().unwrap_or(&step.service).to_string();
         let step_service = services.services.iter()
             .find(|s| s.name == step_service_name || s.name == step.service);
+        let step_tech = step_service.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+        let arch_skills = skills_for_architecture(&adrs, step_tech);
         let step_service_dir = match step_service.and_then(|s| s.component_type.as_deref()) {
             Some("frontend") => format!("frontend/{}", step_service_name),
             _ => format!("services/{}", step_service_name),
@@ -1254,6 +1255,8 @@ fn cmd_implement(story_id: &str, debug: bool) -> Result<()> {
             let _ = std::process::Command::new("npm").arg("install").current_dir(&service_dir).status();
         }
 
+        let svc_tech = service.technology.as_deref().unwrap_or("unknown");
+        let arch_skills = skills_for_architecture(&adrs, svc_tech);
         let test_cmd = test_command_for_service(service, &service_dir);
         let service_source_files = scan_service_source_files(&service_dir);
         println!("\nFinal validation: {} (in {})", test_cmd, service_dir);

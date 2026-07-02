@@ -1652,37 +1652,72 @@ fn ddd_skill() -> ArchitectureSkill {
     }
 }
 
-fn event_orientation_skill() -> ArchitectureSkill {
-    ArchitectureSkill {
-        name: "Event Orientation".to_string(),
-        vocabulary:
-            "  Domain event: a fact that happened — immutable, past tense, e.g. ProductRegistered.\n\
-             Event publisher: the service layer that emits events after successful persistence.\n\
-             Event listener: a separate class that reacts to one event; one concern per listener.\n\
-             Transactional boundary: the unit-of-work that must complete before an event is visible."
-            .to_string(),
-        structural_rules:
-            "  Name events in past tense using domain language: ProductRegistered, OrderPlaced.\n\
-             Define event classes in the domain layer alongside the aggregate they describe.\n\
-             Publish events from the service layer after the aggregate is persisted — never before.\n\
-             Use @TransactionalEventListener(phase = AFTER_COMMIT) so listeners fire only on\n\
-             successful commit; this prevents phantom events from rolled-back transactions.\n\
-             Event payload: include the aggregate ID always; carry only what consumers need —\n\
-             do not copy the full aggregate state.\n\
-             One listener class per consuming concern; listeners must not call back into the\n\
-             publishing service (no circular event chains)."
-            .to_string(),
-        anti_patterns:
-            "  Never publish events before the database write commits — a rollback after publish\n\
-             creates phantom events that consumers act on against data that was never saved.\n\
-             Never use events for synchronous responses — if the caller needs a return value,\n\
-             use a direct service call, not an event.\n\
-             Never import ApplicationEventPublisher into the domain model — it is infrastructure;\n\
-             the domain emits events as return values or via a domain service; the application\n\
-             service calls the publisher.\n\
-             ApplicationEventPublisher is included via spring-boot-starter — no extra Maven\n\
-             dependency is needed or should be added."
-            .to_string(),
+fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
+    let t = tech.to_lowercase();
+    let is_node = t.contains("node") || t.contains("express") || t.contains("nest");
+
+    if is_node {
+        ArchitectureSkill {
+            name: "Event Orientation (Node.js / Kafka)".to_string(),
+            vocabulary:
+                "  Domain event: a fact that happened — immutable, past tense, e.g. ProductCreated.\n\
+                 Event type file: TypeScript interface in src/events/ describing the message payload.\n\
+                 Publisher utility: thin module in src/infrastructure/ that wraps the Kafka/Redpanda\n\
+                 client and exposes a typed publish(topic, event) function.\n\
+                 Transactional boundary: persist first; publish only after the database write succeeds."
+                .to_string(),
+            structural_rules:
+                "  Name events in past tense using domain language: ProductCreated, OrderPlaced.\n\
+                 Step ordering when a story publishes a domain event — MANDATORY:\n\
+                   1. Event type file: src/events/<EventName>.ts (TypeScript interface)\n\
+                   2. Publisher utility: src/infrastructure/EventPublisher.ts (wraps Kafka client)\n\
+                   3. Service file: imports both event type and publisher\n\
+                   The service step MUST come after the event type and publisher steps.\n\
+                 Topic name: use the value from the Topic Naming Convention ADR (e.g. product-events).\n\
+                 Event payload: include the aggregate ID; carry only what consumers need.\n\
+                 Add the Kafka client dependency (kafkajs) to package.json in step 1 if not already present."
+                .to_string(),
+            anti_patterns:
+                "  Never publish before the database write completes.\n\
+                 Never import the Kafka client directly into the service — always through the publisher utility.\n\
+                 Never plan an event consumer/listener unless the story explicitly requires consuming an event.\n\
+                 Never omit the event type file when the service publishes an event — the type must be defined\n\
+                 before the service that uses it."
+                .to_string(),
+        }
+    } else {
+        // Spring / JVM variant
+        ArchitectureSkill {
+            name: "Event Orientation".to_string(),
+            vocabulary:
+                "  Domain event: a fact that happened — immutable, past tense, e.g. ProductRegistered.\n\
+                 Event publisher: the service layer that emits events after successful persistence.\n\
+                 Event listener: a separate class that reacts to one event; one concern per listener.\n\
+                 Transactional boundary: the unit-of-work that must complete before an event is visible."
+                .to_string(),
+            structural_rules:
+                "  Name events in past tense using domain language: ProductRegistered, OrderPlaced.\n\
+                 Define event classes in the domain layer alongside the aggregate they describe.\n\
+                 Publish events from the service layer after the aggregate is persisted — never before.\n\
+                 Use @TransactionalEventListener(phase = AFTER_COMMIT) so listeners fire only on\n\
+                 successful commit; this prevents phantom events from rolled-back transactions.\n\
+                 Event payload: include the aggregate ID always; carry only what consumers need —\n\
+                 do not copy the full aggregate state.\n\
+                 One listener class per consuming concern; listeners must not call back into the\n\
+                 publishing service (no circular event chains)."
+                .to_string(),
+            anti_patterns:
+                "  Never publish events before the database write commits — a rollback after publish\n\
+                 creates phantom events that consumers act on against data that was never saved.\n\
+                 Never use events for synchronous responses — if the caller needs a return value,\n\
+                 use a direct service call, not an event.\n\
+                 Never import ApplicationEventPublisher into the domain model — it is infrastructure;\n\
+                 the domain emits events as return values or via a domain service; the application\n\
+                 service calls the publisher.\n\
+                 ApplicationEventPublisher is included via spring-boot-starter — no extra Maven\n\
+                 dependency is needed or should be added."
+                .to_string(),
+        }
     }
 }
 
@@ -1720,7 +1755,7 @@ fn microservices_skill() -> ArchitectureSkill {
 /// Derive active architecture skills from the project's ADR decisions.
 /// Scans each ADR for keywords and maps them to the corresponding skill.
 /// Returns the rendered skills joined as a single string for prompt injection.
-pub fn skills_for_architecture(adrs: &[Adr]) -> String {
+pub fn skills_for_architecture(adrs: &[Adr], tech: &str) -> String {
     let text: String = adrs.iter()
         .map(|a| format!("{} {}", a.title, a.decision).to_lowercase())
         .collect::<Vec<_>>()
@@ -1731,7 +1766,7 @@ pub fn skills_for_architecture(adrs: &[Adr]) -> String {
         skills.push(ddd_skill());
     }
     if text.contains("event-driven") || text.contains("event driven") || text.contains("domain event") {
-        skills.push(event_orientation_skill());
+        skills.push(event_orientation_skill_for_tech(tech));
     }
     if text.contains("microservice") {
         skills.push(microservices_skill());
@@ -2082,10 +2117,13 @@ fn plan_prompt_for_service(
          Rules:\n\
          - `operation` is create for new files, modify for files in the existing list above\n\
          - One step per file — no duplicates\n\
-         - Order for backend: build config → domain → data layer → service → controller → tests\n\
-         - Order for frontend (STRICT): API client (src/api/) MUST come before components that import it;\n\
-           then components (src/components/); then App wiring (App.tsx / main.tsx); then tests LAST.\n\
-           Reason: each file imports from the previous; generate in dependency order so types are available.\n\
+         - Order for backend: build config → domain/event types → data layer → infrastructure (publisher) → service → route handler → middleware → entry point → tests\n\
+         - Order for frontend — steps MUST fall in this exact sequence (no exceptions):\n\
+             Position 1: API client files (src/api/*.ts) — ALWAYS first; components import from here\n\
+             Position 2: Component files (src/components/*.tsx)\n\
+             Position 3: App wiring files (App.tsx, main.tsx)\n\
+             Position 4: Test files (*.test.tsx, *.test.ts) — ALWAYS last\n\
+           A component file appearing before its API client file is an error.\n\
          - description must name the specific classes, fields, and annotations\n\
          - ALL string values must be quoted with double quotes — every id, service, file, operation, and description\n\
          - Never use block scalars (>- or |) — always use a single quoted string on one line\n\
@@ -2094,8 +2132,12 @@ fn plan_prompt_for_service(
            scaffolding artifacts, or any file that does not contain logic for this story.\n\
            Do NOT include event listeners, consumers, or subscribers unless the story explicitly requires\n\
            consuming a domain event — publishing and consuming are separate stories.\n\
-           If no event broker appears in the architecture decisions, do not plan publisher infrastructure;\n\
-           limit event handling to defining the event type only.\n\
+           Event publishing — when an event broker ADR exists and the story publishes a domain event:\n\
+             (a) Plan a step for the event type file (e.g. src/events/ProductCreated.ts) BEFORE the service step\n\
+             (b) Plan a step for the publisher utility (e.g. src/infrastructure/EventPublisher.ts) BEFORE the service step\n\
+             (c) The service step imports from both; it MUST appear after both (a) and (b)\n\
+             (d) Include the Kafka/broker client dependency in the package.json step if not already present\n\
+           When no event broker ADR exists, limit event handling to the event type file only.\n\
            If in doubt, leave it out.\n",
         sname = service.name,
         story_id = story.id,
@@ -2190,10 +2232,10 @@ pub fn generate_story_plan(
         .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
         .collect();
 
-    let arch_skills = skills_for_architecture(adrs);
-
     let mut all_steps: Vec<ImplementationStep> = Vec::new();
     for service in &active {
+        let tech = service.technology.as_deref().unwrap_or("unknown");
+        let arch_skills = skills_for_architecture(adrs, tech);
         let prompt = plan_prompt_for_service(
             service, story, spec, contract_yaml, adrs, existing_files, service_packages, &arch_skills,
         );
