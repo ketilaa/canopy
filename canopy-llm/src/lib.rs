@@ -2113,10 +2113,12 @@ fn plan_prompt_for_service(
     } else if is_react {
         format!(
             "\nTesting plan rules:\n\
-             - One test file per component and per API module — mandatory, never omit.\n\
-             - Flat tests/ directory only — never tests/unit/ or tests/integration/.\n\
+             - For EVERY src/api/*.ts file in the plan, you MUST add a corresponding tests/<Name>.test.ts step.\n\
+             - For EVERY src/components/*.tsx file in the plan, you MUST add a corresponding tests/<Name>.test.tsx step.\n\
+             - The plan is INCOMPLETE if any src/api/ or src/components/ file has no test step.\n\
+             - Flat tests/ directory only — never tests/unit/, tests/api/, or tests/integration/.\n\
              - Only libraries from the testing strategy ADR; no msw, Playwright, or Cypress.\n\
-             - Test files are the LAST steps.\n"
+             - Test steps MUST be the last steps in the list.\n"
         )
     } else {
         let it_skill = integration_testing_skill(tech);
@@ -2180,7 +2182,7 @@ fn plan_prompt_for_service(
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
          description MUST name specific classes, fields, and annotations.\n\
          EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n\
-         depends_on: list every file this step directly imports; empty list [] if none.\n",
+         depends_on: YAML sequence — NEVER wrap in quotes; use [] for none or a proper list.\n",
         sname = service.name,
         story_id = story.id,
         as_a = story.as_a,
@@ -2299,6 +2301,25 @@ fn fix_broken_quoted_continuations(yaml: &str) -> String {
     result.join("\n")
 }
 
+// The model sometimes wraps a JSON-style array in double-quotes:
+//   depends_on: "["a", "b"]"  →  depends_on: ["a", "b"]
+// Strip the outer quotes so serde_yaml sees a valid inline sequence.
+fn fix_quoted_depends_on(raw: &str) -> String {
+    raw.lines().map(|line| {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("depends_on:") { return line.to_string(); }
+        let value = trimmed["depends_on:".len()..].trim();
+        if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+            let inner = &value[1..value.len() - 1];
+            if inner.starts_with('[') {
+                let indent = &line[..line.len() - trimmed.len()];
+                return format!("{}depends_on: {}", indent, inner);
+            }
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
+}
+
 fn parse_plan_steps(raw: &str) -> Result<Vec<ImplementationStep>, LlmError> {
     let stripped = raw
         .trim()
@@ -2306,7 +2327,7 @@ fn parse_plan_steps(raw: &str) -> Result<Vec<ImplementationStep>, LlmError> {
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    let fixed = dedup_yaml_keys(&fix_yaml_colon_in_scalars(&fix_yaml_list_indentation(&fix_broken_quoted_continuations(stripped))));
+    let fixed = dedup_yaml_keys(&fix_yaml_colon_in_scalars(&fix_yaml_list_indentation(&fix_broken_quoted_continuations(&fix_quoted_depends_on(stripped)))));
     #[derive(serde::Deserialize)]
     struct PlanResponse { steps: Vec<ImplementationStep> }
     let parsed: PlanResponse = serde_yaml::from_str(&fixed)
