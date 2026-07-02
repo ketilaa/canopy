@@ -1707,15 +1707,11 @@ fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
                  Transactional boundary: persist first; publish only after the database write succeeds."
                 .to_string(),
             structural_rules:
-                "  Name events in past tense using domain language: ProductCreated, OrderPlaced.\n\
-                 Step ordering when a story publishes a domain event — MANDATORY:\n\
-                   1. Event type file: src/events/<EventName>.ts (TypeScript interface)\n\
-                   2. Publisher utility: src/infrastructure/EventPublisher.ts (wraps Kafka client)\n\
-                   3. Service file: imports both event type and publisher\n\
-                   The service step MUST come after the event type and publisher steps.\n\
-                 Topic name: use the value from the Topic Naming Convention ADR (e.g. product-events).\n\
-                 Event payload: include the aggregate ID; carry only what consumers need.\n\
-                 Add the Kafka client dependency (kafkajs) to the package.json step if not already present."
+                "  Name events in past tense: ProductCreated, OrderPlaced.\n\
+                 Event type (src/events/) and publisher (src/infrastructure/) must precede the service step — follow the tech skill layer order.\n\
+                 Topic: use the Topic Naming Convention ADR value (e.g. product-events).\n\
+                 Payload: include the aggregate ID; carry only what consumers need.\n\
+                 Add kafkajs to the package.json step if not already listed."
                 .to_string(),
             anti_patterns:
                 "  Never publish before the database write completes.\n\
@@ -2119,11 +2115,10 @@ fn plan_prompt_for_service(
     } else if is_react {
         format!(
             "\nTesting plan rules:\n\
-             - Include one unit test file (*.test.tsx / *.test.ts) per component and per API module.\n\
-             - Test files go in a FLAT tests/ directory — never in tests/unit/ or tests/integration/ subdirectories.\n\
-             - ONLY use libraries from the decided testing strategy ADR.\n\
-               Do NOT introduce msw, Playwright, Cypress, or any library not named in the ADR.\n\
-             - Test files are the LAST step(s) in the plan.\n"
+             - One test file per component and per API module — mandatory, never omit.\n\
+             - Flat tests/ directory only — never tests/unit/ or tests/integration/.\n\
+             - Only libraries from the testing strategy ADR; no msw, Playwright, or Cypress.\n\
+             - Test files are the LAST steps.\n"
         )
     } else {
         let it_skill = integration_testing_skill(tech);
@@ -2165,26 +2160,19 @@ fn plan_prompt_for_service(
          - `operation` is create for new files, modify for files in the existing list above\n\
          - One step per file — no duplicates\n\
          - Order for backend: build config → domain/event types → data layer → infrastructure (publisher) → service → route handler → middleware → entry point → tests\n\
-         - Order for frontend — steps MUST fall in this exact sequence (no exceptions):\n\
-             Position 1: API client files (src/api/*.ts) — ALWAYS first; components import from here\n\
-             Position 2: Component files (src/components/*.tsx)\n\
-             Position 3: App wiring files (App.tsx, main.tsx)\n\
-             Position 4: Test files (*.test.tsx, *.test.ts) — ALWAYS last\n\
-           A component file appearing before its API client file is an error.\n\
+         - Frontend order — generate in import-dependency order (each file after everything it imports):\n\
+           src/api/ has no local imports → first; src/components/ imports src/api/ → second;\n\
+           App.tsx imports components → third; tests/ → last.\n\
+           A component step before its API client is a missing-import error.\n\
          - description must name the specific classes, fields, and annotations\n\
          - ALL string values must be quoted with double quotes — every id, service, file, operation, and description\n\
          - Never use block scalars (>- or |) — always use a single quoted string on one line\n\
          - STRICT SCOPE: only include files that are directly required to implement this story.\n\
            Do NOT include: README, HELP.md, .gitignore, CSS files, config files (tsconfig, vite.config),\n\
            scaffolding artifacts, or any file that does not contain logic for this story.\n\
-           Do NOT include event listeners, consumers, or subscribers unless the story explicitly requires\n\
-           consuming a domain event — publishing and consuming are separate stories.\n\
-           Event publishing — when an event broker ADR exists and the story publishes a domain event:\n\
-             (a) Plan a step for the event type file (e.g. src/events/ProductCreated.ts) BEFORE the service step\n\
-             (b) Plan a step for the publisher utility (e.g. src/infrastructure/EventPublisher.ts) BEFORE the service step\n\
-             (c) The service step imports from both; it MUST appear after both (a) and (b)\n\
-             (d) Include the Kafka/broker client dependency in the package.json step if not already present\n\
-           When no event broker ADR exists, limit event handling to the event type file only.\n\
+           No event listeners or consumers unless the story explicitly requires consuming an event.\n\
+           When an event broker ADR exists and the story publishes a domain event: follow the backend\n\
+           ordering above (event type and publisher steps precede the service step); no broker → event type only.\n\
            If in doubt, leave it out.\n",
         sname = service.name,
         story_id = story.id,
