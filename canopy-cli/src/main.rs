@@ -1092,14 +1092,19 @@ fn run_fix_loop_inner(
 
             let referenced: Vec<(String, String)> =
                 if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
-                    service_source_files.iter()
-                        .filter(|f| f.ends_with(".ts") || f.ends_with(".tsx"))
-                        .filter_map(|rel| {
-                            let full = format!("{service_dir}/{rel}");
-                            if full == *file_path { return None; }
-                            std::fs::read_to_string(&full).ok().map(|c| (rel.clone(), c))
-                        })
-                        .collect()
+                    let imports = parse_ts_imports(&content, file_path, service_dir);
+                    if let Some(surface) = roots::get_ts_module_surface(&imports, service_dir) {
+                        vec![("module-surface (roots index)".to_string(), surface)]
+                    } else {
+                        // Roots not available or files not yet indexed — read the imported files.
+                        imports.iter()
+                            .filter_map(|rel| {
+                                std::fs::read_to_string(format!("{service_dir}/{rel}"))
+                                    .ok()
+                                    .map(|c| (rel.clone(), c))
+                            })
+                            .collect()
+                    }
                 } else if file_path.ends_with(".java") {
                     let imported: Vec<&str> = content.lines()
                         .filter(|l| l.starts_with("import ") && !l.contains('*'))
@@ -1596,6 +1601,74 @@ fn extract_missing_packages(output: &str) -> Vec<String> {
         }
     }
     packages
+}
+
+/// Normalise a path by resolving `.` and `..` components without touching the filesystem.
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::ParentDir => { out.pop(); }
+            std::path::Component::CurDir    => {}
+            other                           => out.push(other),
+        }
+    }
+    out
+}
+
+/// Parse `import … from '…'` lines and return the service-relative paths of any
+/// local imports (i.e. those starting with `./` or `../`).
+///
+/// `file_path` is the project-relative path of the importing file (e.g.
+/// `frontend/admin-portal/src/api/ProductApi.ts`). `service_dir` is the service
+/// root (e.g. `frontend/admin-portal`). Returns paths like `src/components/ProductForm.tsx`.
+fn parse_ts_imports(content: &str, file_path: &str, service_dir: &str) -> Vec<String> {
+    let file_rel = std::path::Path::new(file_path)
+        .strip_prefix(service_dir)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| file_path.to_string());
+
+    let file_dir = std::path::Path::new(&file_rel)
+        .parent()
+        .unwrap_or(std::path::Path::new(""))
+        .to_path_buf();
+
+    let mut result: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("import ") && !trimmed.starts_with("export ") { continue; }
+
+        // Extract the module specifier from: … from 'path' or "path"
+        let module = if let Some(pos) = trimmed.rfind(" from ") {
+            let rest = trimmed[pos + 6..].trim().trim_end_matches(';');
+            rest.trim_matches('\'').trim_matches('"').to_string()
+        } else {
+            continue;
+        };
+
+        if !module.starts_with('.') { continue; } // skip node_modules
+
+        let resolved = normalize_path(&file_dir.join(&module));
+        let base = resolved.to_string_lossy();
+
+        // Try the common TypeScript module resolution order.
+        for candidate in &[
+            format!("{}.ts",       base),
+            format!("{}.tsx",      base),
+            format!("{}/index.ts", base),
+            format!("{}/index.tsx",base),
+        ] {
+            if std::path::Path::new(&format!("{}/{}", service_dir, candidate)).exists() {
+                if !result.contains(candidate) {
+                    result.push(candidate.clone());
+                }
+                break;
+            }
+        }
+    }
+
+    result
 }
 
 fn errors_for_file(output: &str, file_path: &str) -> String {

@@ -86,6 +86,64 @@ pub fn get_class_surface(class_names: &[&str], service_dir: &str) -> Option<Stri
     if surfaces.is_empty() { None } else { Some(surfaces.join("\n\n")) }
 }
 
+/// Returns a compact TypeScript export surface for the given service-relative file paths.
+///
+/// For each file the surface lists its exported interfaces, functions, and classes
+/// (with method signatures where available):
+///   // src/api/ProductApi.ts
+///   export interface Product
+///   export function registerProduct(productData: any)
+///
+/// Returns None when the index is unavailable or none of the files have indexed symbols
+/// (caller should fall back to reading the files directly).
+pub fn get_ts_module_surface(rel_paths: &[String], service_dir: &str) -> Option<String> {
+    if rel_paths.is_empty() { return None; }
+    let store = open_store()?;
+    let ws = workspace_id();
+    let mut parts: Vec<String> = Vec::new();
+
+    for rel in rel_paths {
+        let ws_path = format!("{}/{}", service_dir, rel);
+        let syms = store.query_file_symbols(&ws, &ws_path).unwrap_or_default();
+        if syms.is_empty() { continue; }
+
+        let mut lines = vec![format!("// {}", rel)];
+        for sym in syms.iter().filter(|s| s.kind != "method") {
+            match sym.kind.as_str() {
+                "interface" | "enum" => {
+                    lines.push(format!("export {} {}", sym.kind, sym.name));
+                }
+                "class" => {
+                    // Methods of this class have FQN: {file}#{ClassName}#{methodName}
+                    let class_prefix = format!("{}#{}", ws_path, sym.name);
+                    let methods: Vec<String> = syms.iter()
+                        .filter(|s| s.kind == "method" && s.fqn.starts_with(&class_prefix))
+                        .filter_map(|s| s.signature.as_deref()
+                            .map(|sig| format!("  {}{}", s.name, sig)))
+                        .collect();
+                    if methods.is_empty() {
+                        lines.push(format!("export class {}", sym.name));
+                    } else {
+                        lines.push(format!("export class {} {{", sym.name));
+                        lines.extend(methods);
+                        lines.push("}".to_string());
+                    }
+                }
+                "function" => {
+                    let sig = sym.signature.as_deref().unwrap_or("()");
+                    lines.push(format!("export function {}{}", sym.name, sig));
+                }
+                _ => {}
+            }
+        }
+        if lines.len() > 1 {
+            parts.push(lines.join("\n"));
+        }
+    }
+
+    if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+}
+
 /// Re-runs `roots index` if an index already exists. No-ops when Roots is not set up.
 /// Call after writing new source files to keep the index current.
 pub fn reindex() {
