@@ -55,6 +55,9 @@ pub struct Symbol {
     pub workspace_id: String,
     pub line:         u32,
     pub fqn:          String,
+    /// Parameter list for methods and constructors, e.g. `(UUID id, String name)`.
+    /// None for classes, interfaces, enums, and functions without known params.
+    pub signature:    Option<String>,
 }
 
 #[cfg(test)]
@@ -87,6 +90,7 @@ mod tests {
             workspace_id: "acme".into(),
             line:         10,
             fqn:          "com.example.orders.OrderService".into(),
+            signature:    None,
         };
         let json = serde_json::to_string(&sym).unwrap();
         assert!(json.contains("\"kind\":\"class\""));

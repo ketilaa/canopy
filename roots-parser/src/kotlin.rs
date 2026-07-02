@@ -94,6 +94,25 @@ impl KotlinExtractor {
     }
 }
 
+/// Walk up from the name node to find the enclosing function declaration
+/// and extract its `function_value_parameters` text.
+fn kt_extract_params<'a>(source: &str, name_node: Node<'a>) -> Option<String> {
+    let mut cur = name_node.parent();
+    while let Some(n) = cur {
+        if n.kind() == "function_declaration" {
+            for i in 0..n.child_count() {
+                if let Some(child) = n.child(i) {
+                    if child.kind() == "function_value_parameters" {
+                        return Some(source[child.byte_range()].to_string());
+                    }
+                }
+            }
+        }
+        cur = n.parent();
+    }
+    None
+}
+
 fn extract_kt_package(source: &str, tree: &Tree) -> String {
     let root = tree.root_node();
     for i in 0..root.child_count() {
@@ -195,6 +214,10 @@ impl LanguageExtractor for KotlinExtractor {
                     }
                     _ => kt_build_fqn(&name, &package),
                 };
+                let signature = match kind {
+                    SymbolKind::Function => kt_extract_params(source, node),
+                    _ => None,
+                };
                 symbols.push(Symbol {
                     name,
                     kind,
@@ -204,6 +227,7 @@ impl LanguageExtractor for KotlinExtractor {
                     workspace_id: workspace_id.to_string(),
                     line:         node.start_position().row as u32 + 1,
                     fqn,
+                    signature,
                 });
             }
         }

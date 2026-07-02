@@ -39,7 +39,9 @@ pub fn open_store() -> Result<Store, String> {
     let path = find_db().ok_or_else(|| {
         "no .roots/index.db found — run `roots init` first".to_string()
     })?;
-    Store::open(&path).map_err(|e| e.to_string())
+    let store = Store::open(&path).map_err(|e| e.to_string())?;
+    store.init_schema().map_err(|e| e.to_string())?;
+    Ok(store)
 }
 
 pub fn roots_dir_for_cwd() -> PathBuf {

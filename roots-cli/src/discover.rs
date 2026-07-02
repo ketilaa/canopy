@@ -74,29 +74,34 @@ pub fn discover_projects(root: &Path) -> Vec<Project> {
         candidates.push((dir, language));
     }
 
-    // Second pass: remove any candidate whose path is nested inside another candidate's path.
-    // Sort by path length ascending so shallower roots come first.
-    candidates.sort_by_key(|(d, _)| d.components().count());
+    // Second pass: when same-language projects are nested, prefer the deeper (more specific)
+    // one — the shallower one is a container (parent POM, monorepo root) not a real project.
+    // Projects of different languages are always kept; they partition different file types
+    // and do not conflict.
+    candidates.sort_by_key(|(d, _)| d.components().count()); // deterministic order
 
-    let mut kept: Vec<PathBuf> = Vec::new();
-    let mut projects = Vec::new();
-
-    for (dir, language) in candidates {
-        if kept.iter().any(|r| dir.starts_with(r)) {
-            continue;
-        }
-        let name = dir
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "root".to_string());
-        kept.push(dir.clone());
-        projects.push(Project {
-            name,
-            path:         dir.to_string_lossy().to_string(),
-            language,
-            workspace_id: String::new(),
-        });
-    }
+    let projects: Vec<Project> = candidates
+        .iter()
+        .filter(|(dir, lang)| {
+            // Drop a candidate when a same-language project is nested inside it.
+            let has_same_lang_child = candidates.iter().any(|(other, other_lang)| {
+                other != dir && other.starts_with(dir) && other_lang == lang
+            });
+            !has_same_lang_child
+        })
+        .map(|(dir, language)| {
+            let name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "root".to_string());
+            Project {
+                name,
+                path:         dir.to_string_lossy().to_string(),
+                language:     language.clone(),
+                workspace_id: String::new(),
+            }
+        })
+        .collect();
 
     projects
 }
@@ -225,14 +230,38 @@ mod tests {
     }
 
     #[test]
-    fn does_not_double_count_nested_gradle() {
+    fn prefers_nested_service_over_container_root() {
         let tmp = tmpdir();
         touch(tmp.path(), "monorepo/settings.gradle");
         touch(tmp.path(), "monorepo/service-a/build.gradle");
 
         let projects = discover_projects(tmp.path());
-        // settings.gradle is found first; service-a is inside monorepo root -> skip
+        // monorepo/ has a same-language Java child → dropped as container
+        // service-a/ has no Java child → kept as the real project
         assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "service-a");
+    }
+
+    #[test]
+    fn keeps_java_and_typescript_when_root_pom_present() {
+        let tmp = tmpdir();
+        // Root-level parent POM (common in Spring multi-module / accidental scaffold)
+        touch(tmp.path(), "app/pom.xml");
+        // Real Java service nested below
+        touch(tmp.path(), "app/services/product-service/pom.xml");
+        touch(tmp.path(), "app/services/product-service/src/Main.java");
+        // TypeScript frontend
+        touch(tmp.path(), "app/frontend/admin-portal/package.json");
+        touch(tmp.path(), "app/frontend/admin-portal/src/App.tsx");
+
+        let projects = discover_projects(tmp.path());
+        // app/ has a same-language Java child → dropped
+        // services/product-service/ has no Java child → kept
+        // frontend/admin-portal/ has no TypeScript child → kept
+        assert_eq!(projects.len(), 2);
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"product-service"), "missing product-service, got: {names:?}");
+        assert!(names.contains(&"admin-portal"), "missing admin-portal, got: {names:?}");
     }
 
     #[test]

@@ -84,6 +84,25 @@ impl JavaExtractor {
     }
 }
 
+/// Walk up from a name node to find the enclosing constructor or method declaration,
+/// then extract the text of its `formal_parameters` child.
+fn extract_params<'a>(source: &str, name_node: Node<'a>) -> Option<String> {
+    let mut cur = name_node.parent();
+    while let Some(n) = cur {
+        if matches!(n.kind(), "constructor_declaration" | "method_declaration") {
+            for i in 0..n.child_count() {
+                if let Some(child) = n.child(i) {
+                    if child.kind() == "formal_parameters" {
+                        return Some(source[child.byte_range()].to_string());
+                    }
+                }
+            }
+        }
+        cur = n.parent();
+    }
+    None
+}
+
 fn extract_package(source: &str, tree: &Tree) -> String {
     let root = tree.root_node();
     for i in 0..root.child_count() {
@@ -183,6 +202,10 @@ impl LanguageExtractor for JavaExtractor {
                     }
                     _ => build_class_fqn(&name, &package),
                 };
+                let signature = match kind {
+                    SymbolKind::Method => extract_params(source, node),
+                    _ => None,
+                };
                 symbols.push(Symbol {
                     name,
                     kind,
@@ -192,6 +215,7 @@ impl LanguageExtractor for JavaExtractor {
                     workspace_id: workspace_id.to_string(),
                     line:         node.start_position().row as u32 + 1,
                     fqn,
+                    signature,
                 });
             }
         }

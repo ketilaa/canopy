@@ -11,6 +11,16 @@ const TS_SYMBOL_QUERY: &str = r#"
 (enum_declaration      name: (identifier)          @name) @enum
 (function_declaration  name: (identifier)          @name) @function
 (method_definition     name: (property_identifier) @name) @method
+
+(lexical_declaration
+  (variable_declarator
+    name: (identifier) @name
+    value: [(arrow_function) (function_expression)])) @arrow_var
+
+(variable_declaration
+  (variable_declarator
+    name: (identifier) @name
+    value: [(arrow_function) (function_expression)])) @arrow_var
 "#;
 
 const TS_REL_QUERY: &str = r#"
@@ -51,6 +61,7 @@ struct TsExtractorInner {
     cap_enum:      u32,
     cap_function:  u32,
     cap_method:    u32,
+    cap_arrow_var: u32,
     // relationship captures
     rel_cap_named_import:  u32,
     rel_cap_default_import: u32,
@@ -74,6 +85,7 @@ impl TsExtractorInner {
         let cap_enum      = sym_query.capture_index_for_name("enum").unwrap();
         let cap_function  = sym_query.capture_index_for_name("function").unwrap();
         let cap_method    = sym_query.capture_index_for_name("method").unwrap();
+        let cap_arrow_var = sym_query.capture_index_for_name("arrow_var").unwrap();
 
         let rel_query = Query::new(&ts_language, TS_REL_QUERY)
             .map_err(|e| ParseError::QueryCompile(format!("ts rel query: {e}")))?;
@@ -90,7 +102,7 @@ impl TsExtractorInner {
 
         Ok(Self {
             ts_language, sym_query, rel_query,
-            cap_name, cap_class, cap_interface, cap_enum, cap_function, cap_method,
+            cap_name, cap_class, cap_interface, cap_enum, cap_function, cap_method, cap_arrow_var,
             rel_cap_named_import, rel_cap_default_import,
             rel_cap_extends_class, rel_cap_extends_name,
             rel_cap_impl_class, rel_cap_impl_name,
@@ -123,6 +135,8 @@ impl TsExtractorInner {
                 SymbolKind::Function
             } else if m.captures.iter().any(|c| c.index == self.cap_method) {
                 SymbolKind::Method
+            } else if m.captures.iter().any(|c| c.index == self.cap_arrow_var) {
+                SymbolKind::Function
             } else {
                 continue;
             };
@@ -131,6 +145,10 @@ impl TsExtractorInner {
                 let node = name_cap.node;
                 let name = source[node.byte_range()].to_string();
                 let fqn = ts_symbol_fqn(source, node, relative_path, &name, kind == SymbolKind::Method);
+                let signature = match kind {
+                    SymbolKind::Function | SymbolKind::Method => ts_extract_params(source, node),
+                    _ => None,
+                };
                 symbols.push(Symbol {
                     name,
                     kind,
@@ -140,6 +158,7 @@ impl TsExtractorInner {
                     workspace_id: workspace_id.to_string(),
                     line:         node.start_position().row as u32 + 1,
                     fqn,
+                    signature,
                 });
             }
         }
@@ -250,6 +269,25 @@ impl TsExtractorInner {
     }
 }
 
+/// Walk up from the name node to find the enclosing function/method/arrow declaration
+/// and extract its `formal_parameters` text.
+fn ts_extract_params<'a>(source: &str, name_node: Node<'a>) -> Option<String> {
+    let mut cur = name_node.parent();
+    while let Some(n) = cur {
+        if matches!(n.kind(), "function_declaration" | "method_definition" | "arrow_function" | "function_expression") {
+            for i in 0..n.child_count() {
+                if let Some(child) = n.child(i) {
+                    if child.kind() == "formal_parameters" {
+                        return Some(source[child.byte_range()].to_string());
+                    }
+                }
+            }
+        }
+        cur = n.parent();
+    }
+    None
+}
+
 fn ts_symbol_fqn(source: &str, node: Node, relative_path: &str, name: &str, is_method: bool) -> String {
     if is_method {
         // Walk up to find class
@@ -324,5 +362,68 @@ impl LanguageExtractor for TypeScriptExtractor {
         } else {
             self.ts.extract_all(source, relative_path, project, workspace_id, Language::TypeScript)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extractor::LanguageExtractor;
+
+    fn extractor() -> TypeScriptExtractor {
+        TypeScriptExtractor::new().expect("extractor init")
+    }
+
+    #[test]
+    fn extracts_arrow_function_component() {
+        let source = r#"
+import React, { useState } from 'react';
+
+interface ProductFormProps {
+  onSubmit: (data: any) => void;
+}
+
+const ProductForm: React.FC<ProductFormProps> = ({ onSubmit }) => {
+  const [name, setName] = useState('');
+  return <form />;
+};
+
+export default ProductForm;
+"#;
+        let out = extractor().extract(source, "src/components/ProductForm.tsx", "project", "ws")
+            .expect("parse ok");
+        let names: Vec<&str> = out.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"ProductForm"), "should extract arrow component: got {names:?}");
+        let sym = out.symbols.iter().find(|s| s.name == "ProductForm").unwrap();
+        assert_eq!(sym.kind, SymbolKind::Function);
+    }
+
+    #[test]
+    fn extracts_plain_arrow_function() {
+        let source = r#"
+export const registerProduct = async (data: any): Promise<void> => {
+  await fetch('/products', { method: 'POST', body: JSON.stringify(data) });
+};
+"#;
+        let out = extractor().extract(source, "src/api/ProductApi.ts", "project", "ws")
+            .expect("parse ok");
+        let names: Vec<&str> = out.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"registerProduct"), "should extract arrow fn: got {names:?}");
+    }
+
+    #[test]
+    fn still_extracts_interface() {
+        let source = r#"
+interface ProductFormProps {
+  onSubmit: (data: any) => void;
+  errorMessages: Record<string, string>;
+}
+"#;
+        let out = extractor().extract(source, "src/types.ts", "project", "ws")
+            .expect("parse ok");
+        let names: Vec<&str> = out.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"ProductFormProps"), "should extract interface: got {names:?}");
+        let sym = out.symbols.iter().find(|s| s.name == "ProductFormProps").unwrap();
+        assert_eq!(sym.kind, SymbolKind::Interface);
     }
 }

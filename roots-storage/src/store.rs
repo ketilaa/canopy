@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use roots_core::{Language, Relationship, Symbol};
 
 use crate::error::StorageError;
-use crate::schema::{CREATE_TABLES_V3, MIGRATE_V2_TO_V3};
+use crate::schema::{CREATE_TABLES_V3, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4_DATA, MIGRATE_V3_TO_V4_SCHEMA};
 
 pub struct Store {
     conn: Connection,
@@ -28,6 +28,7 @@ pub struct SymbolRow {
     pub workspace_id: String,
     pub line:         u32,
     pub fqn:          String,
+    pub signature:    Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,8 +71,13 @@ impl Store {
 
     pub fn init_schema(&self) -> Result<(), StorageError> {
         self.conn.execute_batch(CREATE_TABLES_V3)?;
-        // Best-effort migration for databases created before V3.
+        // Best-effort migrations for older databases.
         let _ = self.conn.execute_batch(MIGRATE_V2_TO_V3);
+        // V3→V4: if the ALTER TABLE succeeds (column was genuinely new), also reset
+        // file timestamps so the next index run re-parses all files for signatures.
+        if self.conn.execute_batch(MIGRATE_V3_TO_V4_SCHEMA).is_ok() {
+            let _ = self.conn.execute_batch(MIGRATE_V3_TO_V4_DATA);
+        }
         Ok(())
     }
 
@@ -171,14 +177,15 @@ impl Store {
         symbols: &[Symbol],
     ) -> Result<(), StorageError> {
         let mut stmt = self.conn.prepare_cached(
-            "INSERT INTO symbols (workspace_id, project_id, file_id, name, kind, line, fqn)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO symbols (workspace_id, project_id, file_id, name, kind, line, fqn, signature)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(workspace_id, fqn) DO UPDATE SET
                  project_id = excluded.project_id,
                  file_id    = excluded.file_id,
                  name       = excluded.name,
                  kind       = excluded.kind,
-                 line       = excluded.line",
+                 line       = excluded.line,
+                 signature  = excluded.signature",
         )?;
         for sym in symbols {
             stmt.execute(params![
@@ -189,6 +196,7 @@ impl Store {
                 sym.kind.as_str(),
                 sym.line,
                 sym.fqn,
+                sym.signature,
             ])?;
         }
         Ok(())
@@ -235,7 +243,7 @@ impl Store {
 
     pub fn query_by_fqn(&self, workspace_id: &str, fqn: &str) -> Result<Option<SymbolRow>, StorageError> {
         let mut results = self.run_symbol_query(
-            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn
+            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn, s.signature
              FROM symbols s
              JOIN files f ON f.id = s.file_id
              JOIN projects p ON p.id = f.project_id
@@ -248,7 +256,7 @@ impl Store {
 
     pub fn query_exact(&self, workspace_id: &str, name: &str) -> Result<Vec<SymbolRow>, StorageError> {
         self.run_symbol_query(
-            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn
+            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn, s.signature
              FROM symbols s
              JOIN files f ON f.id = s.file_id
              JOIN projects p ON p.id = f.project_id
@@ -261,7 +269,7 @@ impl Store {
     pub fn query_prefix(&self, workspace_id: &str, term: &str) -> Result<Vec<SymbolRow>, StorageError> {
         let pattern = format!("%{}%", term.to_lowercase());
         self.run_symbol_query(
-            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn
+            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn, s.signature
              FROM symbols s
              JOIN files f ON f.id = s.file_id
              JOIN projects p ON p.id = f.project_id
@@ -273,7 +281,7 @@ impl Store {
 
     pub fn dump_all(&self, workspace_id: &str) -> Result<Vec<SymbolRow>, StorageError> {
         self.run_symbol_query(
-            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn
+            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn, s.signature
              FROM symbols s
              JOIN files f ON f.id = s.file_id
              JOIN projects p ON p.id = f.project_id
@@ -392,7 +400,7 @@ impl Store {
         project_name: &str,
     ) -> Result<Vec<SymbolRow>, StorageError> {
         self.run_symbol_query(
-            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn
+            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn, s.signature
              FROM symbols s
              JOIN files f ON f.id = s.file_id
              JOIN projects p ON p.id = f.project_id
@@ -408,7 +416,7 @@ impl Store {
         file_path: &str,
     ) -> Result<Vec<SymbolRow>, StorageError> {
         self.run_symbol_query(
-            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn
+            "SELECT s.name, s.kind, f.path, f.language, p.name, s.workspace_id, s.line, s.fqn, s.signature
              FROM symbols s
              JOIN files f ON f.id = s.file_id
              JOIN projects p ON p.id = f.project_id
@@ -467,6 +475,7 @@ impl Store {
                 workspace_id: row.get(5)?,
                 line:         row.get(6)?,
                 fqn:          row.get(7)?,
+                signature:    row.get(8)?,
             })
         })?;
         let mut result = Vec::new();

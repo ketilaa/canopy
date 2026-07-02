@@ -59,6 +59,7 @@ fn insert_and_query_exact() {
             workspace_id: "test-ws".into(),
             line: 5,
             fqn: "com.example.OrderService".into(),
+                signature:    None,
         },
         Symbol {
             name: "placeOrder".into(),
@@ -69,6 +70,7 @@ fn insert_and_query_exact() {
             workspace_id: "test-ws".into(),
             line: 10,
             fqn: "com.example.OrderService.placeOrder".into(),
+                signature:    None,
         },
     ];
     s.insert_symbols("test-ws", pid, fid, &symbols).unwrap();
@@ -97,6 +99,7 @@ fn query_prefix_case_insensitive() {
             workspace_id: "test-ws".into(),
             line: 5,
             fqn: "com.example.OrderService".into(),
+                signature:    None,
         },
     ];
     s.insert_symbols("test-ws", pid, fid, &symbols).unwrap();
@@ -123,7 +126,8 @@ fn query_prefix_no_match() {
         workspace_id: "test-ws".into(),
         line: 5,
         fqn: "com.example.OrderService".into(),
-    }];
+            signature:    None,
+        }];
     s.insert_symbols("test-ws", pid, fid, &symbols).unwrap();
 
     let results = s.query_prefix("test-ws", "Notification").unwrap();
@@ -136,8 +140,8 @@ fn dump_all_returns_all_symbols() {
     let pid = s.upsert_project("test-ws", "svc", "/workspace/svc", &Language::TypeScript).unwrap();
     let fid = s.upsert_file("test-ws", pid, "svc/src/index.ts", &Language::TypeScript, "2024-01-01T00:00:00Z").unwrap();
     let symbols = vec![
-        Symbol { name: "UserService".into(), kind: SymbolKind::Class, file: "svc/src/index.ts".into(), language: Language::TypeScript, project: "svc".into(), workspace_id: "test-ws".into(), line: 1, fqn: "svc/src/index.ts#UserService".into() },
-        Symbol { name: "IUserRepo".into(), kind: SymbolKind::Interface, file: "svc/src/index.ts".into(), language: Language::TypeScript, project: "svc".into(), workspace_id: "test-ws".into(), line: 10, fqn: "svc/src/index.ts#IUserRepo".into() },
+        Symbol { name: "UserService".into(), kind: SymbolKind::Class, file: "svc/src/index.ts".into(), language: Language::TypeScript, project: "svc".into(), workspace_id: "test-ws".into(), line: 1, fqn: "svc/src/index.ts#UserService".into(), signature: None },
+        Symbol { name: "IUserRepo".into(), kind: SymbolKind::Interface, file: "svc/src/index.ts".into(), language: Language::TypeScript, project: "svc".into(), workspace_id: "test-ws".into(), line: 10, fqn: "svc/src/index.ts#IUserRepo".into(), signature: None },
     ];
     s.insert_symbols("test-ws", pid, fid, &symbols).unwrap();
 
@@ -154,7 +158,8 @@ fn delete_symbols_for_file() {
         name: "Foo".into(), kind: SymbolKind::Class,
         file: "svc/Foo.java".into(), language: Language::Java, project: "svc".into(),
         workspace_id: "test-ws".into(), line: 1, fqn: "com.example.Foo".into(),
-    }];
+            signature:    None,
+        }];
     s.insert_symbols("test-ws", pid, fid, &symbols).unwrap();
     assert_eq!(s.dump_all("test-ws").unwrap().len(), 1);
 
@@ -168,8 +173,8 @@ fn status_counts_correctly() {
     let pid = s.upsert_project("test-ws", "svc", "/workspace/svc", &Language::Java).unwrap();
     let fid = s.upsert_file("test-ws", pid, "svc/Foo.java", &Language::Java, "2024-01-01T00:00:00Z").unwrap();
     let symbols = vec![
-        Symbol { name: "Foo".into(), kind: SymbolKind::Class, file: "svc/Foo.java".into(), language: Language::Java, project: "svc".into(), workspace_id: "test-ws".into(), line: 1, fqn: "com.example.Foo".into() },
-        Symbol { name: "bar".into(), kind: SymbolKind::Method, file: "svc/Foo.java".into(), language: Language::Java, project: "svc".into(), workspace_id: "test-ws".into(), line: 5, fqn: "com.example.Foo.bar".into() },
+        Symbol { name: "Foo".into(), kind: SymbolKind::Class, file: "svc/Foo.java".into(), language: Language::Java, project: "svc".into(), workspace_id: "test-ws".into(), line: 1, fqn: "com.example.Foo".into(), signature: None },
+        Symbol { name: "bar".into(), kind: SymbolKind::Method, file: "svc/Foo.java".into(), language: Language::Java, project: "svc".into(), workspace_id: "test-ws".into(), line: 5, fqn: "com.example.Foo.bar".into(), signature: Some("(int count)".into()) },
     ];
     s.insert_symbols("test-ws", pid, fid, &symbols).unwrap();
 
@@ -335,13 +340,15 @@ fn two_projects_same_name_different_workspaces_are_isolated() {
         file: "frontend/src/App.ts".into(), language: Language::TypeScript,
         project: "frontend".into(), workspace_id: "test-ws".into(),
         line: 1, fqn: "frontend/src/App.ts#MyComponent-ws-a".into(),
-    };
+            signature:    None,
+        };
     let sym_b = Symbol {
         name: "MyComponent".into(), kind: SymbolKind::Class,
         file: "frontend/src/App.ts".into(), language: Language::TypeScript,
         project: "frontend".into(), workspace_id: "ws-b".into(),
         line: 1, fqn: "frontend/src/App.ts#MyComponent-ws-b".into(),
-    };
+            signature:    None,
+        };
 
     s.insert_symbols("test-ws", pid_a, fid_a, &[sym_a]).unwrap();
     s.insert_symbols("ws-b",    pid_b, fid_b, &[sym_b]).unwrap();
@@ -367,7 +374,8 @@ fn query_does_not_leak_across_workspace() {
         file: "orders/OrderService.java".into(), language: Language::Java,
         project: "orders".into(), workspace_id: "test-ws".into(),
         line: 1, fqn: "com.example.OrderService".into(),
-    };
+            signature:    None,
+        };
     s.insert_symbols("test-ws", pid_a, fid_a, &[sym]).unwrap();
 
     // Query from a different workspace should return nothing
@@ -390,7 +398,8 @@ fn status_scoped_by_workspace() {
         file: "svc/Foo.java".into(), language: Language::Java,
         project: "svc".into(), workspace_id: "test-ws".into(),
         line: 1, fqn: "com.example.Foo".into(),
-    };
+            signature:    None,
+        };
     s.insert_symbols("test-ws", pid_a, fid_a, &[sym]).unwrap();
 
     let status_a = s.status("test-ws").unwrap();

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS symbols (
     kind         TEXT NOT NULL,
     line         INTEGER NOT NULL,
     fqn          TEXT NOT NULL DEFAULT '',
+    signature    TEXT,
     UNIQUE(workspace_id, fqn)
 );
 
@@ -70,4 +71,17 @@ ALTER TABLE files         ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default
 ALTER TABLE symbols       ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE symbols       ADD COLUMN project_id   INTEGER;
 ALTER TABLE relationships ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+";
+
+/// Schema-only part of the V3→V4 migration: adds the signature column.
+/// Run with `is_ok()` check — success means this is a genuine V3→V4 transition.
+pub const MIGRATE_V3_TO_V4_SCHEMA: &str = "
+ALTER TABLE symbols ADD COLUMN signature TEXT;
+";
+
+/// Data part of the V3→V4 migration: reset file timestamps so the next index
+/// run re-parses all files and populates the new signature column.
+/// Only run when MIGRATE_V3_TO_V4_SCHEMA succeeded (column was actually new).
+pub const MIGRATE_V3_TO_V4_DATA: &str = "
+UPDATE files SET indexed_at = '1970-01-01T00:00:00Z';
 ";
