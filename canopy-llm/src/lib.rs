@@ -1508,17 +1508,16 @@ pub fn testing_skill_for_file_with_adrs(file_path: &str, tech: &str, adrs: &[Adr
 
 /// Resolves the unit testing skill for the given technology, consulting the Testing Strategy ADRs.
 ///
-/// ADR titles are tech-specific so React and Node projects can coexist:
-///   "Frontend Testing Strategy" → consulted for React/Vite tech
-///   "Node.js Testing Strategy"  → consulted for Node/Express tech
-///   "Testing Strategy"          → legacy fallback (pre-dating the split titles)
+/// ADR titles are service-scoped (e.g. "Admin Portal Testing Strategy", "Product Testing Strategy")
+/// so each service can choose its framework independently. The lookup therefore matches on the
+/// decision field, not the title — making it robust to any naming convention.
 ///
-/// The ADR decision field carries a keyword that selects the skill:
-///   React/Vite + "vitest"   → REACT_VITEST_UNIT_TEST_SKILL
-///   React/Vite + "jest"     → REACT_JEST_UNIT_TEST_SKILL
-///   Angular                 → ANGULAR_UNIT_TEST_SKILL (implicit, no ADR needed)
-///   Node/Express + "vitest" → NODE_VITEST_UNIT_TEST_SKILL
-///   Node/Express + "jest"   → NODE_EXPRESS_UNIT_TEST_SKILL
+/// Decision keywords select the skill:
+///   React/Vite + "vitest"               → REACT_VITEST_UNIT_TEST_SKILL
+///   React/Vite + "jest"                 → REACT_JEST_UNIT_TEST_SKILL
+///   Angular                             → ANGULAR_UNIT_TEST_SKILL (implicit, no ADR needed)
+///   Node/Express + "jest"  + "supertest" → NODE_EXPRESS_UNIT_TEST_SKILL
+///   Node/Express + "vitest"+ "supertest" → NODE_VITEST_UNIT_TEST_SKILL
 ///
 /// Falls back to unit_testing_skill(tech, layer) when no relevant ADR exists.
 pub fn testing_skill_from_adrs(adrs: &[Adr], tech: &str, layer: &str) -> String {
@@ -1526,19 +1525,18 @@ pub fn testing_skill_from_adrs(adrs: &[Adr], tech: &str, layer: &str) -> String 
     let is_react = t.contains("react") || t.contains("vite");
     let is_node  = t.contains("node") || t.contains("express") || t.contains("nest");
 
-    let adr = if is_react {
-        adrs.iter().find(|a| {
-            let title = a.title.to_lowercase();
-            title.contains("frontend testing") || title == "testing strategy"
-        })
-    } else if is_node {
-        adrs.iter().find(|a| {
-            let title = a.title.to_lowercase();
-            (title.contains("node") && title.contains("testing")) || title == "testing strategy"
-        })
-    } else {
-        adrs.iter().find(|a| a.title.to_lowercase().contains("testing strategy"))
-    };
+    // Match on decision content — titles are service-scoped and vary across projects.
+    let adr = adrs.iter().find(|a| {
+        if !a.title.to_lowercase().contains("testing") { return false; }
+        let d = a.decision.to_lowercase();
+        if is_react {
+            (d.contains("vitest") || d.contains("jest")) && d.contains("react testing")
+        } else if is_node {
+            (d.contains("jest") || d.contains("vitest")) && d.contains("supertest")
+        } else {
+            false
+        }
+    });
 
     if let Some(adr) = adr {
         let d = adr.decision.to_lowercase();
