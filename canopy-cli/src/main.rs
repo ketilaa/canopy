@@ -151,7 +151,7 @@ fn main() -> Result<()> {
 }
 
 fn run_repl(debug: bool) -> Result<()> {
-    use std::io::{BufRead, Write};
+    use std::io::Write;
 
     // Session created once for the lifetime of this canopy invocation.
     let session_id = uuid_v4();
@@ -174,21 +174,23 @@ fn run_repl(debug: bool) -> Result<()> {
     roots::ensure_indexed();
     println!("ready");
 
-    let stdin = std::io::stdin();
-    let mut line = String::new();
+    let history_path = canopy_storage::storage_dir().join("history");
+    let mut rl = rustyline::DefaultEditor::new()?;
+    let _ = rl.load_history(&history_path);
 
     loop {
-        print!("\ncanopy> ");
-        let _ = std::io::stdout().flush();
+        let input = match rl.readline("\ncanopy> ") {
+            Ok(line) => line,
+            Err(rustyline::error::ReadlineError::Eof)
+            | Err(rustyline::error::ReadlineError::Interrupted) => break,
+            Err(e) => { eprintln!("input error: {e}"); break; }
+        };
 
-        line.clear();
-        if stdin.lock().read_line(&mut line)? == 0 {
-            break; // EOF
-        }
-
-        let trimmed = line.trim();
+        let trimmed = input.trim();
         if trimmed.is_empty() { continue; }
         if matches!(trimmed, "exit" | "quit") { break; }
+
+        let _ = rl.add_history_entry(trimmed);
 
         // Parse the typed command using ReplCli, prepending the binary name.
         let mut args = vec!["canopy"];
@@ -216,6 +218,7 @@ fn run_repl(debug: bool) -> Result<()> {
         }
     }
 
+    let _ = rl.save_history(&history_path);
     println!("bye");
     Ok(())
 }
