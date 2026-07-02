@@ -2609,7 +2609,7 @@ fn step_prompt(
          {arch_rules}\n\
          Write the file content first — complete and ready to save.\n\
          Then append exactly this separator on its own line:\n\
-         <<<CANOPY_SUMMARY>>>\n\
+         ##CANOPY_SUMMARY##\n\
          Then one line: what you implemented and the key decision you made (max 20 words).\n\
          Then one line: why — the reason behind that decision (max 20 words).\n\
          No code fences, no markdown, no extra text outside the file content and summary.",
@@ -2638,7 +2638,7 @@ pub struct StepResult {
     pub summary: Option<String>,
 }
 
-const STEP_SEPARATOR: &str = "<<<CANOPY_SUMMARY>>>";
+const STEP_SEPARATOR: &str = "##CANOPY_SUMMARY##";
 
 fn split_step_response(raw: &str) -> StepResult {
     let stripped = strip_code_fences(raw);
