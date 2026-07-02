@@ -1415,18 +1415,30 @@ Service unit test pattern (mock repository):
 const NODE_EXPRESS_UNIT_TEST_SKILL: &str = "\
 === Testing Skill: Node.js / Express (Jest + Supertest) ===
 
-IMPORT RULES — apply these before writing any code:
-  Tests live in tests/ — one level below the service root, which contains src/.
-  Every import from src uses exactly ONE dot-dot:  ../src/<subpath>
-  WRONG:  import ... from '../../src/...'   (two dot-dots — always wrong from tests/)
-  WRONG:  import ... from '@services/...'   (path aliases — tsconfig has no paths config)
-  WRONG:  import ... from '@src/...'        (same — no aliases configured)
-  RIGHT:  import { Foo } from '../src/models/Foo'
-  RIGHT:  import app from '../src/app'      (default import — app.ts uses export default)
-  RIGHT:  import request from 'supertest'   (default import)
+FILE LOCATIONS:
+  service root/
+    src/         ← all source files live here
+      app.ts     ← exports the Express app as DEFAULT export
+      services/
+      repositories/
+      infrastructure/
+      models/
+    tests/       ← test files live here, one level above src/
 
-Do NOT import uuid, faker, or any test-utility package not in devDependencies.
-Use hard-coded strings ('test-id-123') instead of uuid() in test data.
+IMPORT PATHS from tests/ — the path MUST contain src/:
+  import request from 'supertest'                                     ✓
+  import app from '../src/app'                                        ✓  (no braces — default export)
+  import { ProductService } from '../src/services/ProductService'     ✓
+  import { ProductRepository } from '../src/repositories/ProductRepository' ✓
+  import { EventPublisher } from '../src/infrastructure/EventPublisher'     ✓
+
+FORBIDDEN (will cause TS2307 / TS2614 compile errors):
+  import { app } from '../src/app'        ✗  app is a DEFAULT export — remove the braces
+  import ... from '../services/...'       ✗  missing src/ segment — must be '../src/services/...'
+  import ... from '../../src/...'         ✗  two dot-dots — always wrong from tests/
+  import ... from '@services/...'         ✗  no path aliases configured in tsconfig
+  require(...)                            ✗  use ES import syntax
+  uuid(), faker()                         ✗  not in devDependencies — use plain strings
 
 Route test — complete working example:
   import request from 'supertest'
