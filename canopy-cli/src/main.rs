@@ -1247,7 +1247,8 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                             Some("frontend") => format!("frontend/{}", s.name),
                             _ => format!("services/{}", s.name),
                         };
-                        (s.name.clone(), read_package_json_deps(&dir))
+                        let tech = s.technology.as_deref().unwrap_or("");
+                        (s.name.clone(), read_installed_deps(&dir, tech))
                     })
                     .collect();
 
@@ -1261,17 +1262,16 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
             .context("failed to generate implementation plan")?;
 
             // ── Dependency gate ──────────────────────────────────────────────────
-            // Runs once per npm-based service. Collects proposed new packages with
-            // justifications, lets the human gate each, and installs approved ones.
-            let mut all_proposed: Vec<(String, Vec<canopy_core::ProposedDependency>)> = Vec::new();
+            // Runs once per service with a known tech stack. For npm services,
+            // approved packages are installed via npm install. For JVM services,
+            // approved coordinates are injected as constraints into step prompts
+            // so the LLM includes them in the generated pom.xml / build.gradle.
+            let mut all_proposed: Vec<(String, String, Vec<canopy_core::ProposedDependency>)> = Vec::new();
             for service in services.services.iter()
                 .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
             {
                 let tech = service.technology.as_deref().unwrap_or("");
-                let is_npm = tech.contains("node") || tech.contains("express")
-                    || tech.contains("react") || tech.contains("angular")
-                    || tech.contains("vite") || tech.contains("nest");
-                if !is_npm { continue; }
+                if tech.is_empty() { continue; }
 
                 let installed = installed_deps_by_service.get(&service.name)
                     .cloned()
@@ -1285,7 +1285,7 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 println!("Analysing dependencies for '{}'...", service.name);
                 match propose_dependencies(&client, &service.name, tech, story, &service_steps, &installed) {
                     Ok(proposed) if !proposed.is_empty() => {
-                        all_proposed.push((service.name.clone(), proposed));
+                        all_proposed.push((service.name.clone(), tech.to_string(), proposed));
                     }
                     Ok(_) => println!("  No new dependencies proposed for '{}'.", service.name),
                     Err(e) => eprintln!("  Warning: dependency analysis failed for '{}': {e}", service.name),
@@ -1294,12 +1294,19 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
 
             // Collect the gate results before showing the plan.
             let mut pkg_constraints_by_service: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-            for (svc_name, proposed) in &all_proposed {
+            for (svc_name, svc_tech, proposed) in &all_proposed {
                 let installed = installed_deps_by_service.get(svc_name).cloned().unwrap_or_default();
                 println!("\nDependency gate for service '{svc_name}':");
                 let (approved, rejected) = run_dependency_gate(proposed, &theme);
 
-                // Install approved packages immediately into the service directory.
+                let t = svc_tech.to_lowercase();
+                let is_npm_svc = t.contains("node") || t.contains("express") || t.contains("react")
+                    || t.contains("angular") || t.contains("vite") || t.contains("nest");
+                let is_gradle_svc = t.contains("gradle");
+                let is_jvm_svc = !is_npm_svc && (t.contains("spring") || t.contains("java")
+                    || t.contains("kotlin") || t.contains("quarkus") || t.contains("micronaut")
+                    || is_gradle_svc);
+
                 let svc_dir = if services.services.iter()
                     .find(|s| &s.name == svc_name)
                     .and_then(|s| s.component_type.as_deref())
@@ -1309,55 +1316,80 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 } else {
                     format!("services/{svc_name}")
                 };
-                if !approved.is_empty() && std::path::Path::new(&svc_dir).exists() {
+
+                // npm: install approved packages immediately.
+                // JVM: no install step — the LLM writes them into pom.xml/build.gradle.
+                if is_npm_svc && !approved.is_empty() && std::path::Path::new(&svc_dir).exists() {
                     let approved_str = approved.join(" ");
                     println!("  Installing: {approved_str}");
                     let _ = std::process::Command::new("npm")
                         .args(["install", &approved_str])
                         .current_dir(&svc_dir)
                         .status();
+                } else if is_jvm_svc && !approved.is_empty() {
+                    println!("  Approved JVM dependencies will be included in the generated build manifest.");
                 }
 
-                // Build the constraints string injected into every step prompt for this service.
+                // Build tech-appropriate constraint strings for step prompts.
                 let all_available: Vec<String> = {
                     let mut v = installed.clone();
                     v.extend(approved.iter().cloned());
                     v.sort(); v.dedup(); v
                 };
+                let (manifest_label, available_note, reject_note) = if is_gradle_svc {
+                    ("build.gradle",
+                     "Declare only these coordinates in build.gradle — do not introduce others:",
+                     "Do NOT add: {} — rejected by the human reviewer; use built-in alternatives.")
+                } else if is_jvm_svc {
+                    ("pom.xml",
+                     "Declare only these coordinates in pom.xml — do not introduce others:",
+                     "Do NOT add: {} — rejected by the human reviewer; use built-in alternatives.")
+                } else {
+                    ("package.json",
+                     "Packages in package.json — do NOT import any other package (runtime crash):",
+                     "Do NOT use: {} — rejected by the human reviewer; use built-in alternatives.")
+                };
                 let mut lines: Vec<String> = Vec::new();
                 if !all_available.is_empty() {
                     lines.push(format!(
-                        "## Available packages\n\
-                         Packages in package.json: {}\n\
-                         Do NOT import any package not in this list — it will cause a runtime crash.",
+                        "## Available dependencies ({manifest_label})\n\
+                         {available_note}\n  {}",
                         all_available.join(", ")
                     ));
                 }
                 if !rejected.is_empty() {
                     lines.push(format!(
-                        "## Rejected packages\n\
-                         Do NOT use: {} — the human reviewer rejected these; use built-in alternatives.",
-                        rejected.join(", ")
+                        "## Rejected dependencies\n{}",
+                        reject_note.replace("{}", &rejected.join(", "))
                     ));
                 }
                 if !lines.is_empty() {
                     pkg_constraints_by_service.insert(svc_name.clone(), lines.join("\n\n"));
                 }
             }
-            // For services with no gate interaction, still populate available packages.
+            // For services with no gate interaction, still populate available packages
+            // so step prompts know what is declared in the build manifest.
             for service in services.services.iter()
                 .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
             {
                 if pkg_constraints_by_service.contains_key(&service.name) { continue; }
                 let installed = installed_deps_by_service.get(&service.name).cloned().unwrap_or_default();
-                if !installed.is_empty() {
-                    pkg_constraints_by_service.insert(service.name.clone(), format!(
-                        "## Available packages\n\
-                         Packages in package.json: {}\n\
-                         Do NOT import any package not in this list — it will cause a runtime crash.",
-                        installed.join(", ")
-                    ));
-                }
+                if installed.is_empty() { continue; }
+                let tech = service.technology.as_deref().unwrap_or("");
+                let t = tech.to_lowercase();
+                let (label, note) = if t.contains("gradle") {
+                    ("build.gradle", "Declare only these coordinates in build.gradle — do not introduce others:")
+                } else if t.contains("spring") || t.contains("java") || t.contains("kotlin")
+                    || t.contains("quarkus") || t.contains("micronaut")
+                {
+                    ("pom.xml", "Declare only these coordinates in pom.xml — do not introduce others:")
+                } else {
+                    ("package.json", "Packages in package.json — do NOT import any other package (runtime crash):")
+                };
+                pkg_constraints_by_service.insert(service.name.clone(), format!(
+                    "## Available dependencies ({label})\n{note}\n  {}",
+                    installed.join(", ")
+                ));
             }
             // Store constraints for execution phase via a plan-level side-channel.
             // We write it to a temp file keyed by story_id so the resumed path can also use it.
@@ -1701,6 +1733,83 @@ fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
         }
     }
     files
+}
+
+fn read_installed_deps(service_dir: &str, tech: &str) -> Vec<String> {
+    let t = tech.to_lowercase();
+    if t.contains("gradle") {
+        read_gradle_deps(service_dir)
+    } else if t.contains("spring") || t.contains("java") || t.contains("kotlin")
+        || t.contains("quarkus") || t.contains("micronaut")
+    {
+        read_pom_deps(service_dir)
+    } else {
+        read_package_json_deps(service_dir)
+    }
+}
+
+fn read_pom_deps(service_dir: &str) -> Vec<String> {
+    let path = std::path::Path::new(service_dir).join("pom.xml");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let mut deps: Vec<String> = Vec::new();
+    let mut group_id = String::new();
+    let mut artifact_id = String::new();
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(v) = tag_value(t, "groupId") { group_id = v; }
+        if let Some(v) = tag_value(t, "artifactId") { artifact_id = v; }
+        if t == "</dependency>" {
+            if !group_id.is_empty() && !artifact_id.is_empty() {
+                deps.push(format!("{}:{}", group_id, artifact_id));
+            }
+            group_id.clear();
+            artifact_id.clear();
+        }
+    }
+    deps.sort();
+    deps.dedup();
+    deps
+}
+
+fn tag_value(line: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = line.find(&open)? + open.len();
+    let end = line.find(&close)?;
+    if start <= end { Some(line[start..end].trim().to_string()) } else { None }
+}
+
+fn read_gradle_deps(service_dir: &str) -> Vec<String> {
+    // Support both build.gradle (Groovy) and build.gradle.kts (Kotlin DSL)
+    let candidates = ["build.gradle.kts", "build.gradle"];
+    let content = candidates.iter()
+        .find_map(|name| std::fs::read_to_string(std::path::Path::new(service_dir).join(name)).ok())
+        .unwrap_or_default();
+
+    let configs = ["implementation", "testImplementation", "api",
+                   "compileOnly", "runtimeOnly", "annotationProcessor"];
+    let mut deps: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let t = line.trim();
+        let coord = configs.iter().find_map(|cfg| {
+            let prefix = format!("{cfg} ");
+            if !t.starts_with(&prefix) { return None; }
+            // Extract the string inside quotes or parentheses+quotes
+            let rest = t[prefix.len()..].trim();
+            let inner = rest.trim_start_matches('(').trim_end_matches(')')
+                .trim_matches('"').trim_matches('\'');
+            // Strip version — keep groupId:artifactId only
+            let parts: Vec<&str> = inner.split(':').collect();
+            if parts.len() >= 2 { Some(format!("{}:{}", parts[0], parts[1])) } else { None }
+        });
+        if let Some(c) = coord { deps.push(c); }
+    }
+    deps.sort();
+    deps.dedup();
+    deps
 }
 
 fn read_package_json_deps(service_dir: &str) -> Vec<String> {

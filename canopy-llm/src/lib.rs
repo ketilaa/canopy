@@ -3191,8 +3191,43 @@ pub fn propose_dependencies(
         installed.join(", ")
     };
 
+    let t = tech.to_lowercase();
+    let is_npm = t.contains("node") || t.contains("express") || t.contains("react")
+        || t.contains("angular") || t.contains("vite") || t.contains("nest");
+    let is_gradle = t.contains("gradle");
+    let is_jvm = !is_npm && (t.contains("spring") || t.contains("java") || t.contains("kotlin")
+        || t.contains("quarkus") || t.contains("micronaut") || is_gradle);
+
+    let (stack_desc, coord_format, scope_note, manifest_name, builtin_note) = if is_npm {
+        (
+            "Node.js / TypeScript",
+            "npm package name (e.g. \"zod\", \"kafkajs\")",
+            "dev: true for devDependencies (build tools, @types/* stubs, test libraries); dev: false for runtime dependencies",
+            "package.json",
+            "Built-in Node.js APIs (crypto, fs, path, etc.) are always available — do NOT propose them.",
+        )
+    } else if is_gradle {
+        (
+            "Java / Gradle",
+            "groupId:artifactId (e.g. \"org.springframework.boot:spring-boot-starter-security\")",
+            "dev: true for testImplementation scope; dev: false for implementation scope",
+            "build.gradle",
+            "Spring Boot BOM-managed dependencies do not need a version. JDK standard library is always available.",
+        )
+    } else {
+        (
+            "Java / Maven",
+            "groupId:artifactId (e.g. \"org.springframework.boot:spring-boot-starter-security\")",
+            "dev: true for <scope>test</scope>; dev: false for compile scope (no <scope> tag needed)",
+            "pom.xml",
+            "Spring Boot parent BOM manages versions — do not include version strings. JDK standard library is always available.",
+        )
+    };
+
+    let _ = is_jvm; // used indirectly via the branch above
+
     let prompt = format!(
-        "You are reviewing a Node.js / TypeScript implementation plan for service '{service}' ({tech}).\n\
+        "You are reviewing a {stack_desc} implementation plan for service '{service}' ({tech}).\n\
          \n\
          ## Implementation plan\n\
          {steps}\n\
@@ -3200,25 +3235,27 @@ pub fn propose_dependencies(
          ## Story\n\
          As a {as_a}, I want {want}, so that {so_that}.\n\
          \n\
-         ## Already installed packages\n\
+         ## Already declared dependencies ({manifest_name})\n\
          {installed}\n\
          \n\
          ## Task\n\
-         Identify any NEW external npm packages this plan requires that are NOT already installed.\n\
-         Built-in Node.js APIs (crypto, fs, path, etc.) do NOT need to be listed — they are always available.\n\
-         For each proposed package:\n\
+         Identify any NEW external dependencies this plan requires that are NOT already declared.\n\
+         {builtin_note}\n\
+         For each proposed dependency:\n\
+         - State the coordinate in the format: {coord_format}\n\
          - Explain precisely why it is needed for this story (not just \"for X functionality\")\n\
          - List alternatives that were considered, including built-in options, and explain why each was rejected\n\
-         - State whether it belongs in dependencies or devDependencies\n\
+         - {scope_note}\n\
          \n\
-         If no new packages are needed, return: proposed_dependencies: []\n\
+         If no new dependencies are needed, return: proposed_dependencies: []\n\
          \n\
          Return ONLY valid YAML:\n\
          proposed_dependencies:\n\
-         - package: \"example-pkg\"\n\
+         - package: \"<coordinate>\"\n\
            justification: \"<precise reason this story needs it>\"\n\
            alternatives: \"<what else was considered and why rejected>\"\n\
            dev: false",
+        stack_desc = stack_desc,
         service = service_name,
         tech = tech,
         steps = steps_summary,
@@ -3226,6 +3263,10 @@ pub fn propose_dependencies(
         want = story.want,
         so_that = story.so_that,
         installed = installed_list,
+        manifest_name = manifest_name,
+        builtin_note = builtin_note,
+        coord_format = coord_format,
+        scope_note = scope_note,
     );
 
     let raw = client.complete(&prompt)?;
