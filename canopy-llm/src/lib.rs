@@ -1273,19 +1273,17 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              }\n\
              \n\
              ### App structure\n\
+             src/app.ts is the composition root — it MUST import and register every router and\n\
+             middleware module created by this plan. A module created but not wired into app.ts\n\
+             is dead code.\n\
+             Middleware order matters: routers first, error-handling middleware last.\n\
              src/app.ts builds and exports the Express app WITHOUT calling app.listen().\n\
              src/index.ts is the ONLY file that calls app.listen().\n\
-             NEVER import 'reflect-metadata' in index.ts or anywhere — that is NestJS/TypeORM;\n\
-             plain Express has no decorators and does not need it.\n\
              This separation lets Supertest import app without starting a real server.\n\
              app.ts creates repository instances and assigns them to app.locals so routes\n\
              can access them via req.app.locals without constructing them on every request:\n\
                import { ProductRepository } from './repositories/ProductRepository'\n\
-               app.locals.productRepository = new ProductRepository()\n\
-             app.ts MUST register errorHandler as the LAST app.use() call — after all routes:\n\
-               import { errorHandler } from './middleware/errorHandler'\n\
-               app.use(productsRouter)\n\
-               app.use(errorHandler)   ← always last; an errorHandler registered before routes is dead code"
+               app.locals.productRepository = new ProductRepository()"
             .to_string(),
         layer_order:
             "  1. src/models/           — interfaces only; no deps\n\
