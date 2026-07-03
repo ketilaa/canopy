@@ -3296,7 +3296,7 @@ pub fn propose_dependencies(
     let installed_list = if installed.is_empty() {
         "none".to_string()
     } else {
-        installed.join(", ")
+        installed.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
     };
     let rejected_section = if previously_rejected.is_empty() {
         String::new()
