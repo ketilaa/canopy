@@ -3285,6 +3285,7 @@ pub fn propose_dependencies(
     plan_steps: &[ImplementationStep],
     installed: &[String],
     previously_rejected: &[String],
+    adrs: &[Adr],
 ) -> Result<Vec<ProposedDependency>, LlmError> {
     let steps_summary: String = plan_steps.iter()
         .map(|s| format!("  - {} ({}): {}", s.file, s.operation, s.description))
@@ -3295,6 +3296,16 @@ pub fn propose_dependencies(
     } else {
         installed.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
     };
+    let adrs_section = if adrs.is_empty() {
+        String::new()
+    } else {
+        let lines = adrs.iter()
+            .map(|a| format!("- {}: {}", a.title, a.decision))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\n## Architecture decisions\n{lines}\nPropose ONLY dependencies consistent with these decisions.\n")
+    };
+
     let rejected_section = if previously_rejected.is_empty() {
         String::new()
     } else {
@@ -3347,7 +3358,7 @@ pub fn propose_dependencies(
          \n\
          ## Story\n\
          As a {as_a}, I want {want}, so that {so_that}.\n\
-         \n\
+         {adrs_section}\n\
          ## Already declared dependencies ({manifest_name})\n\
          {installed}\n\
          STOP — do NOT propose any package from the list above. They are already installed.\n\
@@ -3385,6 +3396,7 @@ pub fn propose_dependencies(
         want = story.want,
         so_that = story.so_that,
         installed = installed_list,
+        adrs_section = adrs_section,
         rejected_section = rejected_section,
         manifest_name = manifest_name,
         builtin_note = builtin_note,
