@@ -1240,6 +1240,8 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
                (e.g., `categories` not `categoryIds` if the domain interface uses `categories`)\n\
              - use .optional() for optional fields — NEVER .nullable() or .nullable().optional()\n\
                (.nullable() changes the type to include null, causing TS assignment errors downstream)\n\
+             - for array fields with element constraints: z.array(z.string().max(100)).max(5)\n\
+               .maxLength() does NOT exist on zod arrays — always use .max() on both array and element\n\
              - call schema.parse(req.body); pass errors to next(err)\n\
              async/await everywhere — no raw .then() chains.\n\
              EventPublisher is instantiated in the route handler — pass config from environment:\n\
@@ -1273,11 +1275,17 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              ### App structure\n\
              src/app.ts builds and exports the Express app WITHOUT calling app.listen().\n\
              src/index.ts is the ONLY file that calls app.listen().\n\
+             NEVER import 'reflect-metadata' in index.ts or anywhere — that is NestJS/TypeORM;\n\
+             plain Express has no decorators and does not need it.\n\
              This separation lets Supertest import app without starting a real server.\n\
              app.ts creates repository instances and assigns them to app.locals so routes\n\
              can access them via req.app.locals without constructing them on every request:\n\
                import { ProductRepository } from './repositories/ProductRepository'\n\
-               app.locals.productRepository = new ProductRepository()"
+               app.locals.productRepository = new ProductRepository()\n\
+             app.ts MUST register errorHandler as the LAST app.use() call — after all routes:\n\
+               import { errorHandler } from './middleware/errorHandler'\n\
+               app.use(productsRouter)\n\
+               app.use(errorHandler)   ← always last; an errorHandler registered before routes is dead code"
             .to_string(),
         layer_order:
             "  1. src/models/           — interfaces only; no deps\n\
@@ -1592,7 +1600,14 @@ These will cause TS2307 / TS2614 compile errors:
       EventPublisher: jest.fn().mockImplementation(() => ({
         publishProductCreated: jest.fn().mockResolvedValue(undefined)
       }))
-    }))";
+    }))
+
+### Imports in test files
+Every class or function used in a test MUST be explicitly imported — even when mocked.
+jest.mock() replaces the module at runtime but does NOT create the binding; without the
+import, `new EventPublisher(...)` throws ReferenceError at parse time.
+  import { EventPublisher } from '../src/infrastructure/EventPublisher'   ✓ (after jest.mock)
+  new EventPublisher('', '')  without importing EventPublisher            ✗ ReferenceError";
 
 fn spring_boot_unit_test_skill(layer: &str) -> String {
     let layer_pattern = match layer {
