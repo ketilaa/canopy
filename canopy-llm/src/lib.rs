@@ -2419,7 +2419,7 @@ fn plan_prompt_for_service(
            service: \"{sname}\"\n\
            file: \"<path/relative/to/project/root>\"\n\
            operation: \"create\"\n\
-           description: \"<what this file contains — name specific classes, fields, methods>\"\n\
+           description: \"<one sentence: what this file does, e.g. 'Defines Product entity with id, name, createdAt fields'>\"\n\
            depends_on:\n\
            - \"<file this step imports — omit if none>\"\n\
          \n\
@@ -2440,8 +2440,8 @@ fn plan_prompt_for_service(
          The response MUST start with the root key \"steps:\" — never a bare list.\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
-         description MUST be a single quoted string on one line — never a YAML list.\n\
-         description MUST name specific classes, fields, and annotations.\n\
+         description MUST be a single prose sentence on one line — never a YAML list, never code.\n\
+         description MUST NOT contain TypeScript, Java, or any code syntax — prose only.\n\
          EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n\
          depends_on: YAML sequence — NEVER wrap in quotes; use [] for none or a proper list.\n",
         sname = service.name,
