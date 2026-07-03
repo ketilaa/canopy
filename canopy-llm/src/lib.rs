@@ -1227,11 +1227,23 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              Infrastructure lifecycle (connect/disconnect) belongs in the caller, not as a private field\n\
              the route accesses — create EventPublisher as a local variable in the route handler.\n\
              \n\
-             tsconfig.json MUST include in compilerOptions:\n\
-               \"types\": [\"jest\", \"node\"]\n\
-             and at top level:\n\
-               \"include\": [\"src/**/*\", \"tests/**/*\"]\n\
-             Without this, TypeScript cannot find describe/it/expect/jest globals.\n\
+             tsconfig.json — use exactly this structure (no rootDir — it conflicts with tests/ outside src/):\n\
+             {\n\
+               \"compilerOptions\": {\n\
+                 \"target\": \"ES2020\",\n\
+                 \"module\": \"commonjs\",\n\
+                 \"lib\": [\"ES2020\"],\n\
+                 \"strict\": true,\n\
+                 \"esModuleInterop\": true,\n\
+                 \"skipLibCheck\": true,\n\
+                 \"resolveJsonModule\": true,\n\
+                 \"moduleResolution\": \"node\",\n\
+                 \"types\": [\"jest\", \"node\"]\n\
+               },\n\
+               \"include\": [\"src/**/*\", \"tests/**/*\"],\n\
+               \"exclude\": [\"node_modules\"]\n\
+             }\n\
+             NEVER set rootDir when tests/ lives alongside src/ — it causes TS6059.\n\
              CRITICAL: src/app.ts builds and exports the Express app without calling app.listen().\n\
              src/index.ts is the ONLY file that calls app.listen().\n\
              This separation is required so Supertest can import app without starting a server."
@@ -2792,20 +2804,20 @@ fn split_step_response(raw: &str) -> StepResult {
 
 fn strip_code_fences(raw: &str) -> String {
     let trimmed = raw.trim();
-    let after_open = trimmed
-        .trim_start_matches("```java")
-        .trim_start_matches("```typescript")
-        .trim_start_matches("```tsx")
-        .trim_start_matches("```ts")
-        .trim_start_matches("```xml")
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```properties")
-        .trim_start_matches("```")
-        .trim_start();
-    if let Some(pos) = after_open.rfind("\n```") {
-        after_open[..pos].to_string()
+    let content = if let Some(rest) = trimmed.strip_prefix("```") {
+        // Skip optional language label (everything up to and including the first newline)
+        if let Some(newline) = rest.find('\n') {
+            &rest[newline + 1..]
+        } else {
+            rest.trim_start()
+        }
     } else {
-        after_open.trim_end_matches("```").trim_end().to_string()
+        trimmed
+    };
+    if let Some(pos) = content.rfind("\n```") {
+        content[..pos].to_string()
+    } else {
+        content.trim_end_matches("```").trim_end().to_string()
     }
 }
 
