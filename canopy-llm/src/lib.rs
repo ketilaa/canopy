@@ -2973,6 +2973,30 @@ fn split_step_response(raw: &str) -> StepResult {
     }
 }
 
+/// Fixes YAML where list-item fields were emitted at column 0 instead of
+/// indented 2 spaces. Leaves already-correct YAML unchanged.
+fn repair_list_item_indentation(yaml: &str) -> String {
+    let mut out = String::with_capacity(yaml.len() + 64);
+    let mut in_item = false;
+    for line in yaml.lines() {
+        if line.trim_start().starts_with("- ") {
+            in_item = true;
+            out.push_str(line);
+        } else if in_item
+            && !line.trim().is_empty()
+            && !line.starts_with(' ')
+            && !line.starts_with('\t')
+        {
+            out.push_str("  ");
+            out.push_str(line);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 fn strip_code_fences(raw: &str) -> String {
     let trimmed = raw.trim();
     let content = if let Some(rest) = trimmed.strip_prefix("```") {
@@ -3413,7 +3437,10 @@ pub fn propose_dependencies(
     let installed_set: std::collections::HashSet<String> =
         installed.iter().map(|s| s.to_lowercase()).collect();
 
+    // Try parsing as-is; if it fails (common: LLM omits list-item indentation),
+    // repair the indentation and try again before giving up.
     serde_yaml::from_str::<Wrapper>(&stripped)
+        .or_else(|_| serde_yaml::from_str::<Wrapper>(&repair_list_item_indentation(&stripped)))
         .map(|w| {
             w.proposed_dependencies
                 .into_iter()
