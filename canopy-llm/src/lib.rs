@@ -2230,6 +2230,7 @@ fn plan_prompt_for_service(
     existing_files: &[String],
     service_packages: &std::collections::HashMap<String, String>,
     arch_skills: &str,
+    installed_packages: &[String],
 ) -> String {
     let tech = service.technology.as_deref().unwrap_or("unknown");
     let is_front = service.component_type.as_deref() == Some("frontend");
@@ -2292,6 +2293,15 @@ fn plan_prompt_for_service(
         format!(
             "\nExisting files — use operation: modify for these:\n{}",
             service_existing.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n")
+        )
+    };
+
+    let packages_note = if installed_packages.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nPackages already in package.json — do NOT add npm install steps for these:\n  {}\n",
+            installed_packages.join(", ")
         )
     };
 
@@ -2378,7 +2388,8 @@ fn plan_prompt_for_service(
          BDD scenarios:\n{scenarios_yaml}\n\
          OAS Contract:\n{contract_yaml}\n\
          Architecture decisions:\n{adrs_summary}\n\
-         {existing_note}\n\
+         {existing_note}\
+         {packages_note}\
          Return ONLY valid YAML — no prose, no code fences.\n\
          List ONLY files that belong to service '{sname}'.\n\
          Every field inside a list item MUST be indented by exactly 2 spaces.\n\
@@ -2424,6 +2435,7 @@ fn plan_prompt_for_service(
         contract_yaml = contract_yaml,
         adrs_summary = adrs_summary,
         existing_note = existing_note,
+        packages_note = packages_note,
         event_scope_rule = event_scope_rule,
     )
 }
@@ -2639,6 +2651,7 @@ pub fn generate_story_plan(
     adrs: &[Adr],
     existing_files: &[String],
     service_packages: &std::collections::HashMap<String, String>,
+    installed_deps_by_service: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<StoryPlan, LlmError> {
     let active: Vec<&ServiceEntry> = services.services.iter()
         .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
@@ -2648,9 +2661,10 @@ pub fn generate_story_plan(
     for service in &active {
         let tech = service.technology.as_deref().unwrap_or("unknown");
         let arch_skills = skills_for_architecture(adrs, tech);
+        let installed = installed_deps_by_service.get(&service.name).map(|v| v.as_slice()).unwrap_or(&[]);
         // Phase 1: Discover what files are needed (no ordering pressure)
         let disc_prompt = plan_prompt_for_service(
-            service, story, spec, contract_yaml, adrs, existing_files, service_packages, &arch_skills,
+            service, story, spec, contract_yaml, adrs, existing_files, service_packages, &arch_skills, installed,
         );
         let disc_raw = client.complete_large(&disc_prompt)?;
         let mut steps = parse_plan_steps(&disc_raw)?;
@@ -2711,6 +2725,7 @@ fn step_prompt(
     sibling_section: &str,
     arch_skills: &str,
     test_hint: Option<(&str, &str, bool)>,
+    package_constraints: Option<&str>,
 ) -> String {
     let schema_yaml = spec.entity_schema.as_ref()
         .map(|s| serde_yaml::to_string(s).unwrap_or_default())
@@ -2781,6 +2796,11 @@ fn step_prompt(
         None => String::new(),
     };
 
+    let pkg_section = match package_constraints {
+        Some(c) if !c.is_empty() => format!("{c}\n"),
+        _ => String::new(),
+    };
+
     format!(
         "Generate the complete content of file '{file}'.\n\
          \n\
@@ -2798,6 +2818,7 @@ fn step_prompt(
          {current_section}\
          {roots_section}\
          {test_hint_section}\n\
+         {pkg_section}\
          {tech_rules}\n\
          {build_rules}\n\
          {arch_rules}\n\
@@ -2821,6 +2842,7 @@ fn step_prompt(
         current_section = current_section,
         roots_section = roots_section,
         test_hint_section = test_hint_section,
+        pkg_section = pkg_section,
         tech_rules = tech_rules,
         build_rules = build_rules,
         arch_rules = arch_skills,
@@ -2878,10 +2900,11 @@ pub fn execute_implementation_step(
     services: &ServicesRegistry,
     sibling_section: &str,
     arch_skills: &str,
+    package_constraints: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
-        service_packages, services, sibling_section, arch_skills, None,
+        service_packages, services, sibling_section, arch_skills, None, package_constraints,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
@@ -2999,11 +3022,12 @@ pub fn execute_implementation_stub(
     arch_skills: &str,
     test_file: &str,
     test_content: &str,
+    package_constraints: Option<&str>,
 ) -> Result<String, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
-        Some((test_file, test_content, true)),
+        Some((test_file, test_content, true)), package_constraints,
     );
     Ok(strip_code_fences(&client.complete_large(&prompt)?))
 }
@@ -3022,11 +3046,12 @@ pub fn execute_implementation_with_test(
     arch_skills: &str,
     test_file: &str,
     test_content: &str,
+    package_constraints: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
-        Some((test_file, test_content, false)),
+        Some((test_file, test_content, false)), package_constraints,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
@@ -3146,6 +3171,72 @@ pub fn fix_file(
 ) -> Result<String, LlmError> {
     let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills))?;
     Ok(strip_code_fences(&raw))
+}
+
+pub fn propose_dependencies(
+    client: &LlmClient,
+    service_name: &str,
+    tech: &str,
+    story: &UserStory,
+    plan_steps: &[ImplementationStep],
+    installed: &[String],
+) -> Result<Vec<ProposedDependency>, LlmError> {
+    let steps_summary: String = plan_steps.iter()
+        .map(|s| format!("  - {} ({}): {}", s.file, s.operation, s.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let installed_list = if installed.is_empty() {
+        "none".to_string()
+    } else {
+        installed.join(", ")
+    };
+
+    let prompt = format!(
+        "You are reviewing a Node.js / TypeScript implementation plan for service '{service}' ({tech}).\n\
+         \n\
+         ## Implementation plan\n\
+         {steps}\n\
+         \n\
+         ## Story\n\
+         As a {as_a}, I want {want}, so that {so_that}.\n\
+         \n\
+         ## Already installed packages\n\
+         {installed}\n\
+         \n\
+         ## Task\n\
+         Identify any NEW external npm packages this plan requires that are NOT already installed.\n\
+         Built-in Node.js APIs (crypto, fs, path, etc.) do NOT need to be listed — they are always available.\n\
+         For each proposed package:\n\
+         - Explain precisely why it is needed for this story (not just \"for X functionality\")\n\
+         - List alternatives that were considered, including built-in options, and explain why each was rejected\n\
+         - State whether it belongs in dependencies or devDependencies\n\
+         \n\
+         If no new packages are needed, return: proposed_dependencies: []\n\
+         \n\
+         Return ONLY valid YAML:\n\
+         proposed_dependencies:\n\
+         - package: \"example-pkg\"\n\
+           justification: \"<precise reason this story needs it>\"\n\
+           alternatives: \"<what else was considered and why rejected>\"\n\
+           dev: false",
+        service = service_name,
+        tech = tech,
+        steps = steps_summary,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        installed = installed_list,
+    );
+
+    let raw = client.complete(&prompt)?;
+    let stripped = strip_code_fences(&raw);
+
+    #[derive(serde::Deserialize)]
+    struct Wrapper { proposed_dependencies: Vec<ProposedDependency> }
+
+    serde_yaml::from_str::<Wrapper>(&stripped)
+        .map(|w| w.proposed_dependencies)
+        .map_err(|e| LlmError::UnexpectedShape(format!("dependency proposals: {e}")))
 }
 
 pub fn generate_scaffold_from_services(services: &ServicesRegistry, group_id: &str) -> ScaffoldPlan {

@@ -333,6 +333,15 @@ pub struct StoryPlan {
     pub steps: Vec<ImplementationStep>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposedDependency {
+    pub package: String,
+    pub justification: String,
+    pub alternatives: String,
+    #[serde(default)]
+    pub dev: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

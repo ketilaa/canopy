@@ -9,9 +9,9 @@ use canopy_llm::{
     execute_implementation_step, execute_implementation_stub, execute_implementation_with_test,
     extract_domain_from_stories, fix_file, generate_scaffold_from_services,
     generate_stories_from_intent, generate_story_contract, generate_story_plan, generate_story_spec,
-    generate_unit_test_stub, identify_architectural_questions, services_need_jvm,
-    skill_for_build_system, skill_for_technology, skills_for_architecture, suggest_domain_entities,
-    suggest_roles, testing_skill_for_file_with_adrs, LlmClient, StepResult,
+    generate_unit_test_stub, identify_architectural_questions, propose_dependencies,
+    services_need_jvm, skill_for_build_system, skill_for_technology, skills_for_architecture,
+    suggest_domain_entities, suggest_roles, testing_skill_for_file_with_adrs, LlmClient, StepResult,
 };
 use canopy_storage::*;
 
@@ -1238,13 +1238,134 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
             existing
         }
         Err(_) => {
+            // Collect installed packages per service so the planner knows what's available.
+            let installed_deps_by_service: std::collections::HashMap<String, Vec<String>> =
+                services.services.iter()
+                    .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+                    .map(|s| {
+                        let dir = match s.component_type.as_deref() {
+                            Some("frontend") => format!("frontend/{}", s.name),
+                            _ => format!("services/{}", s.name),
+                        };
+                        (s.name.clone(), read_package_json_deps(&dir))
+                    })
+                    .collect();
+
             let existing_files = scan_project_files(&services);
             println!("Generating implementation plan for '{story_id}'...");
             let client = build_client("planner", debug)?;
             let plan = generate_story_plan(
-                &client, story, &spec, &contract_yaml, &services, &adrs, &existing_files, &service_packages,
+                &client, story, &spec, &contract_yaml, &services, &adrs,
+                &existing_files, &service_packages, &installed_deps_by_service,
             )
             .context("failed to generate implementation plan")?;
+
+            // ── Dependency gate ──────────────────────────────────────────────────
+            // Runs once per npm-based service. Collects proposed new packages with
+            // justifications, lets the human gate each, and installs approved ones.
+            let mut all_proposed: Vec<(String, Vec<canopy_core::ProposedDependency>)> = Vec::new();
+            for service in services.services.iter()
+                .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+            {
+                let tech = service.technology.as_deref().unwrap_or("");
+                let is_npm = tech.contains("node") || tech.contains("express")
+                    || tech.contains("react") || tech.contains("angular")
+                    || tech.contains("vite") || tech.contains("nest");
+                if !is_npm { continue; }
+
+                let installed = installed_deps_by_service.get(&service.name)
+                    .cloned()
+                    .unwrap_or_default();
+                let service_steps: Vec<_> = plan.steps.iter()
+                    .filter(|s| s.service == service.name)
+                    .cloned()
+                    .collect();
+                if service_steps.is_empty() { continue; }
+
+                println!("Analysing dependencies for '{}'...", service.name);
+                match propose_dependencies(&client, &service.name, tech, story, &service_steps, &installed) {
+                    Ok(proposed) if !proposed.is_empty() => {
+                        all_proposed.push((service.name.clone(), proposed));
+                    }
+                    Ok(_) => println!("  No new dependencies proposed for '{}'.", service.name),
+                    Err(e) => eprintln!("  Warning: dependency analysis failed for '{}': {e}", service.name),
+                }
+            }
+
+            // Collect the gate results before showing the plan.
+            let mut pkg_constraints_by_service: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            for (svc_name, proposed) in &all_proposed {
+                let installed = installed_deps_by_service.get(svc_name).cloned().unwrap_or_default();
+                println!("\nDependency gate for service '{svc_name}':");
+                let (approved, rejected) = run_dependency_gate(proposed, &theme);
+
+                // Install approved packages immediately into the service directory.
+                let svc_dir = if services.services.iter()
+                    .find(|s| &s.name == svc_name)
+                    .and_then(|s| s.component_type.as_deref())
+                    == Some("frontend")
+                {
+                    format!("frontend/{svc_name}")
+                } else {
+                    format!("services/{svc_name}")
+                };
+                if !approved.is_empty() && std::path::Path::new(&svc_dir).exists() {
+                    let approved_str = approved.join(" ");
+                    println!("  Installing: {approved_str}");
+                    let _ = std::process::Command::new("npm")
+                        .args(["install", &approved_str])
+                        .current_dir(&svc_dir)
+                        .status();
+                }
+
+                // Build the constraints string injected into every step prompt for this service.
+                let all_available: Vec<String> = {
+                    let mut v = installed.clone();
+                    v.extend(approved.iter().cloned());
+                    v.sort(); v.dedup(); v
+                };
+                let mut lines: Vec<String> = Vec::new();
+                if !all_available.is_empty() {
+                    lines.push(format!(
+                        "## Available packages\n\
+                         Packages in package.json: {}\n\
+                         Do NOT import any package not in this list — it will cause a runtime crash.",
+                        all_available.join(", ")
+                    ));
+                }
+                if !rejected.is_empty() {
+                    lines.push(format!(
+                        "## Rejected packages\n\
+                         Do NOT use: {} — the human reviewer rejected these; use built-in alternatives.",
+                        rejected.join(", ")
+                    ));
+                }
+                if !lines.is_empty() {
+                    pkg_constraints_by_service.insert(svc_name.clone(), lines.join("\n\n"));
+                }
+            }
+            // For services with no gate interaction, still populate available packages.
+            for service in services.services.iter()
+                .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+            {
+                if pkg_constraints_by_service.contains_key(&service.name) { continue; }
+                let installed = installed_deps_by_service.get(&service.name).cloned().unwrap_or_default();
+                if !installed.is_empty() {
+                    pkg_constraints_by_service.insert(service.name.clone(), format!(
+                        "## Available packages\n\
+                         Packages in package.json: {}\n\
+                         Do NOT import any package not in this list — it will cause a runtime crash.",
+                        installed.join(", ")
+                    ));
+                }
+            }
+            // Store constraints for execution phase via a plan-level side-channel.
+            // We write it to a temp file keyed by story_id so the resumed path can also use it.
+            let constraints_path = canopy_storage::storage_dir()
+                .join(format!("stories/{}/pkg_constraints.yaml", story_id));
+            if let Ok(yaml) = serde_yaml::to_string(&pkg_constraints_by_service) {
+                let _ = std::fs::write(&constraints_path, yaml);
+            }
 
             println!("\nImplementation plan ({} steps):\n", plan.steps.len());
             for step in &plan.steps {
@@ -1269,6 +1390,15 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
             plan
         }
     };
+
+    // Load package constraints (written during plan/gate phase, also available on resume).
+    let constraints_path = canopy_storage::storage_dir()
+        .join(format!("stories/{}/pkg_constraints.yaml", story_id));
+    let pkg_constraints_by_service: std::collections::HashMap<String, String> =
+        std::fs::read_to_string(&constraints_path)
+            .ok()
+            .and_then(|s| serde_yaml::from_str(&s).ok())
+            .unwrap_or_default();
 
     let client = build_client("developer", debug)?;
     let total = plan.steps.len();
@@ -1325,11 +1455,12 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
 
             println!("  [red] generating stub: {}", step.file);
             let stub_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
+            let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
             let stub_content = execute_implementation_stub(
                 &client, story, &spec, &contract_yaml,
                 step, None, None,
                 &service_packages, &services, &stub_siblings, &arch_skills,
-                &test_file, &test_content,
+                &test_file, &test_content, pkg_constraints,
             ).with_context(|| format!("LLM call failed generating stub for step {}", step.id))?;
 
             let dest = std::path::Path::new(&step.file);
@@ -1370,7 +1501,7 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 &client, story, &spec, &contract_yaml,
                 step, None, roots_context.as_deref(),
                 &service_packages, &services, &green_siblings, &arch_skills,
-                &test_file, &test_content,
+                &test_file, &test_content, pkg_constraints,
             ).with_context(|| format!("LLM call failed for Green phase step {}", step.id))?;
 
             std::fs::write(dest, &impl_content)
@@ -1406,10 +1537,11 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 .filter(|s| !s.is_empty());
 
             let step_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
+            let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
             let StepResult { content, summary } = execute_implementation_step(
                 &client, story, &spec, &contract_yaml,
                 step, current_content.as_deref(), roots_context.as_deref(),
-                &service_packages, &services, &step_siblings, &arch_skills,
+                &service_packages, &services, &step_siblings, &arch_skills, pkg_constraints,
             ).with_context(|| format!("LLM call failed for step {}", step.id))?;
 
             let dest = std::path::Path::new(&step.file);
@@ -1569,6 +1701,83 @@ fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
         }
     }
     files
+}
+
+fn read_package_json_deps(service_dir: &str) -> Vec<String> {
+    let path = std::path::Path::new(service_dir).join("package.json");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    let mut pkgs: Vec<String> = Vec::new();
+    for key in &["dependencies", "devDependencies"] {
+        if let Some(obj) = json.get(key).and_then(|v| v.as_object()) {
+            pkgs.extend(obj.keys().cloned());
+        }
+    }
+    pkgs.sort();
+    pkgs.dedup();
+    pkgs
+}
+
+fn run_dependency_gate(
+    proposed: &[canopy_core::ProposedDependency],
+    theme: &ColorfulTheme,
+) -> (Vec<String>, Vec<String>) {
+    let mut approved: Vec<String> = Vec::new();
+    let mut rejected: Vec<String> = Vec::new();
+
+    if !proposed.is_empty() {
+        println!("\nDependency gate — review proposed external packages:\n");
+        for dep in proposed {
+            println!("  Package:       {}", dep.package);
+            println!("  Type:          {}", if dep.dev { "devDependency" } else { "dependency" });
+            println!("  Justification: {}", dep.justification);
+            println!("  Alternatives:  {}", dep.alternatives);
+            println!();
+
+            let choice = Select::with_theme(theme)
+                .with_prompt(format!("'{}'?", dep.package))
+                .items(&["Accept", "Reject"])
+                .default(0)
+                .interact()
+                .unwrap_or(1);
+
+            if choice == 0 {
+                approved.push(dep.package.clone());
+                println!("  Accepted: {}", dep.package);
+            } else {
+                rejected.push(dep.package.clone());
+                println!("  Rejected: {}", dep.package);
+            }
+            println!();
+        }
+    }
+
+    loop {
+        let add_more = Confirm::with_theme(theme)
+            .with_prompt("Add a package the LLM didn't propose?")
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+        if !add_more { break; }
+
+        let pkg: String = Input::with_theme(theme)
+            .with_prompt("Package name")
+            .interact_text()
+            .unwrap_or_default();
+        let pkg = pkg.trim().to_string();
+        if !pkg.is_empty() {
+            approved.push(pkg.clone());
+            println!("  Added: {pkg}");
+        }
+    }
+
+    (approved, rejected)
 }
 
 fn scan_service_source_files(service_dir: &str) -> Vec<String> {
