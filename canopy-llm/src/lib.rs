@@ -2412,7 +2412,6 @@ fn plan_prompt_for_service(
          {location_line}\n\
          {skill_section}\
          {arch_section}\
-         {testing_section}\n\
          ## Entity schema\n\
          {schema_yaml}\n\
          ## BDD scenarios\n\
@@ -2423,6 +2422,7 @@ fn plan_prompt_for_service(
          {adrs_summary}\n\
          {existing_note}\
          {packages_note}\
+         {testing_section}\n\
          ## Output\n\
          Return ONLY valid YAML — no prose, no code fences.\n\
          List ONLY files that belong to service '{sname}'.\n\
