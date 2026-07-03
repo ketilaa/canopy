@@ -2362,12 +2362,13 @@ fn plan_prompt_for_service(
              - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
                installed by `canopy scaffold` — do NOT include jest.config.js or package.json in the plan.\n\
              - Test files MUST live in the flat services/{{name}}/tests/ directory — NEVER under src/.\n\
-             - Include one unit test file (*.test.ts) per service module.\n\
+             - You MUST add a tests/<Name>.test.ts step for EVERY file in src/services/.\n\
                Unit tests mock the repository and test business logic in isolation.\n\
                Example: services/{{name}}/tests/productService.test.ts\n\
-             - Include one route test file (*.test.ts) per route module using Supertest.\n\
-               Route tests import {{ app }} from src/app.ts and exercise the full HTTP stack.\n\
+             - You MUST add a tests/<Name>.test.ts step for EVERY file in src/routes/.\n\
+               Route tests import app from src/app.ts and exercise the full HTTP stack via Supertest.\n\
                Example: services/{{name}}/tests/productRoutes.test.ts\n\
+             - The plan is INCOMPLETE if any src/services/ or src/routes/ file has no test step.\n\
              - Test files MUST be the last steps in the plan.\n\
              - Do NOT include a test file for src/app.ts or src/index.ts.\n"
         )
