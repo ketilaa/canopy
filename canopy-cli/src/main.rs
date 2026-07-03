@@ -1461,7 +1461,10 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 .with_prompt("Execute this plan?")
                 .default(true)
                 .interact()
-                .context("failed to read confirmation")?;
+                .unwrap_or_else(|_| {
+                    eprintln!("\nInput interrupted — plan saved, not executed. Re-run `canopy implement {story_id}` to continue.");
+                    false
+                });
 
             save_story_plan(story_id, &plan)
                 .context("failed to save implementation plan")?;
