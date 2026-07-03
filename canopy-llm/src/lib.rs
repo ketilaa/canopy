@@ -1521,24 +1521,32 @@ const NODE_EXPRESS_UNIT_TEST_SKILL: &str = "\
       models/
     tests/       ← test files live here, one level above src/
 
-### Import paths from tests/
-The path MUST contain src/:
-  import request from 'supertest'                                     ✓
-  import app from '../src/app'                                        ✓  (no braces — default export)
-  import { ProductService } from '../src/services/ProductService'     ✓
+### Import and jest.mock paths from tests/
+The path MUST contain src/ — this rule applies to BOTH import statements AND jest.mock() calls:
+  import request from 'supertest'                                          ✓
+  import app from '../src/app'                                             ✓  (no braces — default export)
+  import { ProductService } from '../src/services/ProductService'          ✓
   import { ProductRepository } from '../src/repositories/ProductRepository' ✓
-  import { EventPublisher } from '../src/infrastructure/EventPublisher'     ✓
+  import { EventPublisher } from '../src/infrastructure/EventPublisher'    ✓
+  jest.mock('../src/repositories/ProductRepository')                       ✓
+  jest.mock('../src/infrastructure/EventPublisher', () => ({ ... }))      ✓
 
-### Forbidden imports
-These will cause TS2307 / TS2614 compile errors:
-  import { app } from '../src/app'        ✗  app is a DEFAULT export — remove the braces
-  import ... from '../services/...'       ✗  missing src/ segment — must be '../src/services/...'
-  import ... from '../../src/...'         ✗  two dot-dots — always wrong from tests/
-  import ... from '@services/...'         ✗  no path aliases configured in tsconfig
-  require(...)                            ✗  use ES import syntax
-  uuid(), faker()                         ✗  not in devDependencies — use plain strings
+### Forbidden paths (imports AND jest.mock)
+These will cause module-not-found errors at runtime:
+  import { app } from '../src/app'               ✗  app is a DEFAULT export — remove the braces
+  import ... from '../services/...'              ✗  missing src/ — must be '../src/services/...'
+  jest.mock('../repositories/ProductRepository') ✗  missing src/ — must be '../src/repositories/...'
+  import ... from '../../src/...'               ✗  two dot-dots — always wrong from tests/
+  jest.mock('../../src/repositories/...')        ✗  two dot-dots — always wrong from tests/
+  import ... from '@services/...'               ✗  no path aliases configured in tsconfig
+  require(...)                                   ✗  use ES import syntax
+  uuid(), faker()                                ✗  not in devDependencies — use plain strings
 
 ### Route test example
+  jest.mock('../src/infrastructure/EventPublisher', () => ({
+    EventPublisher: jest.fn().mockImplementation(() => ({ publish: jest.fn().mockResolvedValue(undefined) }))
+  }))
+
   import request from 'supertest'
   import app from '../src/app'
 
