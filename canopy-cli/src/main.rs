@@ -1304,7 +1304,8 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                     .filter(|d| d.service == service.name && d.decision == "rejected")
                     .map(|d| d.package.clone())
                     .collect();
-                match propose_dependencies(&client, &service.name, tech, story, &service_steps, &installed, &previously_rejected, &adrs) {
+                let dep_tech_skill = skill_for_technology(tech, "", "", &service.name);
+                match propose_dependencies(&client, &service.name, tech, story, &service_steps, &installed, &previously_rejected, &adrs, &dep_tech_skill) {
                     Ok(proposed) if !proposed.is_empty() => {
                         all_proposed.push((service.name.clone(), tech.to_string(), proposed));
                     }

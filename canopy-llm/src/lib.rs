@@ -3310,6 +3310,7 @@ pub fn propose_dependencies(
     installed: &[String],
     previously_rejected: &[String],
     adrs: &[Adr],
+    tech_skill: &str,
 ) -> Result<Vec<ProposedDependency>, LlmError> {
     let steps_summary: String = plan_steps.iter()
         .map(|s| format!("  - {} ({}): {}", s.file, s.operation, s.description))
@@ -3374,6 +3375,12 @@ pub fn propose_dependencies(
 
     let _ = is_jvm; // used indirectly via the branch above
 
+    let skill_section = if tech_skill.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Tech stack rules (MUST follow)\n{tech_skill}\n")
+    };
+
     let prompt = format!(
         "You are reviewing a {stack_desc} implementation plan for service '{service}' ({tech}).\n\
          \n\
@@ -3382,7 +3389,8 @@ pub fn propose_dependencies(
          \n\
          ## Story\n\
          As a {as_a}, I want {want}, so that {so_that}.\n\
-         {adrs_section}\n\
+         {adrs_section}\
+         {skill_section}\
          ## Already declared dependencies ({manifest_name})\n\
          {installed}\n\
          STOP — do NOT propose any package from the list above. They are already installed.\n\
@@ -3430,6 +3438,7 @@ pub fn propose_dependencies(
         so_that = story.so_that,
         installed = installed_list,
         adrs_section = adrs_section,
+        skill_section = skill_section,
         rejected_section = rejected_section,
         manifest_name = manifest_name,
         builtin_note = builtin_note,
