@@ -1400,8 +1400,8 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 if !all_available.is_empty() {
                     lines.push(format!(
                         "## Available dependencies ({manifest_label})\n\
-                         {available_note}\n  {}",
-                        all_available.join(", ")
+                         {available_note}\n{}",
+                        all_available.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
                     ));
                 }
                 if !rejected.is_empty() {
@@ -1438,8 +1438,8 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                     ("package.json", "Packages in package.json — do NOT import any other package (runtime crash):")
                 };
                 pkg_constraints_by_service.insert(service.name.clone(), format!(
-                    "## Available dependencies ({label})\n{note}\n  {}",
-                    installed.join(", ")
+                    "## Available dependencies ({label})\n{note}\n{}",
+                    installed.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
                 ));
             }
             // Store constraints for execution phase via a plan-level side-channel.
