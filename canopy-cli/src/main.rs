@@ -1800,6 +1800,26 @@ fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
                 }
             }
         }
+        // Jest stack trace: "    at Something (path/to/file.ts:line:col)"
+        // Captures the source file where the runtime error originates.
+        // Skips node_modules frames — only project source files are fixable.
+        if line.trim_start().starts_with("at ") && line.contains(".ts:") && !line.contains("node_modules") {
+            if let Some(open) = line.rfind('(') {
+                if let Some(close) = line.rfind(')') {
+                    let inner = &line[open + 1..close];
+                    if let Some(colon) = inner.rfind(':') {
+                        if let Some(colon2) = inner[..colon].rfind(':') {
+                            let path = inner[..colon2].trim();
+                            if path.ends_with(".ts") || path.ends_with(".tsx") {
+                                if let Some(resolved) = resolve(path) {
+                                    if !files.contains(&resolved) { files.push(resolved); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     files
 }

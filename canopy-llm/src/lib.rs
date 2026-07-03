@@ -1230,6 +1230,11 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              This name MUST match what the unit test mock declares (saveProduct: jest.fn()).\n\
              Never name it create(), persist(), or store() — the test expects saveProduct.\n\
              \n\
+             ### EventPublisher\n\
+             The publisher exposes exactly one method: publish<T>(topic: string, event: T): Promise<void>\n\
+             NEVER call publishEvent(), emit(), or send() — the method is always publish().\n\
+             Callers: await this.eventPublisher.publish('product-events', event)  ✓\n\
+             \n\
              ### Route handlers\n\
              Every handler MUST declare next in the signature:\n\
                router.post('/products', async (req: Request, res: Response, next: NextFunction) => {\n\
@@ -1249,7 +1254,12 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              NEVER call new EventPublisher() without arguments.\n\
              \n\
              ### Error handling\n\
-             src/middleware/errorHandler.ts: import { ZodError } from 'zod' — use instanceof ZodError,\n\
+             src/middleware/errorHandler.ts exports a named ErrorRequestHandler:\n\
+               import { ErrorRequestHandler } from 'express'\n\
+               export const errorHandler: ErrorRequestHandler = (err, req, res, next) => { ... }\n\
+             app.ts imports it as: import { errorHandler } from './middleware/errorHandler'\n\
+             NEVER use default export for errorHandler — app.ts must destructure it by name.\n\
+             import { ZodError } from 'zod' — use instanceof ZodError,\n\
              NOT z.ZodError (z is not imported in middleware; ZodError is a named export from 'zod').\n\
              Infrastructure lifecycle (connect/disconnect) belongs in the caller, not as a private field\n\
              the route accesses — create EventPublisher as a local variable in the route handler.\n\
