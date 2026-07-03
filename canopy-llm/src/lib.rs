@@ -2291,7 +2291,7 @@ fn plan_prompt_for_service(
         String::new()
     } else {
         format!(
-            "\nExisting files — use operation: modify for these:\n{}",
+            "\n## Existing files\nUse operation: modify for every file in this list; create for all others.\n{}",
             service_existing.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n")
         )
     };
@@ -2300,7 +2300,7 @@ fn plan_prompt_for_service(
         String::new()
     } else {
         format!(
-            "\nPackages already in package.json — do NOT add npm install steps for these:\n  {}\n",
+            "\n## Available packages\nAlready declared — do NOT add npm install steps for these:\n  {}\n",
             installed_packages.join(", ")
         )
     };
@@ -2324,7 +2324,7 @@ fn plan_prompt_for_service(
     let testing_section = if is_jvm {
         let it_skill = integration_testing_skill(tech);
         format!(
-            "\nTesting plan rules:\n\
+            "\n## Testing plan\n\
              - Unit test files (*Test.java) are auto-generated per class by the TDD loop.\n\
                DO NOT include unit test files in this plan.\n\
              - Integration test files (*IT.java) test the full stack end-to-end.\n\
@@ -2333,7 +2333,7 @@ fn plan_prompt_for_service(
         )
     } else if is_node {
         format!(
-            "\nTesting plan rules:\n\
+            "\n## Testing plan\n\
              - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
                installed by `canopy scaffold` — do NOT create jest.config.js as a plan step.\n\
              - Include one unit test file (*.test.ts) per service module.\n\
@@ -2347,7 +2347,7 @@ fn plan_prompt_for_service(
         )
     } else if is_react {
         format!(
-            "\nTesting plan rules:\n\
+            "\n## Testing plan\n\
              - For EVERY src/api/*.ts file in the plan, you MUST add a corresponding tests/<Name>.test.ts step.\n\
              - For EVERY src/components/*.tsx file in the plan, you MUST add a corresponding tests/<Name>.test.tsx step.\n\
              - The plan is INCOMPLETE if any src/api/ or src/components/ file has no test step.\n\
@@ -2358,7 +2358,7 @@ fn plan_prompt_for_service(
     } else {
         let it_skill = integration_testing_skill(tech);
         format!(
-            "\nTesting plan rules:\n\
+            "\n## Testing plan\n\
              - Include unit test files as needed for each module.\n\
              - Include integration tests as the LAST step(s) in the plan.\n\
              {it_skill}\n"
@@ -2377,19 +2377,26 @@ fn plan_prompt_for_service(
         "Discover every file that must be created or modified to implement story '{story_id}' \
          in service '{sname}'. Do NOT order them — just enumerate what is needed.\n\
          \n\
-         Story: As a {as_a}, I want {want}, so that {so_that}.\n\
+         ## Story\n\
+         As a {as_a}, I want {want}, so that {so_that}.\n\
          \n\
-         Service: {sname}  Technology: {tech}\n\
+         ## Service\n\
+         Name: {sname}  Technology: {tech}\n\
          {location_line}\n\
          {skill_section}\
          {arch_section}\
          {testing_section}\n\
-         Entity schema:\n{schema_yaml}\n\
-         BDD scenarios:\n{scenarios_yaml}\n\
-         OAS Contract:\n{contract_yaml}\n\
-         Architecture decisions:\n{adrs_summary}\n\
+         ## Entity schema\n\
+         {schema_yaml}\n\
+         ## BDD scenarios\n\
+         {scenarios_yaml}\n\
+         ## API contract\n\
+         {contract_yaml}\n\
+         ## Architecture decisions\n\
+         {adrs_summary}\n\
          {existing_note}\
          {packages_note}\
+         ## Output\n\
          Return ONLY valid YAML — no prose, no code fences.\n\
          List ONLY files that belong to service '{sname}'.\n\
          Every field inside a list item MUST be indented by exactly 2 spaces.\n\
@@ -2413,7 +2420,7 @@ fn plan_prompt_for_service(
          {event_scope_rule}\
          If in doubt, leave it out.\n\
          \n\
-         ### YAML Format\n\
+         ### YAML format\n\
          The response MUST start with the root key \"steps:\" — never a bare list.\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
