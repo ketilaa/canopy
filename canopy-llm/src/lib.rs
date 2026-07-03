@@ -2312,8 +2312,8 @@ fn plan_prompt_for_service(
         String::new()
     } else {
         format!(
-            "\n## Available packages\nAlready declared — do NOT add npm install steps for these:\n  {}\n",
-            installed_packages.join(", ")
+            "\n## Available packages\nAlready declared — do NOT add npm install steps for these:\n{}\n",
+            installed_packages.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
         )
     };
 
