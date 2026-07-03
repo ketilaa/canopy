@@ -2282,8 +2282,20 @@ fn plan_prompt_for_service(
     } else {
         format!("services/{}/", service.name)
     };
+    // Strip scaffold/config files from the existing list before it reaches the prompt.
+    // The LLM sees these as candidates to modify; removing them prevents leakage upstream.
+    let scaffold_names = [
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "jest.config.js", "jest.config.ts",
+        "vite.config.ts", "vite.config.js",
+        ".gitignore", "README.md",
+    ];
     let service_existing: Vec<&str> = existing_files.iter()
         .filter(|f| f.starts_with(&service_prefix))
+        .filter(|f| {
+            let base = f.rsplit('/').next().unwrap_or(f);
+            !scaffold_names.contains(&base) && !base.starts_with("tsconfig.")
+        })
         .map(|f| f.as_str())
         .collect();
 
@@ -2485,6 +2497,7 @@ fn ordering_prompt_for_service(steps: &[ImplementationStep], service_name: &str,
          {file_list}\n\
          \n\
          Return ONLY valid YAML — no prose, no code fences.\n\
+         Return ONLY the files listed above — do NOT add or remove any.\n\
          order:\n\
          - \"<file-path>\"\n",
         service_name = service_name,
@@ -2627,6 +2640,35 @@ fn derive_frontend_test_path(source_file: &str) -> Option<String> {
     Some(format!("{}/tests/{}", service_root, test_filename))
 }
 
+fn inject_missing_app_tsx(steps: &mut Vec<ImplementationStep>, service: &ServiceEntry) {
+    let prefix = format!("frontend/{}/", service.name);
+    let app_tsx = format!("{}src/App.tsx", prefix);
+    // Only inject if there is at least one component step and App.tsx is not already present.
+    let has_component = steps.iter().any(|s| s.file.contains("/src/components/"));
+    let has_app = steps.iter().any(|s| s.file == app_tsx);
+    if !has_component || has_app {
+        return;
+    }
+    // Collect the component files this App.tsx will render.
+    let component_deps: Vec<String> = steps.iter()
+        .filter(|s| s.file.contains("/src/components/"))
+        .map(|s| s.file.clone())
+        .collect();
+    // Insert before the first test step so it sits in the right layer position.
+    let insert_pos = steps.iter()
+        .position(|s| s.file.to_lowercase().contains(".test."))
+        .unwrap_or(steps.len());
+    steps.insert(insert_pos, ImplementationStep {
+        id: String::new(),
+        service: service.name.clone(),
+        file: app_tsx,
+        operation: "modify".to_string(),
+        description: "Render the form component and display it as the main page content".to_string(),
+        depends_on: component_deps,
+        status: StepStatus::Pending,
+    });
+}
+
 fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, service_name: &str) {
     // First, remove any test files the LLM placed under src/ — they belong in tests/.
     steps.retain(|s| {
@@ -2731,6 +2773,7 @@ pub fn generate_story_plan(
         }
 
         if is_front_svc {
+            inject_missing_app_tsx(&mut steps, service);
             inject_missing_frontend_tests(&mut steps, &service.name);
         }
         all_steps.extend(steps);
