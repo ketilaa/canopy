@@ -1202,15 +1202,28 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
     let spec = load_story_spec(story_id)
         .with_context(|| format!("no spec for '{}' — run `canopy spec {story_id}` first", story_id))?;
 
-    let contract_path = canopy_storage::storage_dir()
-        .join(format!("stories/{}/contract.yaml", story_id));
-    let contract_yaml = std::fs::read_to_string(&contract_path)
-        .with_context(|| format!("no contract for '{}' — run `canopy spec {story_id}` first", story_id))?;
-
     let services = load_services_registry()
         .context("no services.yaml — run `canopy spec` first")?;
 
     let adrs = load_all_adrs().unwrap_or_default();
+
+    let contract_path = canopy_storage::storage_dir()
+        .join(format!("stories/{}/contract.yaml", story_id));
+    let contract_yaml = if contract_path.exists() {
+        std::fs::read_to_string(&contract_path)
+            .context("failed to read contract.yaml")?
+    } else {
+        println!("No contract found for '{}' — generating from spec...", story_id);
+        let client = build_client("contract", debug)?;
+        match generate_story_contract(&client, story, &spec, &services, &adrs) {
+            Ok(yaml) => {
+                save_story_contract(story_id, &yaml).context("failed to save contract")?;
+                println!("Contract saved to .canopy/stories/{}/contract.yaml", story_id);
+                yaml
+            }
+            Err(e) => anyhow::bail!("contract generation failed: {e}"),
+        }
+    };
 
     // Detect the actual base package per JVM service from the scaffolded *Application.java.
     // This adapts to whatever naming convention the scaffold tool used (Spring Initializr
