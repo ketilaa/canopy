@@ -3400,15 +3400,24 @@ pub fn propose_dependencies(
          If no new dependencies are needed, return: proposed_dependencies: []\n\
          \n\
          Return ONLY valid YAML — no prose, no code fences.\n\
-         Every field of a list item MUST be indented by exactly 2 spaces under the dash:\n\
          \n\
+         ## Output format\n\
+         CRITICAL — indentation: every field after the dash MUST be indented by exactly 2 spaces.\n\
+         WRONG (fields at column 0 — will not parse):\n\
          proposed_dependencies:\n\
-         - package: \"<coordinate>\"\n\
-           justification: \"<precise reason this story needs it>\"\n\
-           alternatives: \"<what else was considered and why rejected>\"\n\
+         - package: \"example\"\n\
+         justification: \"reason\"\n\
+         alternatives: \"other options\"\n\
+         dev: false\n\
+         \n\
+         CORRECT (fields indented 2 spaces under the dash):\n\
+         proposed_dependencies:\n\
+         - package: \"example\"\n\
+           justification: \"reason\"\n\
+           alternatives: \"other options\"\n\
            dev: false\n\
          \n\
-         YAML rules:\n\
+         Additional rules:\n\
          - All string values MUST use double quotes.\n\
          - justification and alternatives MUST be on the same line as their key — no block scalars.\n\
          - dev MUST be a bare boolean: true or false (no quotes).",
