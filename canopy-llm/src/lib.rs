@@ -925,8 +925,8 @@ fn fix_yaml_colon_in_scalars(yaml: &str) -> String {
             // Quote bracket-wrapped type annotations like `type: [string]` but NOT
             // real YAML inline sequences like `depends_on: ["path/to/file.ts"]`.
             // Real sequences contain quoted strings inside; type annotations do not.
-            let inner = &value[1..value.len()-1];
-            if value.starts_with('[') && value.ends_with(']')
+            let inner = if value.len() >= 2 { &value[1..value.len()-1] } else { "" };
+            if value.starts_with('[') && value.ends_with(']') && value.len() >= 2
                 && !value.starts_with("[\n")
                 && !inner.contains('"')
                 && !inner.contains('\'')
