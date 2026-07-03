@@ -3353,9 +3353,11 @@ pub fn propose_dependencies(
          \n\
          ## Already declared dependencies ({manifest_name})\n\
          {installed}\n\
+         STOP — do NOT propose any package from the list above. They are already installed.\n\
          {rejected_section}\
          ## Task\n\
-         Identify any NEW external dependencies this plan requires that are NOT already declared.\n\
+         Identify NEW external dependencies NOT in the already-declared list above.\n\
+         A package already listed above MUST NOT appear in proposed_dependencies — ever.\n\
          {builtin_note}\n\
          For each proposed dependency:\n\
          - State the coordinate in the format: {coord_format}\n\
@@ -3399,8 +3401,16 @@ pub fn propose_dependencies(
     #[derive(serde::Deserialize)]
     struct Wrapper { proposed_dependencies: Vec<ProposedDependency> }
 
+    let installed_set: std::collections::HashSet<String> =
+        installed.iter().map(|s| s.to_lowercase()).collect();
+
     serde_yaml::from_str::<Wrapper>(&stripped)
-        .map(|w| w.proposed_dependencies)
+        .map(|w| {
+            w.proposed_dependencies
+                .into_iter()
+                .filter(|d| !installed_set.contains(&d.package.to_lowercase()))
+                .collect()
+        })
         .map_err(|e| LlmError::UnexpectedShape(format!("dependency proposals: {e}")))
 }
 
