@@ -1196,11 +1196,14 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              All src/ subdirectories are siblings — one dot-dot only:\n\
                src/services/ProductService.ts → import { Product } from '../models/Product'       ✓\n\
                src/services/ProductService.ts → import { ProductRepository } from '../repositories/ProductRepository' ✓\n\
-               NEVER: import ... from '../../models/...'   ✗  two dots goes ABOVE src/ entirely\n\
+             WRONG — two dots leaves src/ entirely and reaches the project root:\n\
+               src/services/ProductService.ts → import { Product } from '../../models/Product'    ✗\n\
+               src/services/ProductService.ts → import ... from '../../infrastructure/...'        ✗\n\
              \n\
              #### No external utilities\n\
-             Do not import moment, uuid, nanoid, or any package not in package.json.\n\
-               Timestamps: new Date()             ✓\n\
+             RUNTIME ERROR — importing moment, uuid, nanoid, or any package absent from package.json\n\
+             will crash the process. Check package.json before using any package.\n\
+               Timestamps: new Date()             ✓  (built-in)\n\
                IDs:        crypto.randomUUID()    ✓  (built-in Node.js — no import needed)\n\
              \n\
              ### Exports\n\
@@ -1212,11 +1215,20 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              NEVER: export default class ProductService  ✗  causes TS2613/TS2614 in importers\n\
              \n\
              ### Models\n\
-             Model interfaces are PURE TypeScript interfaces — no factory functions, no runtime code,\n\
-             no imports from npm packages. IDs are plain strings; the repository generates them.\n\
-             NEVER call Product.create() — Product is an interface, not a class.\n\
-             The repository creates instances as plain object literals:\n\
-               const product: Product = { id: crypto.randomUUID(), createdAt: new Date(), modifiedAt: null, ...fields }\n\
+             A model file exports one interface AND one standalone factory function:\n\
+               export interface Product { id: string; createdAt: Date; modifiedAt: Date | null; ... }\n\
+               export function createProduct(name: string, ...): Product {\n\
+                 return { id: crypto.randomUUID(), createdAt: new Date(), modifiedAt: null, name, ... }\n\
+               }\n\
+             No imports from npm packages — use only built-in Node.js APIs.\n\
+             NEVER call Product.create() — Product is an interface; interfaces have no static methods.\n\
+             Callers import and call the factory function: import { createProduct } from '../models/Product'\n\
+             \n\
+             ### Repository\n\
+             Repository save methods are named save<EntityName>(entity): Promise<Entity>:\n\
+               async saveProduct(product: Product): Promise<Product> { ... }     ✓\n\
+             This name MUST match what the unit test mock declares (saveProduct: jest.fn()).\n\
+             Never name it create(), persist(), or store() — the test expects saveProduct.\n\
              \n\
              ### Route handlers\n\
              Every handler MUST declare next in the signature:\n\
@@ -1224,8 +1236,15 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              Pass all errors to next(err) — never catch-and-respond in the route body.\n\
              Validate input at the route boundary with zod:\n\
              - define a zod schema in the route file\n\
+             - zod schema field names MUST match the domain interface field names exactly\n\
+               (e.g., `categories` not `categoryIds` if the domain interface uses `categories`)\n\
+             - use .optional() for optional fields — NEVER .nullable() or .nullable().optional()\n\
+               (.nullable() changes the type to include null, causing TS assignment errors downstream)\n\
              - call schema.parse(req.body); pass errors to next(err)\n\
              async/await everywhere — no raw .then() chains.\n\
+             EventPublisher is instantiated in the route handler — pass config from environment:\n\
+               new EventPublisher('product-service', process.env.KAFKA_BROKER || 'localhost:9092')\n\
+             NEVER call new EventPublisher() without arguments.\n\
              \n\
              ### Error handling\n\
              src/middleware/errorHandler.ts: import { ZodError } from 'zod' — use instanceof ZodError,\n\
@@ -1254,7 +1273,11 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              ### App structure\n\
              src/app.ts builds and exports the Express app WITHOUT calling app.listen().\n\
              src/index.ts is the ONLY file that calls app.listen().\n\
-             This separation lets Supertest import app without starting a real server."
+             This separation lets Supertest import app without starting a real server.\n\
+             app.ts creates repository instances and assigns them to app.locals so routes\n\
+             can access them via req.app.locals without constructing them on every request:\n\
+               import { ProductRepository } from './repositories/ProductRepository'\n\
+               app.locals.productRepository = new ProductRepository()"
             .to_string(),
         layer_order:
             "  1. src/models/           — interfaces only; no deps\n\
@@ -1557,7 +1580,19 @@ These will cause TS2307 / TS2614 compile errors:
 
 ### Jest assertion rules
   Use .toThrow() not .toThrowError() — toThrowError was removed in Jest 30.
-  mockResolvedValue always requires an argument — use mockResolvedValue(undefined) for void.";
+  mockResolvedValue always requires an argument — use mockResolvedValue(undefined) for void.
+  NEVER use expect.any(X) where X is a TypeScript interface — interfaces have no runtime
+  representation and this causes TS2693. Use expect.objectContaining({field: value}) instead.
+
+### Scope discipline
+  Only write tests for the HTTP methods and service operations described in the story.
+  Do NOT generate GET/DELETE/PUT route tests unless the story's acceptance criteria require them.
+  Mock EventPublisher at the top of every route test file to prevent Kafka connection attempts:
+    jest.mock('../src/infrastructure/EventPublisher', () => ({
+      EventPublisher: jest.fn().mockImplementation(() => ({
+        publishProductCreated: jest.fn().mockResolvedValue(undefined)
+      }))
+    }))";
 
 fn spring_boot_unit_test_skill(layer: &str) -> String {
     let layer_pattern = match layer {
