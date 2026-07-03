@@ -1785,6 +1785,21 @@ fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
                 }
             }
         }
+        // Jest module resolution: Cannot find module '...' from 'tests/Foo.ts'
+        // The file after `from '` is the test file that contains the bad import.
+        if line.contains("Cannot find module") {
+            if let Some(from_pos) = line.find(" from '") {
+                let rest = &line[from_pos + 7..];
+                if let Some(end) = rest.find('\'') {
+                    let path = rest[..end].trim();
+                    if path.ends_with(".ts") || path.ends_with(".tsx") {
+                        if let Some(resolved) = resolve(path) {
+                            if !files.contains(&resolved) { files.push(resolved); }
+                        }
+                    }
+                }
+            }
+        }
     }
     files
 }
