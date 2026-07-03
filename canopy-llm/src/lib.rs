@@ -2606,14 +2606,33 @@ fn parse_plan_steps(raw: &str) -> Result<Vec<ImplementationStep>, LlmError> {
 
 fn layer_weight(file: &str) -> u8 {
     let f = file.to_lowercase();
-    if f.ends_with("pom.xml") || f.ends_with("package.json") || f.ends_with("build.gradle") { 0 }
-    else if f.contains("/domain/") || f.contains("entity") { 1 }
-    else if f.contains("/repository/") { 2 }
-    else if f.contains("/dto/") || f.contains("request") || f.contains("response") { 3 }
-    else if f.contains("/service/") { 4 }
-    else if f.contains("/controller/") { 5 }
-    else if f.contains("test") || f.contains("spec") { 6 }
-    else { 3 }
+    // Build manifests first.
+    if f.ends_with("pom.xml") || f.ends_with("build.gradle") { return 0; }
+    // Tests last.
+    if f.contains("/tests/") || f.contains(".test.") || f.contains("test") && f.ends_with(".ts")
+        || f.ends_with("test.java") || f.contains("spec") { return 9; }
+    // Node.js / Express layer order (plural directory names).
+    if f.contains("/models/")         { return 1; }
+    if f.contains("/events/")         { return 2; }
+    if f.contains("/repositories/")   { return 3; }
+    if f.contains("/infrastructure/") { return 4; }
+    if f.contains("/services/") && !f.starts_with("services/") {
+        // /services/ as a src subdirectory (not the top-level services/ project root)
+        return 5;
+    }
+    if f.contains("/routes/")     { return 6; }
+    if f.contains("/middleware/") { return 7; }
+    // app.ts / app.js — assembles the app; must come after routes and middleware.
+    if f.rsplit('/').next().map_or(false, |n| n.starts_with("app.")) { return 8; }
+    // index.ts / index.js — entry point; calls listen(); last before tests.
+    if f.rsplit('/').next().map_or(false, |n| n.starts_with("index.")) { return 8; }
+    // JVM / Spring layer order (singular directory names).
+    if f.contains("/domain/") || f.contains("entity") { return 1; }
+    if f.contains("/repository/")  { return 3; }
+    if f.contains("/dto/") || f.contains("request") || f.contains("response") { return 3; }
+    if f.contains("/service/")     { return 5; }
+    if f.contains("/controller/")  { return 6; }
+    3 // unknown — treat as mid-stack
 }
 
 fn frontend_tier(file: &str) -> u8 {
