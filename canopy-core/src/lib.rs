@@ -342,6 +342,25 @@ pub struct ProposedDependency {
     pub dev: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyDecision {
+    pub story_id: String,
+    pub service: String,
+    pub package: String,
+    /// "accepted" or "rejected"
+    pub decision: String,
+    pub justification: String,
+    pub alternatives: String,
+    pub dev: bool,
+    pub decided_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DependencyDecisionLog {
+    #[serde(default)]
+    pub decisions: Vec<DependencyDecision>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

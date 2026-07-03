@@ -2738,7 +2738,7 @@ fn step_prompt(
         .find(|s| s.name == service_name || s.name == step.service);
     let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
     // Detect frontend by registry entry OR by file extension (belt-and-suspenders).
-    let is_frontend = service_entry
+    let _is_frontend = service_entry
         .and_then(|s| s.component_type.as_deref())
         .map(|t| t == "frontend")
         .unwrap_or(false)
@@ -3180,6 +3180,7 @@ pub fn propose_dependencies(
     story: &UserStory,
     plan_steps: &[ImplementationStep],
     installed: &[String],
+    previously_rejected: &[String],
 ) -> Result<Vec<ProposedDependency>, LlmError> {
     let steps_summary: String = plan_steps.iter()
         .map(|s| format!("  - {} ({}): {}", s.file, s.operation, s.description))
@@ -3189,6 +3190,14 @@ pub fn propose_dependencies(
         "none".to_string()
     } else {
         installed.join(", ")
+    };
+    let rejected_section = if previously_rejected.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n## Previously rejected dependencies (do NOT propose these again)\n{}\n",
+            previously_rejected.iter().map(|p| format!("- {}", p)).collect::<Vec<_>>().join("\n")
+        )
     };
 
     let t = tech.to_lowercase();
@@ -3237,7 +3246,7 @@ pub fn propose_dependencies(
          \n\
          ## Already declared dependencies ({manifest_name})\n\
          {installed}\n\
-         \n\
+         {rejected_section}\
          ## Task\n\
          Identify any NEW external dependencies this plan requires that are NOT already declared.\n\
          {builtin_note}\n\
@@ -3263,6 +3272,7 @@ pub fn propose_dependencies(
         want = story.want,
         so_that = story.so_that,
         installed = installed_list,
+        rejected_section = rejected_section,
         manifest_name = manifest_name,
         builtin_note = builtin_note,
         coord_format = coord_format,

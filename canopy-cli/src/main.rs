@@ -71,6 +71,8 @@ enum Commands {
         /// Story ID to specify (must have status: accepted)
         story_id: String,
     },
+    /// Show the global dependency decision log
+    Dependencies,
 }
 
 fn uuid_v4() -> String {
@@ -213,6 +215,7 @@ fn run_repl(debug: bool) -> Result<()> {
                         Commands::Stories                      => cmd_stories(),
                         Commands::Intent { statement }         => cmd_intent(statement, debug),
                         Commands::Spec { story_id }            => cmd_spec(&story_id, debug),
+                        Commands::Dependencies                 => cmd_dependencies(),
                     };
                     if let Err(e) = result {
                         eprintln!("  error: {e:#}");
@@ -1283,7 +1286,12 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 if service_steps.is_empty() { continue; }
 
                 println!("Analysing dependencies for '{}'...", service.name);
-                match propose_dependencies(&client, &service.name, tech, story, &service_steps, &installed) {
+                let global_log = canopy_storage::load_dependency_decisions().unwrap_or_default();
+                let previously_rejected: Vec<String> = global_log.decisions.iter()
+                    .filter(|d| d.service == service.name && d.decision == "rejected")
+                    .map(|d| d.package.clone())
+                    .collect();
+                match propose_dependencies(&client, &service.name, tech, story, &service_steps, &installed, &previously_rejected) {
                     Ok(proposed) if !proposed.is_empty() => {
                         all_proposed.push((service.name.clone(), tech.to_string(), proposed));
                     }
@@ -1294,10 +1302,35 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
 
             // Collect the gate results before showing the plan.
             let mut pkg_constraints_by_service: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut dep_log = canopy_storage::load_dependency_decisions()
+                .unwrap_or_default();
             for (svc_name, svc_tech, proposed) in &all_proposed {
                 let installed = installed_deps_by_service.get(svc_name).cloned().unwrap_or_default();
                 println!("\nDependency gate for service '{svc_name}':");
-                let (approved, rejected) = run_dependency_gate(proposed, &theme);
+                let gate_results = run_dependency_gate(proposed, &theme);
+
+                // Append decisions to the global log.
+                for (dep, accepted) in &gate_results {
+                    dep_log.decisions.push(canopy_core::DependencyDecision {
+                        story_id: story_id.to_string(),
+                        service: svc_name.clone(),
+                        package: dep.package.clone(),
+                        decision: if *accepted { "accepted".to_string() } else { "rejected".to_string() },
+                        justification: dep.justification.clone(),
+                        alternatives: dep.alternatives.clone(),
+                        dev: dep.dev,
+                        decided_at: iso_now(),
+                    });
+                }
+
+                let approved: Vec<String> = gate_results.iter()
+                    .filter(|(_, ok)| *ok)
+                    .map(|(d, _)| d.package.clone())
+                    .collect();
+                let rejected: Vec<String> = gate_results.iter()
+                    .filter(|(_, ok)| !*ok)
+                    .map(|(d, _)| d.package.clone())
+                    .collect();
 
                 let t = svc_tech.to_lowercase();
                 let is_npm_svc = t.contains("node") || t.contains("express") || t.contains("react")
@@ -1366,6 +1399,10 @@ fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> 
                 if !lines.is_empty() {
                     pkg_constraints_by_service.insert(svc_name.clone(), lines.join("\n\n"));
                 }
+            }
+            // Persist the decision log after all gates are complete.
+            if let Err(e) = canopy_storage::save_dependency_decisions(&dep_log) {
+                eprintln!("Warning: could not save dependency decisions: {e}");
             }
             // For services with no gate interaction, still populate available packages
             // so step prompts know what is declared in the build manifest.
@@ -1836,9 +1873,8 @@ fn read_package_json_deps(service_dir: &str) -> Vec<String> {
 fn run_dependency_gate(
     proposed: &[canopy_core::ProposedDependency],
     theme: &ColorfulTheme,
-) -> (Vec<String>, Vec<String>) {
-    let mut approved: Vec<String> = Vec::new();
-    let mut rejected: Vec<String> = Vec::new();
+) -> Vec<(canopy_core::ProposedDependency, bool)> {
+    let mut decisions: Vec<(canopy_core::ProposedDependency, bool)> = Vec::new();
 
     if !proposed.is_empty() {
         println!("\nDependency gate — review proposed external packages:\n");
@@ -1856,14 +1892,10 @@ fn run_dependency_gate(
                 .interact()
                 .unwrap_or(1);
 
-            if choice == 0 {
-                approved.push(dep.package.clone());
-                println!("  Accepted: {}", dep.package);
-            } else {
-                rejected.push(dep.package.clone());
-                println!("  Rejected: {}", dep.package);
-            }
+            let accepted = choice == 0;
+            println!("  {}: {}", if accepted { "Accepted" } else { "Rejected" }, dep.package);
             println!();
+            decisions.push((dep.clone(), accepted));
         }
     }
 
@@ -1881,12 +1913,17 @@ fn run_dependency_gate(
             .unwrap_or_default();
         let pkg = pkg.trim().to_string();
         if !pkg.is_empty() {
-            approved.push(pkg.clone());
             println!("  Added: {pkg}");
+            decisions.push((canopy_core::ProposedDependency {
+                package: pkg,
+                justification: "Added by developer".to_string(),
+                alternatives: String::new(),
+                dev: false,
+            }, true));
         }
     }
 
-    (approved, rejected)
+    decisions
 }
 
 fn scan_service_source_files(service_dir: &str) -> Vec<String> {
@@ -2102,6 +2139,52 @@ fn print_stories_section(label: &str, stories: &[&canopy_core::UserStory]) {
         }
     }
     println!();
+}
+
+fn cmd_dependencies() -> Result<()> {
+    let log = canopy_storage::load_dependency_decisions()
+        .context("failed to load dependency decisions")?;
+
+    if log.decisions.is_empty() {
+        println!("No dependency decisions recorded yet.");
+        println!("Run `canopy implement` to gate external dependencies as they are proposed.");
+        return Ok(());
+    }
+
+    let accepted: Vec<_> = log.decisions.iter().filter(|d| d.decision == "accepted").collect();
+    let rejected: Vec<_> = log.decisions.iter().filter(|d| d.decision == "rejected").collect();
+
+    println!("Dependency decision log ({} total):\n", log.decisions.len());
+
+    if !accepted.is_empty() {
+        println!("Accepted ({}):", accepted.len());
+        for d in &accepted {
+            let scope = if d.dev { " [dev]" } else { "" };
+            println!("  + {}{}", d.package, scope);
+            println!("    story: {}  service: {}  decided: {}", d.story_id, d.service, d.decided_at);
+            println!("    why: {}", d.justification);
+            if !d.alternatives.is_empty() {
+                println!("    alternatives: {}", d.alternatives);
+            }
+        }
+        println!();
+    }
+
+    if !rejected.is_empty() {
+        println!("Rejected ({}):", rejected.len());
+        for d in &rejected {
+            println!("  - {}", d.package);
+            println!("    story: {}  service: {}  decided: {}", d.story_id, d.service, d.decided_at);
+            println!("    why proposed: {}", d.justification);
+            if !d.alternatives.is_empty() {
+                println!("    alternatives: {}", d.alternatives);
+            }
+        }
+        println!();
+    }
+
+    println!("Stored in .canopy/dependency_decisions.yaml");
+    Ok(())
 }
 
 fn cmd_stories() -> Result<()> {

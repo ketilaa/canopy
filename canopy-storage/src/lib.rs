@@ -56,6 +56,17 @@ fn load<T: serde::de::DeserializeOwned>(relative: &str) -> Result<T, StorageErro
 pub fn save_idea(idea: &Idea) -> Result<(), StorageError>              { save("idea.yaml", idea) }
 pub fn load_idea() -> Result<Idea, StorageError>                       { load("idea.yaml") }
 
+pub fn load_dependency_decisions() -> Result<DependencyDecisionLog, StorageError> {
+    match load::<DependencyDecisionLog>("dependency_decisions.yaml") {
+        Ok(log) => Ok(log),
+        Err(StorageError::NotFound(_)) => Ok(DependencyDecisionLog::default()),
+        Err(e) => Err(e),
+    }
+}
+pub fn save_dependency_decisions(log: &DependencyDecisionLog) -> Result<(), StorageError> {
+    save("dependency_decisions.yaml", log)
+}
+
 pub fn save_adr(index: usize, slug: &str, adr: &Adr) -> Result<(), StorageError> {
     save(&format!("decisions/adr-{:03}-{}.yaml", index, slug), adr)
 }
