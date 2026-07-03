@@ -2335,23 +2335,24 @@ fn plan_prompt_for_service(
         format!(
             "\n## Testing plan\n\
              - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
-               installed by `canopy scaffold` — do NOT create jest.config.js as a plan step.\n\
+               installed by `canopy scaffold` — do NOT include jest.config.js or package.json in the plan.\n\
+             - Test files MUST live in the flat services/{{name}}/tests/ directory — NEVER under src/.\n\
              - Include one unit test file (*.test.ts) per service module.\n\
                Unit tests mock the repository and test business logic in isolation.\n\
-               Example: tests/productService.test.ts\n\
+               Example: services/{{name}}/tests/productService.test.ts\n\
              - Include one route test file (*.test.ts) per route module using Supertest.\n\
                Route tests import {{ app }} from src/app.ts and exercise the full HTTP stack.\n\
-               Example: tests/productRoutes.test.ts\n\
+               Example: services/{{name}}/tests/productRoutes.test.ts\n\
              - Test files MUST be the last steps in the plan.\n\
              - Do NOT include a test file for src/app.ts or src/index.ts.\n"
         )
     } else if is_react {
         format!(
             "\n## Testing plan\n\
+             - Test files MUST live in the flat frontend/{{name}}/tests/ directory — NEVER under src/.\n\
              - For EVERY src/api/*.ts file in the plan, you MUST add a corresponding tests/<Name>.test.ts step.\n\
              - For EVERY src/components/*.tsx file in the plan, you MUST add a corresponding tests/<Name>.test.tsx step.\n\
              - The plan is INCOMPLETE if any src/api/ or src/components/ file has no test step.\n\
-             - Flat tests/ directory only — never tests/unit/, tests/api/, or tests/integration/.\n\
              - Only libraries from the testing strategy ADR; no msw, Playwright, or Cypress.\n\
              - Test steps MUST be the last steps in the list.\n"
         )
@@ -2416,7 +2417,10 @@ fn plan_prompt_for_service(
          \n\
          ### Scope\n\
          Include ONLY files with logic for this story.\n\
-         MUST NOT include: README, HELP.md, .gitignore, CSS, tsconfig, vite.config, scaffolding artifacts.\n\
+         MUST NOT include any of these — ever:\n\
+         - package.json or package-lock.json (npm dependencies are managed by the dependency gate, not plan steps)\n\
+         - tsconfig.json, tsconfig*.json, vite.config.ts, jest.config.js (scaffold artifacts — do not touch)\n\
+         - README, HELP.md, .gitignore, CSS files\n\
          {event_scope_rule}\
          If in doubt, leave it out.\n\
          \n\
@@ -2624,6 +2628,14 @@ fn derive_frontend_test_path(source_file: &str) -> Option<String> {
 }
 
 fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, service_name: &str) {
+    // First, remove any test files the LLM placed under src/ — they belong in tests/.
+    steps.retain(|s| {
+        let is_test = s.file.to_lowercase().contains(".test.");
+        if !is_test { return true; }
+        // Keep only test files that are already in the correct tests/ directory.
+        s.file.contains("/tests/")
+    });
+
     let mut to_inject: Vec<ImplementationStep> = Vec::new();
     for step in steps.iter() {
         let f = &step.file;
@@ -2631,8 +2643,12 @@ fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, service_na
         let needs_test = f.contains("/src/api/") || f.contains("/src/components/");
         if !needs_test { continue; }
         if let Some(test_path) = derive_frontend_test_path(f) {
-            if steps.iter().any(|s| s.file == test_path) { continue; }
-            if to_inject.iter().any(|s| s.file == test_path) { continue; }
+            // Match by canonical test path OR by base name — prevents duplicates even when
+            // the LLM put the test in the wrong directory (already stripped above).
+            let base = test_path.rsplit('/').next().unwrap_or("");
+            let already_present = steps.iter().chain(to_inject.iter())
+                .any(|s| s.file == test_path || s.file.ends_with(base));
+            if already_present { continue; }
             let component_name = f.rsplit('/').next().unwrap_or("")
                 .trim_end_matches(".tsx").trim_end_matches(".ts").to_string();
             to_inject.push(ImplementationStep {
@@ -2675,6 +2691,28 @@ pub fn generate_story_plan(
         );
         let disc_raw = client.complete_large(&disc_prompt)?;
         let mut steps = parse_plan_steps(&disc_raw)?;
+        // Strip scaffold / lock-file / config artifacts that must never appear in a plan.
+        let t_lower = tech.to_lowercase();
+        let is_npm_service = t_lower.contains("node") || t_lower.contains("express")
+            || t_lower.contains("react") || t_lower.contains("angular")
+            || t_lower.contains("vite") || t_lower.contains("nest");
+        steps.retain(|s| {
+            let f = s.file.rsplit('/').next().unwrap_or(&s.file);
+            // Lock files and config scaffolding are never valid plan steps.
+            if matches!(f,
+                "package-lock.json" | "yarn.lock" | "pnpm-lock.yaml"
+                | "jest.config.js" | "jest.config.ts"
+                | "vite.config.ts" | "vite.config.js"
+                | "tsconfig.json" | ".gitignore" | "README.md"
+            ) || f.starts_with("tsconfig.") {
+                return false;
+            }
+            // npm services: package.json is managed by the dependency gate — never a plan step.
+            if is_npm_service && f == "package.json" {
+                return false;
+            }
+            true
+        });
         for step in &mut steps {
             step.service = service.name.clone();
             if step.operation.to_lowercase() != "modify" {
@@ -3265,12 +3303,19 @@ pub fn propose_dependencies(
          \n\
          If no new dependencies are needed, return: proposed_dependencies: []\n\
          \n\
-         Return ONLY valid YAML:\n\
+         Return ONLY valid YAML — no prose, no code fences.\n\
+         Every field of a list item MUST be indented by exactly 2 spaces under the dash:\n\
+         \n\
          proposed_dependencies:\n\
          - package: \"<coordinate>\"\n\
            justification: \"<precise reason this story needs it>\"\n\
            alternatives: \"<what else was considered and why rejected>\"\n\
-           dev: false",
+           dev: false\n\
+         \n\
+         YAML rules:\n\
+         - All string values MUST use double quotes.\n\
+         - justification and alternatives MUST be on the same line as their key — no block scalars.\n\
+         - dev MUST be a bare boolean: true or false (no quotes).",
         stack_desc = stack_desc,
         service = service_name,
         tech = tech,
