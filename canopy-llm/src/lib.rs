@@ -1250,7 +1250,8 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              - call schema.parse(req.body); pass errors to next(err)\n\
              async/await everywhere — no raw .then() chains.\n\
              EventPublisher is instantiated in the route handler — pass config from environment:\n\
-               new EventPublisher('product-service', process.env.KAFKA_BROKER || 'localhost:9092')\n\
+               new EventPublisher('product-service', [process.env.KAFKA_BROKER || 'localhost:9092'])\n\
+             The brokers argument is string[] — always wrap in an array.\n\
              NEVER call new EventPublisher() without arguments.\n\
              \n\
              ### Error handling\n\
@@ -1286,6 +1287,14 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              src/app.ts is the composition root — it MUST import and register every router and\n\
              middleware module created by this plan. A module created but not wired into app.ts\n\
              is dead code.\n\
+             app.ts MUST export the Express app instance directly — NEVER wrap it in a factory\n\
+             function or class. Supertest and index.ts both import the instance:\n\
+               const app = express()         ✓\n\
+               export default app            ✓\n\
+               export default function createApp() { ... }   ✗  callers get a function, not an app\n\
+             Import middleware using its actual export style — named exports need braces:\n\
+               import { errorHandler } from './middleware/errorHandler'   ✓  (named export)\n\
+               import errorHandler from './middleware/errorHandler'        ✗  default import of named export → undefined\n\
              Middleware order matters: routers first, error-handling middleware last.\n\
              src/app.ts builds and exports the Express app WITHOUT calling app.listen().\n\
              src/index.ts is the ONLY file that calls app.listen().\n\
@@ -1293,7 +1302,14 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              app.ts creates repository instances and assigns them to app.locals so routes\n\
              can access them via req.app.locals without constructing them on every request:\n\
                import { ProductRepository } from './repositories/ProductRepository'\n\
-               app.locals.productRepository = new ProductRepository()"
+               app.locals.productRepository = new ProductRepository()\n\
+             \n\
+             ### Router mount paths\n\
+             Router handler paths are relative to the mount point in app.ts.\n\
+             If app.ts mounts a router at '/products', the handler for POST /products is:\n\
+               router.post('/', ...)     ✓  resolves to POST /products\n\
+               router.post('/products', ...)  ✗  resolves to POST /products/products\n\
+             Match the handler path to the mount point so the combined path is correct."
             .to_string(),
         layer_order:
             "  1. src/models/           — interfaces only; no deps\n\
@@ -3224,6 +3240,7 @@ fn fix_prompt(
     referenced_files: &[(String, String)],
     skill: &str,
     arch_skills: &str,
+    prior_attempts: &[String],
 ) -> String {
     let ext = std::path::Path::new(file_path)
         .extension()
@@ -3296,6 +3313,18 @@ fn fix_prompt(
     } else {
         format!("\n{arch_skills}\n")
     };
+    let attempts_section = if prior_attempts.is_empty() {
+        String::new()
+    } else {
+        let entries = prior_attempts.iter().enumerate()
+            .map(|(i, a)| format!("### Attempt {}\n{}", i + 1, a))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        format!(
+            "\n## Previous attempts that did NOT fix the errors\n\
+             Do NOT repeat any of these — each one was tried and failed:\n\n{entries}\n"
+        )
+    };
     format!(
         "Fix the {lang} file below so that all listed errors are resolved.\n\
          \n\
@@ -3306,7 +3335,8 @@ fn fix_prompt(
          {files_section}\
          {referenced_section}\
          {skill_section}\
-         {arch_section}\n\
+         {arch_section}\
+         {attempts_section}\n\
          Current content:\n\
          {content}\n\
          \n\
@@ -3328,8 +3358,9 @@ pub fn fix_file(
     referenced_files: &[(String, String)],
     skill: &str,
     arch_skills: &str,
+    prior_attempts: &[String],
 ) -> Result<String, LlmError> {
-    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills))?;
+    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts))?;
     Ok(strip_code_fences(&raw))
 }
 

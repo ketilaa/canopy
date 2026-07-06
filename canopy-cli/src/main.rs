@@ -1004,6 +1004,7 @@ fn run_fix_loop_inner(
     telemetry: &mut Vec<String>,
     total_iterations: &mut usize,
 ) -> bool {
+    let mut attempt_history: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for iteration in 0..max_iterations {
         let output = std::process::Command::new("bash")
             .arg("-c")
@@ -1073,7 +1074,7 @@ fn run_fix_loop_inner(
                     println!("  fixing pom.xml ({} pom, {} unresolvable, {} missing)",
                         pom_validation.len(), unresolvable.len(), non_javax.len());
                     let pom_skill = skill_for_build_system(&build_file);
-                    match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills) {
+                    match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills, &[]) {
                         Ok(fixed) => { let _ = std::fs::write(&build_file, &fixed); fixed_any = true; }
                         Err(e) => eprintln!("    LLM fix failed for pom.xml: {e}"),
                     }
@@ -1131,6 +1132,7 @@ fn run_fix_loop_inner(
                 continue;
             }
             println!("    fixing {} ({} error line(s))", file_path, errors.lines().count());
+            let prior_attempts = attempt_history.get(file_path).cloned().unwrap_or_default();
 
             let referenced: Vec<(String, String)> =
                 if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
@@ -1178,8 +1180,11 @@ fn run_fix_loop_inner(
             } else {
                 format!("{base_skill}\n\n{test_skill}")
             };
-            match fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills) {
-                Ok(fixed) => { let _ = std::fs::write(file_path, &fixed); }
+            match fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts) {
+                Ok(fixed) => {
+                    attempt_history.entry(file_path.clone()).or_default().push(content.clone());
+                    let _ = std::fs::write(file_path, &fixed);
+                }
                 Err(e) => eprintln!("    LLM fix failed for {file_path}: {e}"),
             }
         }
