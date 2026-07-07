@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod adr_merge;
+
+mod named_described;
+pub use named_described::{Described, DomainEntity, DomainEvent, Role};
+
+mod tech_family;
+pub use tech_family::TechFamily;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Idea {
     pub description: String,
@@ -72,77 +80,6 @@ pub struct IntentSpec {
     pub out_of_scope: Vec<String>,
     #[serde(default)]
     pub open_questions: Vec<String>,
-}
-
-/// A domain entity with an optional human-curated description.
-/// Serializes as a plain string when there is no description (backward-compatible),
-/// or as a map `{name, description}` when a description is present.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum DomainEntity {
-    Simple(String),
-    Described { name: String, description: String },
-}
-
-impl DomainEntity {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Simple(n) => n,
-            Self::Described { name, .. } => name,
-        }
-    }
-    pub fn description(&self) -> Option<&str> {
-        match self {
-            Self::Simple(_) => None,
-            Self::Described { description, .. } => Some(description),
-        }
-    }
-}
-
-/// A domain event with an optional human-curated description.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum DomainEvent {
-    Simple(String),
-    Described { name: String, description: String },
-}
-
-impl DomainEvent {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Simple(n) => n,
-            Self::Described { name, .. } => name,
-        }
-    }
-    pub fn description(&self) -> Option<&str> {
-        match self {
-            Self::Simple(_) => None,
-            Self::Described { description, .. } => Some(description),
-        }
-    }
-}
-
-/// A user role with an optional human-curated description.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Role {
-    Simple(String),
-    Described { name: String, description: String },
-}
-
-impl Role {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Simple(n) => n,
-            Self::Described { name, .. } => name,
-        }
-    }
-    pub fn description(&self) -> Option<&str> {
-        match self {
-            Self::Simple(_) => None,
-            Self::Described { description, .. } => Some(description),
-        }
-    }
 }
 
 /// Accumulated entity and event vocabulary across all planned delivery intents.
@@ -438,39 +375,6 @@ agents:
         assert_eq!(explorer.provider, LlmProvider::Ollama);
         assert_eq!(explorer.model, "qwen2.5:32b");
         assert_eq!(explorer.base_url.unwrap(), "http://localhost:11434");
-    }
-
-    #[test]
-    fn domain_entity_described_roundtrip() {
-        let entity = DomainEntity::Described {
-            name: "Product".into(),
-            description: "A sellable item managed by the business.".into(),
-        };
-        let yaml = serde_yaml::to_string(&entity).unwrap();
-        let entity2: DomainEntity = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(entity2.name(), "Product");
-        assert_eq!(entity2.description(), Some("A sellable item managed by the business."));
-    }
-
-    #[test]
-    fn domain_entity_simple_roundtrip() {
-        let entity = DomainEntity::Simple("Order".into());
-        let yaml = serde_yaml::to_string(&entity).unwrap();
-        let entity2: DomainEntity = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(entity2.name(), "Order");
-        assert_eq!(entity2.description(), None);
-    }
-
-    #[test]
-    fn role_described_roundtrip() {
-        let role = Role::Described {
-            name: "product manager".into(),
-            description: "Manages product registration in the backoffice.".into(),
-        };
-        let yaml = serde_yaml::to_string(&role).unwrap();
-        let role2: Role = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(role2.name(), "product manager");
-        assert_eq!(role2.description(), Some("Manages product registration in the backoffice."));
     }
 
     #[test]

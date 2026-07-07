@@ -53,15 +53,20 @@ fn load<T: serde::de::DeserializeOwned>(relative: &str) -> Result<T, StorageErro
     Ok(serde_yaml::from_str(&content)?)
 }
 
+/// Load an optional artifact, falling back to its default when the file doesn't exist yet.
+fn load_or_default<T: serde::de::DeserializeOwned + Default>(relative: &str) -> Result<T, StorageError> {
+    match load::<T>(relative) {
+        Ok(v) => Ok(v),
+        Err(StorageError::NotFound(_)) => Ok(T::default()),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn save_idea(idea: &Idea) -> Result<(), StorageError>              { save("idea.yaml", idea) }
 pub fn load_idea() -> Result<Idea, StorageError>                       { load("idea.yaml") }
 
 pub fn load_dependency_decisions() -> Result<DependencyDecisionLog, StorageError> {
-    match load::<DependencyDecisionLog>("dependency_decisions.yaml") {
-        Ok(log) => Ok(log),
-        Err(StorageError::NotFound(_)) => Ok(DependencyDecisionLog::default()),
-        Err(e) => Err(e),
-    }
+    load_or_default("dependency_decisions.yaml")
 }
 pub fn save_dependency_decisions(log: &DependencyDecisionLog) -> Result<(), StorageError> {
     save("dependency_decisions.yaml", log)
@@ -87,11 +92,7 @@ pub fn save_config(config: &CanopyConfig) -> Result<(), StorageError> {
 /// doesn't exist yet — it is always optional and built incrementally via `canopy intent`.
 /// When Roots is integrated, callers should prefer Roots over this file.
 pub fn load_domain_registry() -> Result<DomainRegistry, StorageError> {
-    match load::<DomainRegistry>("domain_registry.yaml") {
-        Ok(r) => Ok(r),
-        Err(StorageError::NotFound(_)) => Ok(DomainRegistry::default()),
-        Err(e) => Err(e),
-    }
+    load_or_default("domain_registry.yaml")
 }
 
 pub fn save_domain_registry(r: &DomainRegistry) -> Result<(), StorageError> {
@@ -108,29 +109,17 @@ pub fn load_scaffold_plan() -> Result<ScaffoldPlan, StorageError> {
 
 pub fn save_user_stories(s: &UserStories) -> Result<(), StorageError> { save("stories.yaml", s) }
 pub fn load_user_stories() -> Result<UserStories, StorageError> {
-    match load::<UserStories>("stories.yaml") {
-        Ok(s) => Ok(s),
-        Err(StorageError::NotFound(_)) => Ok(UserStories::default()),
-        Err(e) => Err(e),
-    }
+    load_or_default("stories.yaml")
 }
 
 pub fn save_roles_registry(r: &RolesRegistry) -> Result<(), StorageError> { save("roles.yaml", r) }
 pub fn load_roles_registry() -> Result<RolesRegistry, StorageError> {
-    match load::<RolesRegistry>("roles.yaml") {
-        Ok(r) => Ok(r),
-        Err(StorageError::NotFound(_)) => Ok(RolesRegistry::default()),
-        Err(e) => Err(e),
-    }
+    load_or_default("roles.yaml")
 }
 
 pub fn save_services_registry(r: &ServicesRegistry) -> Result<(), StorageError> { save("services.yaml", r) }
 pub fn load_services_registry() -> Result<ServicesRegistry, StorageError> {
-    match load::<ServicesRegistry>("services.yaml") {
-        Ok(r) => Ok(r),
-        Err(StorageError::NotFound(_)) => Ok(ServicesRegistry::default()),
-        Err(e) => Err(e),
-    }
+    load_or_default("services.yaml")
 }
 
 pub fn save_story_spec(story_id: &str, spec: &IntentSpec) -> Result<(), StorageError> {
