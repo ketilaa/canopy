@@ -1270,6 +1270,27 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              NEVER call Widget.create() — Widget is an interface; interfaces have no static methods.\n\
              Callers import and call the factory function: import { createWidget } from '../models/Widget'\n\
              \n\
+             ### Domain events\n\
+             A domain event is a thin, immutable record that something happened — NEVER a copy of\n\
+             the aggregate's schema. Ignore the Entity schema's mandatory/optional field list when\n\
+             writing an event file; it describes the aggregate, not the event payload.\n\
+               import { randomUUID } from 'crypto'\n\
+               export interface WidgetCreated {\n\
+                 eventId: string;\n\
+                 widgetId: string;\n\
+                 occurredAt: Date;\n\
+               }\n\
+               export function createWidgetCreated(widgetId: string): WidgetCreated {\n\
+                 return { eventId: randomUUID(), widgetId, occurredAt: new Date() };\n\
+               }\n\
+             RULES:\n\
+             - Fields are exactly: eventId (the event's own identity), <entity>Id (reference to the\n\
+               aggregate, e.g. widgetId — a plain id, not a URI), and occurredAt.\n\
+             - NEVER copy the aggregate's other fields (name, description, etc.) into the event —\n\
+               a consumer that needs them fetches the aggregate by <entity>Id.\n\
+             - NEVER add a modifiedAt/updatedAt field — an event is a fact about one instant, it is\n\
+               never updated after it occurs.\n\
+             \n\
              ### Repository\n\
              RESPONSIBILITY: persistence ONLY. A repository exposes only the methods the current story requires:\n\
                async saveWidget(widget: Widget): Promise<Widget>          // create / update\n\
@@ -2142,7 +2163,8 @@ fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
                 "  Name events in past tense: WidgetCreated, OrderPlaced.\n\
                  Event type (src/events/) and publisher (src/infrastructure/) must precede the service step — follow the tech skill layer order.\n\
                  Topic: use the Topic Naming Convention ADR value (e.g. widget-events).\n\
-                 Payload: include the aggregate ID; carry only what consumers need.\n\
+                 Payload: eventId (own identity) + <entity>Id (aggregate reference) + occurredAt —\n\
+                 never copy the aggregate's other fields onto the event, never add a modifiedAt.\n\
                  Add kafkajs to the package.json step if not already listed."
                 .to_string(),
             anti_patterns:
@@ -2169,8 +2191,8 @@ fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
                  Publish events from the service layer after the aggregate is persisted — never before.\n\
                  Use @TransactionalEventListener(phase = AFTER_COMMIT) so listeners fire only on\n\
                  successful commit; this prevents phantom events from rolled-back transactions.\n\
-                 Event payload: include the aggregate ID always; carry only what consumers need —\n\
-                 do not copy the full aggregate state.\n\
+                 Event payload: eventId (own identity) + <entity>Id (aggregate reference) + occurredAt —\n\
+                 never copy the aggregate's other fields onto the event, never add a modifiedAt/updatedAt.\n\
                  One listener class per consuming concern; listeners must not call back into the\n\
                  publishing service (no circular event chains)."
                 .to_string(),
