@@ -3,6 +3,7 @@ use roots_core::Language;
 use crate::extractor::{LanguageExtractor, ParseError, ParseOutput};
 use crate::java::JavaExtractor;
 use crate::kotlin::KotlinExtractor;
+use crate::rust::RustExtractor;
 use crate::typescript::TypeScriptExtractor;
 
 pub fn extract(
@@ -26,6 +27,10 @@ pub fn extract(
         }
         Language::TypeScript => {
             let extractor = TypeScriptExtractor::new()?;
+            extractor.extract(source_str, relative_path, project, workspace_id)
+        }
+        Language::Rust => {
+            let extractor = RustExtractor::new()?;
             extractor.extract(source_str, relative_path, project, workspace_id)
         }
     }

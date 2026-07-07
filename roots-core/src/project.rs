@@ -6,6 +6,7 @@ pub enum Language {
     Java,
     Kotlin,
     TypeScript,
+    Rust,
 }
 
 impl Language {
@@ -14,6 +15,7 @@ impl Language {
             "java" => Some(Self::Java),
             "kt" | "kts" => Some(Self::Kotlin),
             "ts" | "tsx" => Some(Self::TypeScript),
+            "rs" => Some(Self::Rust),
             _ => None,
         }
     }
@@ -23,6 +25,7 @@ impl Language {
             Self::Java => "java",
             Self::Kotlin => "kotlin",
             Self::TypeScript => "typescript",
+            Self::Rust => "rust",
         }
     }
 }
@@ -41,6 +44,7 @@ impl std::str::FromStr for Language {
             "java" => Ok(Self::Java),
             "kotlin" => Ok(Self::Kotlin),
             "typescript" => Ok(Self::TypeScript),
+            "rust" => Ok(Self::Rust),
             other => Err(format!("unknown language: {other}")),
         }
     }
@@ -76,8 +80,12 @@ mod tests {
     }
 
     #[test]
+    fn from_extension_rust() {
+        assert_eq!(Language::from_extension("rs"), Some(Language::Rust));
+    }
+
+    #[test]
     fn from_extension_unknown() {
-        assert_eq!(Language::from_extension("rs"), None);
         assert_eq!(Language::from_extension("py"), None);
     }
 
@@ -87,6 +95,7 @@ mod tests {
         assert_eq!(Language::from_str("java").unwrap(), Language::Java);
         assert_eq!(Language::from_str("kotlin").unwrap(), Language::Kotlin);
         assert_eq!(Language::from_str("typescript").unwrap(), Language::TypeScript);
+        assert_eq!(Language::from_str("rust").unwrap(), Language::Rust);
         assert!(Language::from_str("ruby").is_err());
     }
 
@@ -95,5 +104,6 @@ mod tests {
         assert_eq!(Language::Java.to_string(), "java");
         assert_eq!(Language::Kotlin.to_string(), "kotlin");
         assert_eq!(Language::TypeScript.to_string(), "typescript");
+        assert_eq!(Language::Rust.to_string(), "rust");
     }
 }

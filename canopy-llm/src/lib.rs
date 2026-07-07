@@ -85,16 +85,17 @@ impl LlmClient {
             LlmProvider::Ollama => self.call_openai_compatible(prompt)?,
         };
 
+        let model = json["model"].as_str().unwrap_or(&self.model);
+        let input_tokens = json["usage"]["input_tokens"]
+            .as_u64()
+            .or_else(|| json["usage"]["prompt_tokens"].as_u64())
+            .unwrap_or(0);
+        let output_tokens = json["usage"]["output_tokens"]
+            .as_u64()
+            .or_else(|| json["usage"]["completion_tokens"].as_u64())
+            .unwrap_or(0);
+
         if self.debug {
-            let model = json["model"].as_str().unwrap_or(&self.model);
-            let input_tokens = json["usage"]["input_tokens"]
-                .as_u64()
-                .or_else(|| json["usage"]["prompt_tokens"].as_u64())
-                .unwrap_or(0);
-            let output_tokens = json["usage"]["output_tokens"]
-                .as_u64()
-                .or_else(|| json["usage"]["completion_tokens"].as_u64())
-                .unwrap_or(0);
             eprintln!("╔══ LLM OUTPUT ══════════════════════════════════════════╗");
             eprintln!("  model:         {model}");
             eprintln!("  input tokens:  {input_tokens}");
@@ -102,28 +103,28 @@ impl LlmClient {
             eprintln!("──────────────────────────────────────────────────────────");
             eprintln!("{text}");
             eprintln!("╚════════════════════════════════════════════════════════╝\n");
+        }
 
-            if let Some(log_path) = &self.log_path {
-                let ts = llm_timestamp();
-                let entry = format!(
-                    "\n[{ts}] ╔══ LLM INPUT ═══════════════════════════════════════════╗\n\
-                     {prompt}\n\
-                     [{ts}] ╚════════════════════════════════════════════════════════╝\n\
-                     [{ts}] ╔══ LLM OUTPUT ══════════════════════════════════════════╗\n\
-                     [{ts}]   model:         {model}\n\
-                     [{ts}]   input tokens:  {input_tokens}\n\
-                     [{ts}]   output tokens: {output_tokens}\n\
-                     [{ts}] ──────────────────────────────────────────────────────────\n\
-                     {text}\n\
-                     [{ts}] ╚════════════════════════════════════════════════════════╝\n"
-                );
-                if let Some(parent) = log_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
-                    let _ = f.write_all(entry.as_bytes());
-                }
+        if let Some(log_path) = &self.log_path {
+            let ts = llm_timestamp();
+            let entry = format!(
+                "\n[{ts}] ╔══ LLM INPUT ═══════════════════════════════════════════╗\n\
+                 {prompt}\n\
+                 [{ts}] ╚════════════════════════════════════════════════════════╝\n\
+                 [{ts}] ╔══ LLM OUTPUT ══════════════════════════════════════════╗\n\
+                 [{ts}]   model:         {model}\n\
+                 [{ts}]   input tokens:  {input_tokens}\n\
+                 [{ts}]   output tokens: {output_tokens}\n\
+                 [{ts}] ──────────────────────────────────────────────────────────\n\
+                 {text}\n\
+                 [{ts}] ╚════════════════════════════════════════════════════════╝\n"
+            );
+            if let Some(parent) = log_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                let _ = f.write_all(entry.as_bytes());
             }
         }
 
@@ -1022,6 +1023,22 @@ impl TechStackSkill {
             notes  = notes_section,
         )
     }
+
+    /// Lightweight render for the planning phase.
+    /// Omits namespace_rules and notes — those are implementation concerns.
+    /// Planning only needs the directory map and layer ordering to enumerate files and depends_on.
+    pub fn render_for_planning(&self) -> String {
+        format!(
+            "## Tech stack: {name}\n\
+             \n\
+             ### File layout\n{layout}\n\
+             \n\
+             ### Layer order\n{order}",
+            name   = self.name,
+            layout = self.file_layout,
+            order  = self.layer_order,
+        )
+    }
 }
 
 fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> TechStackSkill {
@@ -1085,7 +1102,17 @@ fn react_vite_skill() -> TechStackSkill {
              - <prefix>/src/components/<Entity>Form.tsx — controlled form component\n\
              - <prefix>/src/App.tsx                    — renders the form\n\
              File paths in plan steps are relative to the PROJECT ROOT;\n\
-             always include the full prefix (e.g. frontend/admin-portal/src/api/ProductApi.ts)."
+             always include the full prefix (e.g. frontend/admin-portal/src/api/WidgetApi.ts).\n\
+             \n\
+             FILE EXTENSION RULES — STRICTLY ENFORCED:\n\
+             .ts  files are PURE TYPESCRIPT: interfaces, types, and plain functions ONLY.\n\
+                  NO JSX, NO React.FC, NO HTML elements, NO useState/useEffect.\n\
+                  src/api/<Entity>Api.ts contains only:\n\
+                    export interface WidgetRegistrationRequest { ... }\n\
+                    export async function registerWidget(data: WidgetRegistrationRequest): Promise<Widget> { ... }\n\
+             .tsx files contain JSX — components, form elements, event handlers.\n\
+                  EVERY file that contains <JSX> syntax MUST have the .tsx extension.\n\
+             Mixing JSX into a .ts file causes: error TS1005: '>' expected (unrecoverable parse error)."
             .to_string(),
         namespace_rules:
             "  Imports are relative to the file's position inside src/:\n\
@@ -1099,8 +1126,8 @@ fn react_vite_skill() -> TechStackSkill {
             .to_string(),
         layer_order:
             "  1. src/api/<Entity>Api.ts         — request/response interfaces + fetch function\n\
-             2. src/components/<Entity>Form.tsx  — imports from api/; no other new deps\n\
-             3. src/App.tsx                      — imports and renders the form component\n\
+             2. src/components/<Entity>Form.tsx  — controlled form; manages its own state; accepts NO props\n\
+             3. src/App.tsx                      — imports and renders the form with NO props: <WidgetForm />\n\
              4. tests (if any)\n\
              Reason: each file imports from the previous; generating out of order causes type mismatches."
             .to_string(),
@@ -1109,6 +1136,9 @@ fn react_vite_skill() -> TechStackSkill {
              custom hooks, page components, route files, Redux/Zustand slices,\n\
              utility modules, CSS files, or any abstraction not named in the acceptance criteria.\n\
              The form component handles its own state and calls the API client directly.\n\
+             App.tsx ONLY renders the form — it does NOT manage form state or pass props:\n\
+               return <div><h1>...</h1><WidgetForm /></div>   ✓  no props\n\
+               return <div><WidgetForm formData={...} onSubmit={...} /></div>  ✗  form owns its state\n\
              The FIRST LINE of every file MUST be valid TypeScript/TSX code.\n\
              NEVER write a language label ('tsx', 'typescript', 'ts') as the first line.\n\
              Fix-loop — TS2322 on a JSX element means this file passes props the component does not accept.\n\
@@ -1164,10 +1194,9 @@ fn node_express_skill() -> TechStackSkill {
         name: "Node.js / Express (TypeScript)".to_string(),
         file_layout:
             "  Source root: <service-prefix>/src/\n\
-             - src/models/           — TypeScript interfaces and type aliases ONLY; NO factory functions, \
-NO runtime code, NO imports from npm packages; IDs are plain strings — the repository generates them;\
-export every interface the service layer needs, including request DTOs (e.g. ProductCreationRequest)\n\
-             - src/events/           — domain event interfaces (one file per event, e.g. ProductCreated.ts)\n\
+             - src/models/           — one interface + one factory function per aggregate; \
+factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports from npm packages\n\
+             - src/events/           — domain event interfaces (one file per event, e.g. WidgetCreated.ts)\n\
              - src/repositories/     — data access layer; all database calls live here; no Express imports\n\
              - src/infrastructure/   — infrastructure utilities (e.g. EventPublisher.ts wrapping kafkajs)\n\
              - src/services/         — business logic; depends on repositories and infrastructure; no Express imports\n\
@@ -1184,60 +1213,102 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              \n\
              #### Deriving paths from depends_on\n\
              depends_on entries are PROJECT-ROOT paths, not import specifiers.\n\
-             Example: generating src/repositories/ProductRepository.ts with\n\
-               depends_on: [\"services/product/src/models/Product.ts\"]\n\
-             Correct import:  import { Product } from '../models/Product'     ✓  relative from repositories/ to models/\n\
-             WRONG:           import { Product } from '@services/product/src/models/Product'  ✗  path alias — invalid\n\
-             WRONG:           import { Product } from 'services/product/src/models/Product'   ✗  not a node module\n\
-             Rule: strip the service prefix (e.g. services/product/) from both paths, then compute\n\
+             Example: generating src/repositories/WidgetRepository.ts with\n\
+               depends_on: [\"services/<name>/src/models/Widget.ts\"]\n\
+             Correct import:  import { Widget } from '../models/Widget'     ✓  relative from repositories/ to models/\n\
+             WRONG:           import { Widget } from '@services/<name>/src/models/Widget'  ✗  path alias — invalid\n\
+             WRONG:           import { Widget } from 'services/<name>/src/models/Widget'   ✗  not a node module\n\
+             Rule: strip the service prefix (e.g. services/<name>/) from both paths, then compute\n\
              the relative path between the two src/ locations.\n\
              \n\
              #### Import depth within src/\n\
              All src/ subdirectories are siblings — one dot-dot only:\n\
-               src/services/ProductService.ts → import { Product } from '../models/Product'       ✓\n\
-               src/services/ProductService.ts → import { ProductRepository } from '../repositories/ProductRepository' ✓\n\
+               src/services/WidgetService.ts → import { Widget } from '../models/Widget'       ✓\n\
+               src/services/WidgetService.ts → import { WidgetRepository } from '../repositories/WidgetRepository' ✓\n\
              WRONG — two dots leaves src/ entirely and reaches the project root:\n\
-               src/services/ProductService.ts → import { Product } from '../../models/Product'    ✗\n\
-               src/services/ProductService.ts → import ... from '../../infrastructure/...'        ✗\n\
+               src/services/WidgetService.ts → import { Widget } from '../../models/Widget'    ✗\n\
+               src/services/WidgetService.ts → import ... from '../../infrastructure/...'      ✗\n\
+             \n\
+             #### isolatedModules — import type\n\
+             tsconfig has `isolatedModules: true`. Any import used ONLY as a type annotation\n\
+             MUST use `import type`:\n\
+               import type { Product } from '../models/Product'   ✓  (type-only use)\n\
+               import { createProduct } from '../models/Product'  ✓  (value use — factory call)\n\
+             Using a plain `import { T }` for a type-only symbol causes TS1484.\n\
              \n\
              #### No external utilities\n\
              RUNTIME ERROR — importing moment, uuid, nanoid, or any package absent from package.json\n\
              will crash the process. Check package.json before using any package.\n\
                Timestamps: new Date()             ✓  (built-in)\n\
-               IDs:        crypto.randomUUID()    ✓  (built-in Node.js — no import needed)\n\
+               IDs:        randomUUID()           ✓  — import { randomUUID } from 'crypto'  (Node.js built-in, no npm install)\n\
              \n\
              ### Exports\n\
              All source files use NAMED exports:\n\
-               export class ProductService { ... }      ✓\n\
-               export interface Product { ... }         ✓\n\
-               export const errorHandler = ...          ✓\n\
+               export class WidgetService { ... }      ✓\n\
+               export interface Widget { ... }          ✓\n\
+               export const errorHandler = ...         ✓\n\
              EXCEPTION: src/app.ts uses default export: export default app\n\
-             NEVER: export default class ProductService  ✗  causes TS2613/TS2614 in importers\n\
+             NEVER: export default class WidgetService  ✗  causes TS2613/TS2614 in importers\n\
              \n\
              ### Models\n\
              A model file exports one interface AND one standalone factory function:\n\
-               export interface Product { id: string; createdAt: Date; modifiedAt: Date | null; ... }\n\
-               export function createProduct(name: string, ...): Product {\n\
-                 return { id: crypto.randomUUID(), createdAt: new Date(), modifiedAt: null, name, ... }\n\
+               import { randomUUID } from 'crypto'\n\
+               export interface Widget { id: string; createdAt: Date; modifiedAt: Date | null; ... }\n\
+               export function createWidget(name: string, ...): Widget {\n\
+                 return { id: randomUUID(), createdAt: new Date(), modifiedAt: null, name, ... }\n\
                }\n\
-             No imports from npm packages — use only built-in Node.js APIs.\n\
-             NEVER call Product.create() — Product is an interface; interfaces have no static methods.\n\
-             Callers import and call the factory function: import { createProduct } from '../models/Product'\n\
+             No imports from npm packages — use only built-in Node.js APIs ('crypto', 'path', etc.).\n\
+             \n\
+             #### Optional fields — CRITICAL TypeScript rule\n\
+             Declare optional fields with `?: Type` — NEVER with `field: Type | undefined`.\n\
+               description?: string          ✓  optional — can be omitted from object literals\n\
+               description: string | undefined  ✗  required key — must be present even when undefined\n\
+             Under `strict: true` and `exactOptionalPropertyTypes: true`, `Type | undefined` is a\n\
+             REQUIRED field that must appear in every object literal. This causes TS2345 in tests\n\
+             and downstream code that constructs the type without the field.\n\
+             Rule: if a field can be absent, use `?: Type`. Always.\n\
+             NEVER call Widget.create() — Widget is an interface; interfaces have no static methods.\n\
+             Callers import and call the factory function: import { createWidget } from '../models/Widget'\n\
              \n\
              ### Repository\n\
-             Repository save methods are named save<EntityName>(entity): Promise<Entity>:\n\
-               async saveProduct(product: Product): Promise<Product> { ... }     ✓\n\
-             This name MUST match what the unit test mock declares (saveProduct: jest.fn()).\n\
-             Never name it create(), persist(), or store() — the test expects saveProduct.\n\
+             RESPONSIBILITY: persistence ONLY. A repository exposes only the methods the current story requires:\n\
+               async saveWidget(widget: Widget): Promise<Widget>          // create / update\n\
+               async findWidgetById(id: string): Promise<Widget | null>   // read by id\n\
+               async findWidgets(): Promise<Widget[]>                     // list\n\
+               async deleteWidget(id: string): Promise<void>              // delete\n\
+             Only generate the methods the story actually needs — never add methods speculatively.\n\
+             Method naming: save<Entity>, find<Entity>ById, find<Entity>s, delete<Entity>.\n\
+             RULES:\n\
+             - NEVER generate ids or timestamps — the factory already assigned them.\n\
+             - NEVER have a createWidget() or create() method — that is the factory function in the model file.\n\
+             - NEVER publish events — that is the service's responsibility.\n\
+             - NEVER call EventPublisher — repositories are unaware of events.\n\
+             - Public method names MUST match what the service's unit test mocks declare.\n\
              \n\
              ### EventPublisher\n\
-             The publisher exposes exactly one method: publish<T>(topic: string, event: T): Promise<void>\n\
-             NEVER call publishEvent(), emit(), or send() — the method is always publish().\n\
-             Callers: await this.eventPublisher.publish('product-events', event)  ✓\n\
+             The publisher wraps kafkajs. Exact class shape — copy this structure:\n\
+             import { Kafka, Producer } from 'kafkajs';\n\
+             export class EventPublisher {\n\
+               private producer: Producer;\n\
+               constructor(private kafka: Kafka, private topic: string) {\n\
+                 this.producer = kafka.producer();\n\
+               }\n\
+               async connect(): Promise<void> { await this.producer.connect(); }\n\
+               async disconnect(): Promise<void> { await this.producer.disconnect(); }\n\
+               async publish<T>(event: T): Promise<void> {\n\
+                 await this.producer.send({ topic: this.topic, messages: [{ value: JSON.stringify(event) }] });\n\
+               }\n\
+             }\n\
+             RULES:\n\
+             - publish<T>(event: T) takes ONE argument — the event. Topic is in the constructor.\n\
+             - NO domain-type imports (no ProductCreated, no entity interfaces) — EventPublisher is generic.\n\
+             - NEVER add topic as a parameter of publish().\n\
+             Callers: await this.eventPublisher.publish(event)  ✓\n\
+             WRONG:   await this.eventPublisher.publish('topic', event)  ✗\n\
              \n\
              ### Route handlers\n\
              Every handler MUST declare next in the signature:\n\
-               router.post('/products', async (req: Request, res: Response, next: NextFunction) => {\n\
+               router.post('/widgets', async (req: Request, res: Response, next: NextFunction) => {\n\
              Pass all errors to next(err) — never catch-and-respond in the route body.\n\
              Validate input at the route boundary with zod:\n\
              - define a zod schema in the route file\n\
@@ -1245,14 +1316,19 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
                (e.g., `categories` not `categoryIds` if the domain interface uses `categories`)\n\
              - use .optional() for optional fields — NEVER .nullable() or .nullable().optional()\n\
                (.nullable() changes the type to include null, causing TS assignment errors downstream)\n\
+             - CRITICAL — .optional() placement: .optional() returns ZodOptional which has NO .max()/.min().\n\
+               .optional() MUST be the LAST call in the chain, after all constraints:\n\
+               z.string().max(1000).optional()                    ✓  optional string, max 1000 chars\n\
+               z.string().min(1).max(200).optional()              ✓  optional string, 1-200 chars\n\
+               z.string().optional().max(1000)                    ✗  RUNTIME ERROR: ZodOptional has no .max()\n\
+               z.string().optional().min(1)                       ✗  RUNTIME ERROR: ZodOptional has no .min()\n\
              - for array fields with element constraints: z.array(z.string().max(100)).max(5)\n\
                .maxLength() does NOT exist on zod arrays — always use .max() on both array and element\n\
              - call schema.parse(req.body); pass errors to next(err)\n\
              async/await everywhere — no raw .then() chains.\n\
-             EventPublisher is instantiated in the route handler — pass config from environment:\n\
-               new EventPublisher('product-service', [process.env.KAFKA_BROKER || 'localhost:9092'])\n\
-             The brokers argument is string[] — always wrap in an array.\n\
-             NEVER call new EventPublisher() without arguments.\n\
+             Route handlers do NOT instantiate EventPublisher or any infrastructure class.\n\
+             The service (obtained from req.app.locals) handles all business logic including event publishing.\n\
+             Route responsibility: validate input → call service → return HTTP response. Nothing else.\n\
              \n\
              ### Error handling\n\
              src/middleware/errorHandler.ts exports a named ErrorRequestHandler:\n\
@@ -1270,13 +1346,14 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              {\n\
                \"compilerOptions\": {\n\
                  \"target\": \"ES2020\",\n\
-                 \"module\": \"commonjs\",\n\
+                 \"module\": \"node16\",\n\
                  \"lib\": [\"ES2020\"],\n\
                  \"strict\": true,\n\
+                 \"isolatedModules\": true,\n\
                  \"esModuleInterop\": true,\n\
                  \"skipLibCheck\": true,\n\
                  \"resolveJsonModule\": true,\n\
-                 \"moduleResolution\": \"node\",\n\
+                 \"moduleResolution\": \"node16\",\n\
                  \"types\": [\"jest\", \"node\"]\n\
                },\n\
                \"include\": [\"src/**/*\", \"tests/**/*\"],\n\
@@ -1292,6 +1369,17 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
                const app = express()         ✓\n\
                export default app            ✓\n\
                export default function createApp() { ... }   ✗  callers get a function, not an app\n\
+             Body parsing: app.use(express.json()) — NEVER import or use 'body-parser'.\n\
+             body-parser is NOT in package.json — importing it causes MODULE_NOT_FOUND at runtime.\n\
+               app.use(express.json())      ✓  built into Express\n\
+               import bodyParser from 'body-parser'  ✗  not in package.json\n\
+               app.use(bodyParser.json())   ✗  not in package.json\n\
+             src/routes/*.ts MUST export a Router instance as the default export — NEVER a factory.\n\
+             app.ts creates service/repository instances (via new) and registers them on app.locals;\n\
+             routers access them via req.app.locals — no constructor arguments needed:\n\
+               const router = Router()       ✓\n\
+               export default router         ✓\n\
+               export const r = (svc) => Router()   ✗  app.use() receives a factory, not a router\n\
              Import middleware using its actual export style — named exports need braces:\n\
                import { errorHandler } from './middleware/errorHandler'   ✓  (named export)\n\
                import errorHandler from './middleware/errorHandler'        ✗  default import of named export → undefined\n\
@@ -1301,15 +1389,16 @@ export every interface the service layer needs, including request DTOs (e.g. Pro
              This separation lets Supertest import app without starting a real server.\n\
              app.ts creates repository instances and assigns them to app.locals so routes\n\
              can access them via req.app.locals without constructing them on every request:\n\
-               import { ProductRepository } from './repositories/ProductRepository'\n\
-               app.locals.productRepository = new ProductRepository()\n\
+               import { WidgetRepository } from './repositories/WidgetRepository'\n\
+               app.locals.widgetRepository = new WidgetRepository()\n\
              \n\
              ### Router mount paths\n\
-             Router handler paths are relative to the mount point in app.ts.\n\
-             If app.ts mounts a router at '/products', the handler for POST /products is:\n\
-               router.post('/', ...)     ✓  resolves to POST /products\n\
-               router.post('/products', ...)  ✗  resolves to POST /products/products\n\
-             Match the handler path to the mount point so the combined path is correct."
+             app.ts MUST mount every router with its resource path — NEVER without a path:\n\
+               app.use('/widgets', widgetRouter)    ✓  POST /widgets → router.post('/', ...)\n\
+               app.use(widgetRouter)                ✗  router.post('/') responds to POST /, not POST /widgets → 404\n\
+             Router handler paths are relative to the mount point:\n\
+               router.post('/', ...)           ✓  mount at '/widgets' → responds to POST /widgets\n\
+               router.post('/widgets', ...)    ✗  mount at '/widgets' → responds to POST /widgets/widgets"
             .to_string(),
         layer_order:
             "  1. src/models/           — interfaces only; no deps\n\
@@ -1568,6 +1657,22 @@ These will cause module-not-found errors at runtime:
   require(...)                                   ✗  use ES import syntax
   uuid(), faker()                                ✗  not in devDependencies — use plain strings
 
+### jest is a global — NEVER import it
+ts-jest with CommonJS injects jest as a global — no import is needed or allowed:
+  jest.fn()                                      ✓  jest is already in scope
+  jest.Mocked<T>                                 ✓  type reference, no import
+  import { jest } from '@jest/globals'           ✗  causes TS2305: Module has no exported member 'jest'
+  import jest from '@jest/globals'               ✗  same — ts-jest globals mode does not export jest
+Do NOT add any import statement for jest. Use jest.fn(), jest.mock(), jest.Mocked<T> directly.
+
+### Test IDs and test data — use plain string literals
+Tests do NOT need real UUIDs. Use plain string literals:
+  const id = 'test-id-123'                       ✓  simple, readable, predictable
+  import { v4 as uuid } from 'uuid'              ✗  uuid not in devDependencies
+  import { v4 as uuid } from 'crypto'            ✗  crypto has no v4 export — RUNTIME ERROR
+  crypto.randomUUID()                            ✗  non-deterministic — use a literal string
+Use literal dates too: new Date('2024-01-01') instead of new Date().
+
 ### Route test example
   jest.mock('../src/infrastructure/EventPublisher', () => ({
     EventPublisher: jest.fn().mockImplementation(() => ({ publish: jest.fn().mockResolvedValue(undefined) }))
@@ -1589,6 +1694,29 @@ These will cause module-not-found errors at runtime:
       expect(res.status).toBe(400)
     })
   })
+
+### Model unit test example
+  Models are interfaces + factory functions — NEVER classes. Tests call the factory, not `new`.
+  import { createWidget } from '../src/models/Widget'
+  import type { Widget } from '../src/models/Widget'
+
+  describe('createWidget', () => {
+    it('creates a widget with all mandatory fields', () => {
+      const widget = createWidget('name-value', 'other-field-value')
+      expect(widget.id).toEqual(expect.any(String))
+      expect(widget.createdAt).toBeInstanceOf(Date)
+      expect(widget.name).toBe('name-value')
+      expect(widget.optionalField).toBeUndefined()
+    })
+    it('creates a widget with optional field included', () => {
+      const widget = createWidget('name-value', 'other-field-value', 'optional-value')
+      expect(widget.optionalField).toBe('optional-value')
+    })
+  })
+  RULES for model tests:
+  - NEVER write `new Widget(...)` — the model is an interface, not a class; `new` will not compile
+  - NEVER call `widget.save()` or any persistence method — models have no such methods
+  - Use `import { createWidget }` for the factory call; use `import type { Widget }` for type annotations only
 
 ### Service unit test example
   import { ProductService } from '../src/services/ProductService'
@@ -1623,6 +1751,17 @@ These will cause module-not-found errors at runtime:
   mockResolvedValue always requires an argument — use mockResolvedValue(undefined) for void.
   NEVER use expect.any(X) where X is a TypeScript interface — interfaces have no runtime
   representation and this causes TS2693. Use expect.objectContaining({field: value}) instead.
+
+### Asserting service results — never deep-equal a literal id
+  The factory (createWidget) assigns id via randomUUID() from 'crypto' — the value is unknown at test time.
+  The service returns the factory-created object, NOT the repository mock's return value.
+  NEVER: expect(result).toEqual({ id: 'test-id-123', name: 'Widget', ... })  ✗  id won't match
+  CORRECT:
+    expect(result).toMatchObject({ name: 'Widget', manufacturer: 'Acme', model: 'X1' })
+    expect(result.id).toEqual(expect.any(String))
+    expect(result.createdAt).toBeInstanceOf(Date)
+  Also verify the repository was called with the constructed object:
+    expect(mockRepo.saveWidget).toHaveBeenCalledWith(expect.objectContaining({ name: 'Widget' }))
 
 ### Scope discipline
   Only write tests for the HTTP methods and service operations described in the story.
@@ -1848,6 +1987,28 @@ pub fn skill_for_technology(tech: &str, pkg: &str, pkg_path: &str, service_name:
     skill.map(|s| s.render()).unwrap_or_default()
 }
 
+/// Planner skill — file layout and layer order only.
+/// Strips namespace_rules and notes (implementation concerns) to keep planning prompts lean.
+pub fn plan_skill_for_technology(tech: &str, pkg: &str, pkg_path: &str, service_name: &str) -> String {
+    let t = tech.to_lowercase();
+    let skill: Option<TechStackSkill> =
+        if t.contains("spring") || t.contains("quarkus") || t.contains("micronaut")
+            || (t.contains("java") && !t.contains("javascript"))
+            || t.contains("kotlin")
+        {
+            Some(spring_boot_skill(pkg, pkg_path, service_name))
+        } else if t.contains("react") || t.contains("vite") {
+            Some(react_vite_skill())
+        } else if t.contains("angular") {
+            Some(angular_skill())
+        } else if t.contains("node") || t.contains("express") || t.contains("nest") {
+            Some(node_express_skill())
+        } else {
+            None
+        };
+    skill.map(|s| s.render_for_planning()).unwrap_or_default()
+}
+
 // ── Architecture skills ───────────────────────────────────────────────────────
 // Architecture skills are orthogonal to tech-stack skills.
 // They capture cross-cutting patterns that apply regardless of language or framework.
@@ -1905,12 +2066,16 @@ fn ddd_skill_for_tech(tech: &str) -> ArchitectureSkill {
                 .to_string(),
             structural_rules:
                 "  Use the ubiquitous language from the stories and domain registry in all identifiers —\n\
-                 class names, method names, field names. No technical synonyms (ProductData, ProductInfo)\n\
-                 when the agreed term is Product.\n\
+                 class names, method names, field names. No technical synonyms (WidgetData, WidgetInfo)\n\
+                 when the agreed term is Widget.\n\
                  Business invariants live in the aggregate, not in the application service or route handler.\n\
                  DTOs live at the API boundary (returned from routes); never expose domain entities directly in REST responses.\n\
                  Access nested entities only through their aggregate root.\n\
-                 Repositories return domain objects; the service layer maps them to response shapes for callers."
+                 Repositories return domain objects; the service layer maps them to response shapes for callers.\n\
+                 Aggregate lifecycle — three distinct responsibilities, never mixed:\n\
+                   Factory (model file): constructs a new aggregate instance, assigns id and createdAt.\n\
+                   Repository: receives a fully-constructed aggregate and persists it unchanged — never assigns ids or timestamps.\n\
+                   Application service: calls the factory to construct, then the repository to persist."
                 .to_string(),
             anti_patterns:
                 "  No business logic in route handlers or repositories — route handlers translate HTTP;\n\
@@ -1918,7 +2083,7 @@ fn ddd_skill_for_tech(tech: &str) -> ArchitectureSkill {
                  No anemic domain model — a type that is only fields with all logic in services is not DDD;\n\
                  move invariants into the entity or service.\n\
                  No findById that silently returns undefined without handling — throw a typed domain error\n\
-                 (e.g. ProductNotFoundError) or return a discriminated union with explicit handling at the call site."
+                 (e.g. WidgetNotFoundError) or return a discriminated union with explicit handling at the call site."
                 .to_string(),
         }
     } else {
@@ -1935,20 +2100,24 @@ fn ddd_skill_for_tech(tech: &str) -> ArchitectureSkill {
                 .to_string(),
             structural_rules:
                 "  Use the ubiquitous language from the stories and domain registry in all identifiers —\n\
-                 class names, method names, field names. No technical synonyms (ProductData, ProductInfo)\n\
-                 when the agreed term is Product.\n\
+                 class names, method names, field names. No technical synonyms (WidgetData, WidgetInfo)\n\
+                 when the agreed term is Widget.\n\
                  Business invariants live in the aggregate, not in the application service or controller.\n\
                  DTOs live at the API boundary (dto/); never expose domain entities in REST responses.\n\
                  Access nested entities only through their aggregate root — never inject a nested entity's\n\
                  repository directly.\n\
-                 Repositories return domain objects; the service layer maps them to DTOs for callers."
+                 Repositories return domain objects; the service layer maps them to DTOs for callers.\n\
+                 Aggregate lifecycle — three distinct responsibilities, never mixed:\n\
+                   Factory (domain class or static method): constructs a new aggregate instance, assigns id and createdAt.\n\
+                   Repository: receives a fully-constructed aggregate and persists it unchanged — never assigns ids or timestamps.\n\
+                   Application service: calls the factory to construct, then the repository to persist."
                 .to_string(),
             anti_patterns:
                 "  No business logic in controllers or repositories — controllers translate HTTP;\n\
                  repositories translate persistence.\n\
                  No anemic domain model — an entity that is only getters/setters with all logic in\n\
                  services is not DDD; move invariants into the entity.\n\
-                 No getById that silently returns null — throw a domain exception (ProductNotFoundException)\n\
+                 No getById that silently returns null — throw a domain exception (WidgetNotFoundException)\n\
                  or return Optional with explicit handling at the call site."
                 .to_string(),
         }
@@ -1963,16 +2132,16 @@ fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
         ArchitectureSkill {
             name: "Event Orientation (Node.js / Kafka)".to_string(),
             vocabulary:
-                "  Domain event: a fact that happened — immutable, past tense, e.g. ProductCreated.\n\
+                "  Domain event: a fact that happened — immutable, past tense, e.g. WidgetCreated.\n\
                  Event type file: TypeScript interface in src/events/ describing the message payload.\n\
                  Publisher utility: thin module in src/infrastructure/ that wraps the Kafka/Redpanda\n\
                  client and exposes a typed publish(topic, event) function.\n\
                  Transactional boundary: persist first; publish only after the database write succeeds."
                 .to_string(),
             structural_rules:
-                "  Name events in past tense: ProductCreated, OrderPlaced.\n\
+                "  Name events in past tense: WidgetCreated, OrderPlaced.\n\
                  Event type (src/events/) and publisher (src/infrastructure/) must precede the service step — follow the tech skill layer order.\n\
-                 Topic: use the Topic Naming Convention ADR value (e.g. product-events).\n\
+                 Topic: use the Topic Naming Convention ADR value (e.g. widget-events).\n\
                  Payload: include the aggregate ID; carry only what consumers need.\n\
                  Add kafkajs to the package.json step if not already listed."
                 .to_string(),
@@ -1989,13 +2158,13 @@ fn event_orientation_skill_for_tech(tech: &str) -> ArchitectureSkill {
         ArchitectureSkill {
             name: "Event Orientation".to_string(),
             vocabulary:
-                "  Domain event: a fact that happened — immutable, past tense, e.g. ProductRegistered.\n\
+                "  Domain event: a fact that happened — immutable, past tense, e.g. WidgetCreated.\n\
                  Event publisher: the service layer that emits events after successful persistence.\n\
                  Event listener: a separate class that reacts to one event; one concern per listener.\n\
                  Transactional boundary: the unit-of-work that must complete before an event is visible."
                 .to_string(),
             structural_rules:
-                "  Name events in past tense using domain language: ProductRegistered, OrderPlaced.\n\
+                "  Name events in past tense using domain language: WidgetCreated, OrderPlaced.\n\
                  Define event classes in the domain layer alongside the aggregate they describe.\n\
                  Publish events from the service layer after the aggregate is persisted — never before.\n\
                  Use @TransactionalEventListener(phase = AFTER_COMMIT) so listeners fire only on\n\
@@ -2157,7 +2326,7 @@ fn maven_skill() -> BuildSystemSkill {
         anti_patterns:
             "  Never add a <dependency> whose <groupId> matches or is derived from the project's\n\
              own <groupId> — your own classes are not published JARs.\n\
-             Domain event classes (ProductCreated, OrderPlaced) live in the service's own\n\
+             Domain event classes (WidgetCreated, OrderPlaced) live in the service's own\n\
              domain/ package — never add them as a Maven dependency.\n\
              ApplicationEventPublisher is in spring-context, already on the classpath via\n\
              spring-boot-starter — no extra <dependency> is needed or should be added.\n\
@@ -2298,20 +2467,19 @@ fn plan_prompt_for_service(
         (String::new(), String::new())
     };
 
-    let skill = skill_for_technology(tech, &pkg, &pkg_path, &service.name);
+    let skill = plan_skill_for_technology(tech, &pkg, &pkg_path, &service.name);
 
     // Show the directory prefix for every service so the LLM never invents bare /src/ paths.
-    let location_line = if is_front {
-        format!(
-            "Service directory prefix: frontend/{name}/\n\
-             ALL file paths in steps MUST start with frontend/{name}/  — never use bare src/ paths.",
-            name = service.name)
+    let dir_prefix = if is_front {
+        format!("frontend/{}/", service.name)
     } else {
-        format!(
-            "Service directory prefix: services/{name}/\n\
-             ALL file paths in steps MUST start with services/{name}/  — never use bare /src/ or /events/ paths.",
-            name = service.name)
+        format!("services/{}/", service.name)
     };
+    let location_line = format!(
+        "Service directory prefix: {dir_prefix}\n\
+         ALL file paths in steps MUST start with {dir_prefix} — never use bare src/ or placeholder paths.",
+        dir_prefix = dir_prefix,
+    );
 
     let schema_yaml = spec.entity_schema.as_ref()
         .map(|s| serde_yaml::to_string(s).unwrap_or_default())
@@ -2391,30 +2559,37 @@ fn plan_prompt_for_service(
              {it_skill}\n"
         )
     } else if is_node {
+        let svc = &service.name;
         format!(
             "\n## Testing plan\n\
              - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
                installed by `canopy scaffold` — do NOT include jest.config.js or package.json in the plan.\n\
-             - Test files MUST live in the flat services/{{name}}/tests/ directory — NEVER under src/.\n\
-             - You MUST add a tests/<Name>.test.ts step for EVERY file in src/services/.\n\
-               Unit tests mock the repository and test business logic in isolation.\n\
-               Example: services/{{name}}/tests/productService.test.ts\n\
-             - You MUST add a tests/<Name>.test.ts step for EVERY file in src/routes/.\n\
-               Route tests import app from src/app.ts and exercise the full HTTP stack via Supertest.\n\
-               Example: services/{{name}}/tests/productRoutes.test.ts\n\
-             - The plan is INCOMPLETE if any src/services/ or src/routes/ file has no test step.\n\
+             - Test files MUST live in the flat services/{svc}/tests/ directory — NEVER under src/.\n\
+             - TDD cycle (automatic): EVERY file under src/models/, src/events/, src/repositories/, \
+               src/infrastructure/, src/middleware/, src/services/, and src/routes/ gets a test \
+               file written automatically by the TDD cycle — NEVER add test steps for any of them.\n\
+               ✗ DO NOT write: tests/Product.test.ts  tests/ProductCreated.test.ts\n\
+               ✗ DO NOT write: tests/ProductRepository.test.ts  tests/EventPublisher.test.ts\n\
+               ✗ DO NOT write: tests/ProductService.test.ts  tests/products.test.ts\n\
+             - Test file stem MUST match the source file stem exactly.\n\
+               ✓ src/models/Product.ts → tests/Product.test.ts\n\
+               ✗ src/routes/products.ts → tests/routes.products.test.ts  (never composite names)\n\
+             - Test steps MUST list the implementation file they test in depends_on.\n\
              - Test files MUST be the last steps in the plan.\n\
-             - Do NOT include a test file for src/app.ts or src/index.ts.\n"
+             - Do NOT include a test file for src/app.ts or src/index.ts.\n",
+            svc = svc,
         )
     } else if is_react {
+        let svc = &service.name;
         format!(
             "\n## Testing plan\n\
-             - Test files MUST live in the flat frontend/{{name}}/tests/ directory — NEVER under src/.\n\
-             - For EVERY src/api/*.ts file in the plan, you MUST add a corresponding tests/<Name>.test.ts step.\n\
-             - For EVERY src/components/*.tsx file in the plan, you MUST add a corresponding tests/<Name>.test.tsx step.\n\
-             - The plan is INCOMPLETE if any src/api/ or src/components/ file has no test step.\n\
+             - Test files MUST live in the flat frontend/{svc}/tests/ directory — NEVER under src/.\n\
+             - TDD cycle (automatic): EVERY file under src/api/ and EVERY file under src/components/ \
+               gets a test file written automatically — NEVER add test steps for them.\n\
+               ✗ DO NOT write: tests/ProductApi.test.ts  tests/ProductForm.test.tsx\n\
              - Only libraries from the testing strategy ADR; no msw, Playwright, or Cypress.\n\
-             - Test steps MUST be the last steps in the list.\n"
+             - Test steps MUST be the last steps in the list.\n",
+            svc = svc,
         )
     } else {
         let it_skill = integration_testing_skill(tech);
@@ -2457,29 +2632,40 @@ fn plan_prompt_for_service(
          {existing_note}\
          {packages_note}\
          {testing_section}\n\
-         ## Output\n\
-         Return ONLY valid YAML — no prose, no code fences.\n\
+         ## Output format\n\
          List ONLY files that belong to service '{sname}'.\n\
          Every field inside a list item MUST be indented by exactly 2 spaces.\n\
          \n\
          steps:\n\
          - id: \"1\"\n\
            service: \"{sname}\"\n\
-           file: \"<path/relative/to/project/root>\"\n\
+           file: \"{dir_prefix}src/models/Widget.ts\"\n\
            operation: \"create\"\n\
-           description: \"<one sentence: what this file does, e.g. 'Defines Product entity with id, name, createdAt fields'>\"\n\
+           description: \"Defines the Widget entity and its factory function.\"\n\
+         - id: \"2\"\n\
+           service: \"{sname}\"\n\
+           file: \"{dir_prefix}src/services/WidgetService.ts\"\n\
+           operation: \"create\"\n\
+           description: \"Orchestrates widget registration by calling the factory and repository.\"\n\
            depends_on:\n\
-           - \"<file this step imports — omit if none>\"\n\
+           - \"{dir_prefix}src/models/Widget.ts\"\n\
+         \n\
+         Replace Widget/WidgetService with the actual names for this story. Use {dir_prefix} as the literal prefix for every file path.\n\
+         Layer verbs: model → Defines; factory → Constructs; repository → Persists; service → Orchestrates; route → Handles; middleware → Translates.\n\
          \n\
          ### Operations\n\
          MUST use operation: modify for every file in the existing list above; create for all others.\n\
-         One step per file — no duplicates.\n\
+         NEVER use operation: modify for a file that is NOT in the existing list — even if you think it is a scaffold artifact.\n\
+         ✗ src/app.ts not in existing list → operation must be create, not modify\n\
+         ✗ src/middleware/errorHandler.ts not in existing list → operation must be create, not modify\n\
+         ✗ src/index.ts not in existing list → operation must be create, not modify\n\
+         One step per file — no duplicates. If two descriptions apply to the same file, merge into one step.\n\
          \n\
          ### Scope\n\
          Include ONLY files with logic for this story.\n\
          MUST NOT include any of these — ever:\n\
-         - package.json or package-lock.json (npm dependencies are managed by the dependency gate, not plan steps)\n\
-         - tsconfig.json, tsconfig*.json, vite.config.ts, jest.config.js (scaffold artifacts — do not touch)\n\
+         - package.json, package-lock.json (managed by dependency gate)\n\
+         - tsconfig.json, tsconfig*.json, vite.config.ts, jest.config.js (scaffold artifacts)\n\
          - README, HELP.md, .gitignore, CSS files\n\
          {event_scope_rule}\
          If in doubt, leave it out.\n\
@@ -2487,11 +2673,20 @@ fn plan_prompt_for_service(
          ### YAML format\n\
          The response MUST start with the root key \"steps:\" — never a bare list.\n\
          ALL string values MUST use double quotes — id, service, file, operation, description.\n\
+         Every step MUST use \"file:\" — NEVER use \"tests:\", \"path:\", \"source:\", or any other key.\n\
          MUST NOT use block scalars (>- or |) — one quoted string per line.\n\
          description MUST be a single prose sentence on one line — never a YAML list, never code.\n\
          description MUST NOT contain TypeScript, Java, or any code syntax — prose only.\n\
-         EVERY file path MUST start with the service directory prefix shown above — never a bare path like tests/ or src/.\n\
-         depends_on: YAML sequence — NEVER wrap in quotes; use [] for none or a proper list.\n",
+         EVERY file path MUST start with {dir_prefix} — never a bare path like tests/ or src/.\n\
+         File extensions MUST use a dot — e.g. App.tsx ✓  App_tsx ✗  index.ts ✓  index_ts ✗\n\
+         depends_on: YAML sequence — NEVER wrap in quotes; use [] for none or a proper list.\n\
+         - Each depends_on path is the full project-root path including src/ — e.g. {dir_prefix}src/models/Widget.ts\n\
+         - depends_on MUST only list implementation source files — NEVER list test files or package.json.\n\
+         - Test steps MUST list the source file they test in depends_on — never empty for a test step.\n\
+         \n\
+         CRITICAL — output rules:\n\
+         Your entire response is the YAML. Begin with `steps:` and end with the last list item.\n\
+         Do NOT write ``` anywhere. Do NOT add explanations, summaries, or any text before or after the YAML.\n",
         sname = service.name,
         story_id = story.id,
         as_a = story.as_a,
@@ -2499,6 +2694,7 @@ fn plan_prompt_for_service(
         so_that = story.so_that,
         tech = tech,
         location_line = location_line,
+        dir_prefix = dir_prefix,
         skill_section = skill_section,
         arch_section = arch_section,
         schema_yaml = schema_yaml,
@@ -2632,12 +2828,33 @@ fn fix_quoted_depends_on(raw: &str) -> String {
 }
 
 fn parse_plan_steps(raw: &str) -> Result<Vec<ImplementationStep>, LlmError> {
-    let stripped = raw
+    // Strip opening fence and any prose before the YAML block.
+    let after_open = raw
         .trim()
         .trim_start_matches("```yaml")
         .trim_start_matches("```")
-        .trim_end_matches("```")
         .trim();
+    // Truncate at the first closing fence line (``` or ```yaml) that appears
+    // after YAML content has started. The model sometimes appends a closing
+    // fence + prose explanation after valid YAML.
+    let stripped = {
+        let mut yaml_started = false;
+        let mut end = after_open.len();
+        for (i, line) in after_open.lines().enumerate() {
+            let _ = i;
+            let t = line.trim();
+            if !yaml_started {
+                if t.starts_with("steps:") || t.starts_with("- ") || t.starts_with("- id:") {
+                    yaml_started = true;
+                }
+            } else if t.starts_with("```") {
+                // Closing fence after YAML — truncate here.
+                end = after_open.find(line).unwrap_or(after_open.len());
+                break;
+            }
+        }
+        after_open[..end].trim()
+    };
     // If the model omitted the `steps:` root key and emitted a bare sequence, wrap it.
     let wrapped: std::borrow::Cow<str> = if stripped.starts_with("- ") || stripped.starts_with("- id:") {
         std::borrow::Cow::Owned(format!("steps:\n{}", stripped))
@@ -2690,19 +2907,6 @@ fn frontend_tier(file: &str) -> u8 {
     1 // unknown frontend file — treat as component tier
 }
 
-fn derive_frontend_test_path(source_file: &str) -> Option<String> {
-    let src_idx = source_file.find("/src/")?;
-    let service_root = &source_file[..src_idx];
-    let filename = source_file.rsplit('/').next()?;
-    let test_filename = if filename.ends_with(".tsx") {
-        format!("{}.test.tsx", &filename[..filename.len() - 4])
-    } else if filename.ends_with(".ts") {
-        format!("{}.test.ts", &filename[..filename.len() - 3])
-    } else {
-        return None;
-    };
-    Some(format!("{}/tests/{}", service_root, test_filename))
-}
 
 fn inject_missing_app_tsx(steps: &mut Vec<ImplementationStep>, service: &ServiceEntry) {
     let prefix = format!("frontend/{}/", service.name);
@@ -2733,42 +2937,15 @@ fn inject_missing_app_tsx(steps: &mut Vec<ImplementationStep>, service: &Service
     });
 }
 
-fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, service_name: &str) {
-    // First, remove any test files the LLM placed under src/ — they belong in tests/.
+fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, _service_name: &str) {
+    // Remove any test files the LLM placed under src/ — they belong in tests/.
+    // The TDD loop generates test files for src/api/ and src/components/ automatically,
+    // so no injection is needed here.
     steps.retain(|s| {
         let is_test = s.file.to_lowercase().contains(".test.");
         if !is_test { return true; }
-        // Keep only test files that are already in the correct tests/ directory.
         s.file.contains("/tests/")
     });
-
-    let mut to_inject: Vec<ImplementationStep> = Vec::new();
-    for step in steps.iter() {
-        let f = &step.file;
-        if f.to_lowercase().contains(".test.") { continue; }
-        let needs_test = f.contains("/src/api/") || f.contains("/src/components/");
-        if !needs_test { continue; }
-        if let Some(test_path) = derive_frontend_test_path(f) {
-            // Match by canonical test path OR by base name — prevents duplicates even when
-            // the LLM put the test in the wrong directory (already stripped above).
-            let base = test_path.rsplit('/').next().unwrap_or("");
-            let already_present = steps.iter().chain(to_inject.iter())
-                .any(|s| s.file == test_path || s.file.ends_with(base));
-            if already_present { continue; }
-            let component_name = f.rsplit('/').next().unwrap_or("")
-                .trim_end_matches(".tsx").trim_end_matches(".ts").to_string();
-            to_inject.push(ImplementationStep {
-                id: String::new(),
-                service: service_name.to_string(),
-                file: test_path,
-                operation: "create".to_string(),
-                description: format!("Unit tests for {}", component_name),
-                depends_on: vec![f.clone()],
-                status: StepStatus::Pending,
-            });
-        }
-    }
-    steps.extend(to_inject);
 }
 
 pub fn generate_story_plan(
@@ -2926,7 +3103,30 @@ fn step_prompt(
         _ => String::new(),
     };
 
+    let is_ts = step.file.ends_with(".ts") || step.file.ends_with(".tsx");
+    let is_tsx = step.file.ends_with(".tsx");
     let test_hint_section = match test_hint {
+        Some((tf, tc, true)) if is_tsx => format!(
+            "\nSTUB ONLY — return a renderable skeleton, no logic:\n\
+             - Export the component function with the correct name and props type.\n\
+             - Render body: `return null;` — component must mount without errors.\n\
+             - Do NOT implement any UI, state, or handlers — the Green phase does that.\n\
+             \n\
+             Unit test this stub must compile and mount against:\n\
+             --- {tf} ---\n\
+             {tc}\n"
+        ),
+        Some((tf, tc, true)) if is_ts => format!(
+            "\nSTUB ONLY — return a compilable skeleton, no logic:\n\
+             - Export every class/function/type the test below imports.\n\
+             - Method bodies: `throw new Error('not implemented');` for all methods.\n\
+             - Constructor bodies: empty (no field assignments needed yet).\n\
+             - Do NOT implement any logic — the Green phase replaces this stub.\n\
+             \n\
+             Unit test this stub must compile against:\n\
+             --- {tf} ---\n\
+             {tc}\n"
+        ),
         Some((tf, tc, true)) => format!(
             "\nSTUB ONLY — return a compilable skeleton, no business logic:\n\
              - Declare every class, field, constructor, and method the unit test below references.\n\
@@ -2940,6 +3140,8 @@ fn step_prompt(
         Some((tf, tc, false)) => format!(
             "\nGREEN PHASE — implement to make all unit tests below pass.\n\
              Read the test file carefully: every assertion is a requirement.\n\
+             Use the EXACT method signatures shown in the sibling section — \
+do not add extra arguments or change parameter order relative to what is declared there.\n\
              \n\
              Unit tests that must pass:\n\
              --- {tf} ---\n\
@@ -3091,15 +3293,20 @@ fn unit_test_stub_prompt(
     step: &ImplementationStep,
     test_file: &str,
     service_packages: &std::collections::HashMap<String, String>,
-    _services: &ServicesRegistry,
+    services: &ServicesRegistry,
     adrs: &[Adr],
+    sibling_section: &str,
 ) -> String {
+    let impl_file = &step.file;
+    if impl_file.ends_with(".ts") || impl_file.ends_with(".tsx") {
+        return unit_test_stub_prompt_ts(story, spec, step, test_file, services, adrs, sibling_section);
+    }
+
     let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
     let pkg = service_packages.get(service_name)
         .cloned()
         .unwrap_or_else(|| service_name.replace('-', "_"));
 
-    let impl_file = &step.file;
     let class_name = std::path::Path::new(impl_file.as_str())
         .file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
     let test_class = format!("{}Test", class_name);
@@ -3115,7 +3322,7 @@ fn unit_test_stub_prompt(
         .unwrap_or_default();
     let scenarios_yaml = serde_yaml::to_string(&spec.scenarios).unwrap_or_default();
 
-    let service_entry = _services.services.iter()
+    let service_entry = services.services.iter()
         .find(|s| s.name == service_name || s.name == step.service);
     let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
     let test_skill = testing_skill_from_adrs(adrs, technology, layer);
@@ -3170,6 +3377,182 @@ fn unit_test_stub_prompt(
     )
 }
 
+fn unit_test_stub_prompt_ts(
+    story: &UserStory,
+    spec: &IntentSpec,
+    step: &ImplementationStep,
+    test_file: &str,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+    sibling_section: &str,
+) -> String {
+    let impl_file = &step.file;
+    let is_component = impl_file.ends_with(".tsx");
+    let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
+
+    let module_name = std::path::Path::new(impl_file.as_str())
+        .file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
+
+    let layer = if impl_file.contains("/services/") { "service" }
+        else if impl_file.contains("/routes/") { "route" }
+        else if impl_file.contains("/components/") { "component" }
+        else if impl_file.contains("/api/") { "api-client" }
+        else if impl_file.contains("/models/") { "model" }
+        else if impl_file.contains("/events/") { "event" }
+        else if impl_file.contains("/repositories/") { "repository" }
+        else if impl_file.contains("/infrastructure/") { "infrastructure" }
+        else if impl_file.contains("/middleware/") { "middleware" }
+        else { "module" };
+
+    let schema_yaml = spec.entity_schema.as_ref()
+        .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+        .unwrap_or_default();
+    let scenarios_yaml = serde_yaml::to_string(&spec.scenarios).unwrap_or_default();
+
+    let service_entry = services.services.iter()
+        .find(|s| s.name == service_name || s.name == step.service);
+    let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+    let test_skill = testing_skill_from_adrs(adrs, technology, layer);
+
+    let import_path = {
+        let test_parts: Vec<&str> = test_file.splitn(2, "/tests/").collect();
+        let impl_parts: Vec<&str> = impl_file.splitn(2, "/src/").collect();
+        if test_parts.len() == 2 && impl_parts.len() == 2 {
+            let rel = impl_parts[1];
+            let stem = std::path::Path::new(rel)
+                .with_extension("")
+                .to_string_lossy()
+                .to_string();
+            format!("../src/{}", stem)
+        } else {
+            format!("../{}", impl_file)
+        }
+    };
+
+    let red_reason = if is_component {
+        "Tests MUST be Red: the stub renders null so queries like getByRole/getByText will fail."
+    } else {
+        "Tests MUST be Red: the stub throws Error('not implemented') so all calls will reject."
+    };
+
+    let test_structure = if is_component {
+        format!(
+            "Test structure (React Testing Library):\n\
+             describe('{module_name}', () => {{\n\
+               it('should render <element> when <condition>', () => {{\n\
+                 // Arrange — prepare any props or mock handlers\n\
+                 // Act     — render(<{module_name} />)\n\
+                 // Assert  — screen.getByRole(...) / screen.getByText(...)\n\
+               }})\n\
+             }})",
+            module_name = module_name,
+        )
+    } else if layer == "model" || layer == "event" {
+        format!(
+            "Test structure (model/event — factory function, NOT `new`):\n\
+             import {{ create{module_name} }} from '{import_path}'\n\
+             \n\
+             describe('create{module_name}', () => {{\n\
+               it('should create with all mandatory fields', () => {{\n\
+                 // Act — call the factory function directly\n\
+                 const result = create{module_name}(/* mandatory args */)\n\
+                 // Assert\n\
+                 expect(result.id).toEqual(expect.any(String))\n\
+                 expect(result.createdAt).toBeInstanceOf(Date)\n\
+               }})\n\
+               it('should create with optional field included', () => {{\n\
+                 const result = create{module_name}(/* mandatory args */, /* optional arg */)\n\
+                 expect(result.optionalField).toBe('expected-value')\n\
+               }})\n\
+             }})\n\
+             CRITICAL: `new {module_name}()` will NOT compile — {module_name} is an interface, not a class.",
+            module_name = module_name,
+            import_path = import_path,
+        )
+    } else {
+        format!(
+            "Test structure:\n\
+             describe('{module_name}', () => {{\n\
+               beforeEach(() => {{ /* set up mocks and subject */ }})\n\
+               it('should <expected_outcome> when <condition>', async () => {{\n\
+                 // Arrange\n\
+                 // Act\n\
+                 // Assert\n\
+               }})\n\
+             }})",
+            module_name = module_name,
+        )
+    };
+
+    let sibling_block = if sibling_section.is_empty() {
+        String::new()
+    } else {
+        format!("Dependency types (use these exact field names in test data):\n{sibling_section}\n\n")
+    };
+
+    let route_rule = if layer == "route" {
+        "- Route tests: DO NOT import from 'app.ts' or '../src/app'. \
+Import the router from the implementation file and mount it on a local Express instance: \
+`import router from '../src/routes/...' const app = express(); app.use('/', router);`\n\
+- Route tests: mock only the service layer (NOT repository or event publisher directly).\n"
+    } else {
+        ""
+    };
+
+    format!(
+        "Generate a Jest test file to drive TDD for '{module_name}'.\n\
+         \n\
+         Implementation file : {impl_file}\n\
+         Test file to create : {test_file}\n\
+         Layer               : {layer}\n\
+         Service             : {service_name}\n\
+         Import path         : {import_path}\n\
+         \n\
+         Story: As a {as_a}, I want {want}, so that {so_that}.\n\
+         \n\
+         Entity schema:\n\
+         {schema_yaml}\n\
+         BDD scenarios — one describe/it block per scenario:\n\
+         {scenarios_yaml}\n\
+         \n\
+         {sibling_block}\
+         {test_skill}\n\
+         \n\
+         {test_structure}\n\
+         \n\
+         IMPORTANT:\n\
+         - Import the subject from '{import_path}'.\n\
+         - Write REAL assertions.\n\
+         - {red_reason}\n\
+           Do NOT use expect.assertions(0) or skip assertions.\n\
+         - Mock dependencies with jest.fn().\n\
+         - jest is a global — NEVER import it.\n\
+         - Test data: use plain string literals for IDs (e.g. 'product-1'), never crypto or uuid imports.\n\
+         - Test data objects MUST include ALL declared fields from the dependency types above.\n\
+           Fields typed as `T | undefined` are REQUIRED in TypeScript strict mode — \
+they must be set explicitly (e.g. `description: undefined` or a real test value). \
+Omitting them causes TS2345 even though the value can be undefined.\n\
+         {route_rule}\
+         \n\
+         Return ONLY the raw TypeScript file content — no code fences, no explanation.",
+        module_name = module_name,
+        impl_file = impl_file,
+        test_file = test_file,
+        layer = layer,
+        service_name = service_name,
+        import_path = import_path,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        schema_yaml = schema_yaml,
+        scenarios_yaml = scenarios_yaml,
+        test_skill = test_skill,
+        test_structure = test_structure,
+        red_reason = red_reason,
+        route_rule = route_rule,
+    )
+}
+
 pub fn generate_unit_test_stub(
     client: &LlmClient,
     story: &UserStory,
@@ -3179,8 +3562,9 @@ pub fn generate_unit_test_stub(
     service_packages: &std::collections::HashMap<String, String>,
     services: &ServicesRegistry,
     adrs: &[Adr],
+    sibling_section: &str,
 ) -> Result<String, LlmError> {
-    let prompt = unit_test_stub_prompt(story, spec, step, test_file, service_packages, services, adrs);
+    let prompt = unit_test_stub_prompt(story, spec, step, test_file, service_packages, services, adrs, sibling_section);
     Ok(strip_code_fences(&client.complete_large(&prompt)?))
 }
 
@@ -3252,6 +3636,34 @@ fn fix_prompt(
         "xml" => "XML",
         _ => "source",
     };
+    // Detect TDD context from file path and content.
+    let is_test_file = file_path.contains("/tests/")
+        || file_path.contains("/src/test/java/")
+        || file_path.ends_with(".test.ts")
+        || file_path.ends_with(".test.tsx")
+        || file_path.ends_with("Test.java")
+        || file_path.ends_with("IT.java");
+    let is_stub = !is_test_file
+        && (content.contains("throw new Error('not implemented')")
+            || content.contains("throw new Error(\"not implemented\")")
+            || (ext == "java" && content.contains("return null;") && !content.contains("if ") && !content.contains("for ")));
+
+    let tdd_rules = if is_test_file {
+        "\n## TDD — this is a test file\n\
+         - Do NOT change, weaken, or remove any assertions\n\
+         - Do NOT remove or rename test cases\n\
+         - Only fix: import paths, missing type annotations, syntax errors\n\
+         - If a test imports a symbol that does not exist yet, add a minimal import/mock — do NOT delete the test"
+    } else if is_stub {
+        "\n## TDD — this is a Red-phase stub\n\
+         - Do NOT implement any business logic\n\
+         - Preserve all `throw new Error('not implemented')` or `return null;` bodies\n\
+         - Only fix: missing exports, import paths, type signatures, constructor declarations\n\
+         - The stub must compile and satisfy the test's type contract — nothing more"
+    } else {
+        ""
+    };
+
     let extra_rules = if ext == "java" {
         "\n- A Java source file contains exactly one top-level type declaration\n\
          - Nothing may appear after the final closing brace of the top-level class/interface/enum/record\n\
@@ -3340,11 +3752,11 @@ fn fix_prompt(
          Current content:\n\
          {content}\n\
          \n\
+         {tdd_rules}\
          Rules:\n\
          - Return ONLY the corrected file content — no prose, no markdown fences, no explanations\
          {extra_rules}\n\
          - Preserve all correct logic; only fix what the errors report\n\
-         - Do not add TODO comments or placeholder stubs\n\
          - Only import from modules that exist in the project files listed above"
     )
 }
@@ -3593,7 +4005,19 @@ fn technology_to_command(
     {
         let template = vite_template_for(&t);
         (
-            format!("printf 'n\\n' | npm create vite@latest {name} -- --template {template}"),
+            format!(
+                "printf 'n\\n' | npm create vite@latest {name} -- --template {template} && \
+                 cd {name} && npm install && \
+                 npm install --save-dev vitest @testing-library/react @testing-library/user-event \
+                   @testing-library/jest-dom jsdom && \
+                 npm pkg set scripts.test=\"vitest run\" && \
+                 node -e \"var fs=require('fs');\
+var v=fs.readFileSync('vite.config.ts','utf8');\
+v=v.replace('plugins: [react()]','plugins: [react()],\\n  test: {{ globals: true, environment: \\\"jsdom\\\", setupFiles: [\\\"./src/test/setup.ts\\\"] }}');\
+fs.writeFileSync('vite.config.ts',v);\" && \
+                 mkdir -p src/test && \
+                 node -e \"require('fs').writeFileSync('src/test/setup.ts','import \\\"@testing-library/jest-dom\\\";\\n');\""
+            ),
             format!("{name}/"),
         )
     } else if t.contains("spring boot") || t.contains("spring-boot") {
@@ -3618,7 +4042,22 @@ fn technology_to_command(
                  npm install express zod && \
                  npm install --save-dev typescript ts-node @types/express @types/node \
                    jest ts-jest @types/jest supertest @types/supertest && \
-                 npx tsc --init && \
+                 npx tsc --init --target ES2020 --lib ES2020 \
+                   --esModuleInterop --skipLibCheck --resolveJsonModule && \
+                 node -e \"var fs=require('fs');\
+var c=new Function('return '+fs.readFileSync('tsconfig.json','utf8'))();\
+c.compilerOptions.module='node16';\
+c.compilerOptions.moduleResolution='node16';\
+c.compilerOptions.types=['jest','node'];\
+delete c.compilerOptions.verbatimModuleSyntax;\
+delete c.compilerOptions.jsx;\
+c.compilerOptions.isolatedModules=true;\
+delete c.compilerOptions.noUncheckedSideEffectImports;\
+delete c.compilerOptions.moduleDetection;\
+c.include=['src/**/*','tests/**/*'];\
+c.exclude=['node_modules'];\
+fs.writeFileSync('tsconfig.json',JSON.stringify(c,null,2));\" && \
+                 mkdir -p src tests && \
                  npx --yes ts-jest config:init && \
                  npm pkg set scripts.test=\"jest --forceExit\" \
                              scripts.build=\"tsc --noEmit\" \

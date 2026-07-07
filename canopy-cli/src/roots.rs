@@ -33,9 +33,17 @@ pub fn ensure_indexed() {
         return;
     }
     if !std::path::Path::new(INDEX_PATH).exists() {
-        let _ = std::process::Command::new("roots").arg("init").status();
+        let _ = std::process::Command::new("roots")
+            .arg("init")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
-    let _ = std::process::Command::new("roots").arg("index").status();
+    let _ = std::process::Command::new("roots")
+        .arg("index")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 /// Returns a feature context packet for the given goal, or None when no index exists.
@@ -158,7 +166,11 @@ pub fn reindex() {
     if !binary_available() {
         return;
     }
-    let _ = std::process::Command::new("roots").arg("index").status();
+    let _ = std::process::Command::new("roots")
+        .arg("index")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 fn binary_available() -> bool {

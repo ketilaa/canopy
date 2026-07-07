@@ -12,6 +12,7 @@ fn detect_language(filename: &str) -> Option<Language> {
         "build.gradle.kts" => Some(Language::Kotlin),
         "settings.gradle.kts" => Some(Language::Kotlin),
         "package.json" => Some(Language::TypeScript),
+        "Cargo.toml" => Some(Language::Rust),
         _ => None,
     }
 }
@@ -23,6 +24,7 @@ const MANIFESTS: &[&str] = &[
     "build.gradle.kts",
     "settings.gradle.kts",
     "package.json",
+    "Cargo.toml",
 ];
 
 /// Discover projects within a root directory.
@@ -163,6 +165,7 @@ pub fn collect_source_files(project: &Project) -> Vec<PathBuf> {
                     (ext == "ts" || ext == "tsx")
                         && !path.to_string_lossy().ends_with(".d.ts")
                 }
+                Language::Rust => ext == "rs",
             };
 
             if matches {

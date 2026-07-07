@@ -1,6 +1,7 @@
 mod extractor;
 mod java;
 mod kotlin;
+mod rust;
 mod typescript;
 
 pub mod dispatch;
