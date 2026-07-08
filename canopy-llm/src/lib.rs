@@ -8,8 +8,8 @@ pub use tech::services_need_jvm;
 
 mod skills;
 pub use skills::{
-    skill_for_build_system, skill_for_technology, skills_for_architecture,
-    testing_skill_for_file_with_adrs,
+    detect_layer, skill_for_build_system, skill_for_technology, skill_for_technology_all_layers,
+    skills_for_architecture, testing_skill_for_file_with_adrs,
 };
 
 mod prompts;
