@@ -18,5 +18,5 @@ pub use prompts::{
     extract_domain_from_stories, fix_file, generate_scaffold_from_services,
     generate_stories_from_intent, generate_story_contract, generate_story_plan,
     generate_story_spec, generate_unit_test_stub, identify_architectural_questions,
-    propose_dependencies, suggest_domain_entities, suggest_roles, StepResult,
+    propose_dependencies, suggest_domain_entities, suggest_roles, FixAttempt, StepResult,
 };
