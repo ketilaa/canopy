@@ -1,0 +1,408 @@
+use crate::fix_loop::run_fix_loop_logged;
+use crate::project_scan::{
+    compile_command_for_service, ensure_npm_installed, scan_service_source_files,
+    test_class_command_for_service, test_command_for_service,
+};
+use crate::roots;
+use crate::tdd::{derive_test_file_path, is_tdd_candidate, is_test_file, test_class_name};
+use crate::ui::{print_step_notes, with_spinner};
+use crate::util::build_client;
+use crate::{GREEN, RED, RESET};
+use anyhow::{Context, Result};
+use canopy_core::{Adr, IntentSpec, ServicesRegistry, StepStatus, StoryPlan, UserStory};
+use canopy_llm::{
+    execute_implementation_step, execute_implementation_stub, execute_implementation_with_test,
+    generate_unit_test_stub, skills_for_architecture, StepResult,
+};
+use canopy_storage::save_story_plan;
+use std::collections::HashMap;
+
+/// Prints the stop notice used whenever a fix loop exhausts its iterations without getting
+/// the build green. Stopping here — rather than marking the step done and moving on — matters
+/// because every later step's compile/test check assumes everything before it already works;
+/// continuing on a broken foundation only compounds errors and burns more LLM calls chasing them.
+fn report_broken_build(step_id: &str, file: &str, story_id: &str) {
+    eprintln!("\n  ✗ Build is broken after step {step_id} ({file}) — stopping so errors don't compound.");
+    eprintln!("  Fix the errors above, then re-run `canopy implement {story_id}` to continue.");
+}
+
+pub(crate) fn format_roots_context(packet: &roots_context::FeatureContextPacket) -> String {
+    let mut parts = Vec::new();
+    if !packet.symbols.is_empty() {
+        let syms: Vec<String> = packet.symbols.iter()
+            .map(|s| format!("  {} {} ({}:{})", s.kind, s.fqn, s.file, s.line))
+            .collect();
+        parts.push(format!("Symbols:\n{}", syms.join("\n")));
+    }
+    if !packet.facts.is_empty() {
+        let facts = packet.facts.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n");
+        parts.push(format!("Facts:\n{facts}"));
+    }
+    parts.join("\n")
+}
+
+/// Builds the sibling context section for an implementation step prompt.
+///
+/// Tries Roots symbol surfaces first (compact). Falls back to reading full file
+/// content from session_written or disk when Roots is unavailable.
+pub(crate) fn build_sibling_section(
+    deps: &[String],
+    service_dir: &str,
+    session_written: &std::collections::HashMap<String, String>,
+) -> String {
+    if deps.is_empty() {
+        return String::new();
+    }
+    let prefix = format!("{}/", service_dir);
+    let rel_paths: Vec<String> = deps.iter()
+        .filter_map(|d| d.strip_prefix(&prefix).map(|s| s.to_string()))
+        .collect();
+
+    if let Some(surface) = roots::get_ts_module_surface(&rel_paths, service_dir) {
+        return surface;
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    for dep in deps {
+        let rel = dep.strip_prefix(&prefix).unwrap_or(dep.as_str());
+        let content = session_written.get(dep)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(dep).ok());
+        if let Some(c) = content {
+            parts.push(format!("// {}\n{}", rel, c));
+        }
+    }
+    parts.join("\n\n")
+}
+
+/// Executes every pending step in `plan`, running the TDD Red/Green cycle for
+/// TDD-candidate files and direct generation for everything else, then runs a
+/// final integration test pass across all implementable services.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_steps(
+    story_id: &str,
+    debug: bool,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+    service_packages: &HashMap<String, String>,
+    fix_log_dir: &std::path::Path,
+    mut plan: StoryPlan,
+) -> Result<()> {
+    // Load package constraints (written during plan/gate phase, also available on resume).
+    let constraints_path = canopy_storage::storage_dir()
+        .join(format!("stories/{}/pkg_constraints.yaml", story_id));
+    let pkg_constraints_by_service: std::collections::HashMap<String, String> =
+        std::fs::read_to_string(&constraints_path)
+            .ok()
+            .and_then(|s| serde_yaml::from_str(&s).ok())
+            .unwrap_or_default();
+
+    let client = build_client("developer", debug)?;
+    let total = plan.steps.len();
+    let mut written = 0usize;
+    let mut session_written: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    const MAX_FIX_ITERATIONS: usize = 5;
+
+    roots::ensure_indexed();
+
+    // A pending "create" step's file should not exist yet — if it does, it's a leftover
+    // Red-phase artifact from a prior run that was interrupted before this step reached
+    // "done" (e.g. Ctrl-C, or a step earlier in the plan being reset for a re-run). Left in
+    // place, it pollutes every whole-project compile check between now and when this step
+    // is actually (re-)executed, surfacing as fix-loop noise attributed to the wrong step.
+    for step in plan.steps.iter().filter(|s| s.status == StepStatus::Pending && s.operation == "create") {
+        if std::path::Path::new(&step.file).exists() {
+            println!("  removing stale artifact (leftover from an interrupted run): {}", step.file);
+            let _ = std::fs::remove_file(&step.file);
+        }
+        if is_tdd_candidate(&step.file) {
+            if let Some(test_file) = derive_test_file_path(&step.file) {
+                if std::path::Path::new(&test_file).exists() {
+                    println!("  removing stale artifact (leftover from an interrupted run): {}", test_file);
+                    let _ = std::fs::remove_file(&test_file);
+                }
+            }
+        }
+    }
+
+    for i in 0..total {
+        if plan.steps[i].status != StepStatus::Pending { continue; }
+
+        let step = &plan.steps[i];
+
+        // If this plan step targets a test file that the TDD cycle already wrote, skip it.
+        if is_test_file(&step.file) && std::path::Path::new(&step.file).exists() {
+            println!("\n[{}/{}] ↷ {} (already written by TDD cycle)", step.id, total, step.file);
+            plan.steps[i].status = StepStatus::Done;
+            save_story_plan(story_id, &plan).context("failed to save plan progress")?;
+            continue;
+        }
+
+        let op_symbol = if step.operation == "modify" { "✎" } else { "+" };
+        println!("\n[{}/{}] {op_symbol} {}", step.id, total, step.file);
+        println!("      {}", step.description);
+
+        // Resolve the service entry and directory for this step.
+        let step_service_name = step.service.rsplit('/').next().unwrap_or(&step.service).to_string();
+        let step_service = services.services.iter()
+            .find(|s| s.name == step_service_name || s.name == step.service);
+        let step_tech = step_service.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+        let arch_skills = skills_for_architecture(adrs, step_tech);
+        let step_service_dir = match step_service.and_then(|s| s.component_type.as_deref()) {
+            Some("frontend") => format!("frontend/{}", step_service_name),
+            _ => format!("services/{}", step_service_name),
+        };
+
+        if is_tdd_candidate(&step.file) {
+            let test_file = match derive_test_file_path(&step.file) {
+                Some(p) => p,
+                None => {
+                    eprintln!("  cannot derive test path for {} — skipping TDD", step.file);
+                    continue;
+                }
+            };
+            let test_class = test_class_name(&test_file).unwrap_or_else(|| "Test".to_string());
+
+            // ── RED PHASE ────────────────────────────────────────────────────────
+            println!("  {RED}TDD Red{RESET}    — write failing test + compilable stub");
+            // Build sibling context first — the test prompt needs the type surfaces
+            // so it can produce test data with all required fields.
+            let stub_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
+
+            let StepResult { content: test_content, summary: test_summary, deviations: test_deviations } = with_spinner(
+                format!("{RED}Red{RESET}  — generating test    {test_file}"),
+                || generate_unit_test_stub(
+                    &client, story, spec, contract_yaml, step, &test_file,
+                    service_packages, services, adrs, &stub_siblings,
+                ),
+            ).with_context(|| format!("LLM call failed generating test for step {}", step.id))?;
+
+            let test_dest = std::path::Path::new(&test_file);
+            if let Some(parent) = test_dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(test_dest, &test_content)
+                .with_context(|| format!("failed to write {}", test_file))?;
+            println!("  → {}", test_file);
+            print_step_notes(&test_summary, &test_deviations);
+            let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
+            let StepResult { content: stub_content, summary: stub_summary, deviations: stub_deviations } = with_spinner(
+                format!("{RED}Red{RESET}  — generating stub    {}", step.file),
+                || execute_implementation_stub(
+                    &client, story, spec, contract_yaml,
+                    step, None, None,
+                    service_packages, services, &stub_siblings, &arch_skills,
+                    &test_file, &test_content, pkg_constraints,
+                ),
+            ).with_context(|| format!("LLM call failed generating stub for step {}", step.id))?;
+
+            let dest = std::path::Path::new(&step.file);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(dest, &stub_content)
+                .with_context(|| format!("failed to write {}", step.file))?;
+            println!("  → {}", step.file);
+            print_step_notes(&stub_summary, &stub_deviations);
+            written += 1;
+            session_written.insert(step.file.clone(), stub_content);
+
+            if let Some(svc) = step_service {
+                if std::path::Path::new(&step_service_dir).exists() {
+                    ensure_npm_installed(&step_service_dir);
+                    let compile_cmd = compile_command_for_service(svc, &step_service_dir);
+                    println!("  {RED}Red{RESET}  — compile stub    $ {compile_cmd}");
+                    let src_files = scan_service_source_files(&step_service_dir);
+                    // Red fix loop protects done-step impl files and test files from
+                    // earlier TDD steps — but NOT the current step's test, which the
+                    // fix loop is allowed to repair (e.g. wrong constructor pattern).
+                    let mut red_skip: Vec<String> = Vec::new();
+                    for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
+                        red_skip.push(s.file.clone());
+                        if let Ok(abs) = std::fs::canonicalize(&s.file) {
+                            red_skip.push(abs.to_string_lossy().to_string());
+                        }
+                        if is_tdd_candidate(&s.file) {
+                            if let Some(prev_test) = derive_test_file_path(&s.file) {
+                                red_skip.push(prev_test.clone());
+                                if let Ok(abs) = std::fs::canonicalize(&prev_test) {
+                                    red_skip.push(abs.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                    }
+                    let red_ok = run_fix_loop_logged(&client, svc, &step_service_dir, &compile_cmd,
+                        &src_files, &red_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        Some(fix_log_dir), &format!("red-{}", step.file));
+                    if !red_ok {
+                        report_broken_build(&step.id, &step.file, story_id);
+                        return Ok(());
+                    }
+                }
+            }
+            roots::reindex();
+
+            // ── GREEN PHASE ──────────────────────────────────────────────────────
+            println!("  {GREEN}TDD Green{RESET}  — implement to pass the test");
+            let roots_context = roots::get_feature_context(&step.description)
+                .map(|p| format_roots_context(&p))
+                .filter(|s| !s.is_empty());
+
+            // Re-read test in case the Red fix loop modified it.
+            let test_content = std::fs::read_to_string(&test_file)
+                .unwrap_or(test_content);
+
+            let green_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
+            let StepResult { content: impl_content, summary: impl_summary, deviations: impl_deviations } = with_spinner(
+                format!("{GREEN}Green{RESET} — implementing      {}", step.file),
+                || execute_implementation_with_test(
+                    &client, story, spec, contract_yaml,
+                    step, None, roots_context.as_deref(),
+                    service_packages, services, &green_siblings, &arch_skills,
+                    &test_file, &test_content, pkg_constraints,
+                ),
+            ).with_context(|| format!("LLM call failed for Green phase step {}", step.id))?;
+
+            std::fs::write(dest, &impl_content)
+                .with_context(|| format!("failed to write {}", step.file))?;
+            println!("  → {}", step.file);
+            print_step_notes(&impl_summary, &impl_deviations);
+            session_written.insert(step.file.clone(), impl_content);
+
+            if let Some(svc) = step_service {
+                if std::path::Path::new(&step_service_dir).exists() {
+                    ensure_npm_installed(&step_service_dir);
+                    let test_cmd = test_class_command_for_service(svc, &test_class);
+                    println!("  {GREEN}Green{RESET} — run tests      $ {test_cmd}");
+                    let src_files = scan_service_source_files(&step_service_dir);
+                    let abs_test = std::fs::canonicalize(&test_file)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or(test_file.clone());
+                    let green_ok = run_fix_loop_logged(&client, svc, &step_service_dir, &test_cmd,
+                        &src_files, &[test_file.clone(), abs_test], adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        Some(fix_log_dir), &format!("green-{}", step.file));
+                    if !green_ok {
+                        report_broken_build(&step.id, &step.file, story_id);
+                        return Ok(());
+                    }
+                }
+            }
+            roots::reindex();
+        } else {
+            // ── DIRECT IMPLEMENTATION (non-TDD candidates) ───────────────────────
+            let current_content = if step.operation == "modify" {
+                std::fs::read_to_string(&step.file).ok()
+            } else {
+                None
+            };
+            let roots_context = roots::get_feature_context(&step.description)
+                .map(|p| format_roots_context(&p))
+                .filter(|s| !s.is_empty());
+
+            let step_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
+            let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
+            let StepResult { content, summary, deviations } = with_spinner(
+                format!("generating  {}", step.file),
+                || execute_implementation_step(
+                    &client, story, spec, contract_yaml,
+                    step, current_content.as_deref(), roots_context.as_deref(),
+                    service_packages, services, &step_siblings, &arch_skills, pkg_constraints,
+                ),
+            ).with_context(|| format!("LLM call failed for step {}", step.id))?;
+
+            let dest = std::path::Path::new(&step.file);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(dest, &content)
+                .with_context(|| format!("failed to write {}", step.file))?;
+            println!("  → {}", step.file);
+            print_step_notes(&summary, &deviations);
+            written += 1;
+            session_written.insert(step.file.clone(), content);
+
+            // Compile check after each direct step — catch errors before the next
+            // step inherits them. Only allow fixing the newly written file.
+            if let Some(svc) = step_service {
+                if std::path::Path::new(&step_service_dir).exists() {
+                    ensure_npm_installed(&step_service_dir);
+                    let compile_cmd = compile_command_for_service(svc, &step_service_dir);
+                    println!("  compile   $ {compile_cmd}");
+                    let src_files = scan_service_source_files(&step_service_dir);
+                    let mut direct_skip: Vec<String> = Vec::new();
+                    for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
+                        direct_skip.push(s.file.clone());
+                        if let Ok(abs) = std::fs::canonicalize(&s.file) {
+                            direct_skip.push(abs.to_string_lossy().to_string());
+                        }
+                    }
+                    let direct_ok = run_fix_loop_logged(&client, svc, &step_service_dir, &compile_cmd,
+                        &src_files, &direct_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        Some(fix_log_dir), &format!("direct-{}", step.file));
+                    if !direct_ok {
+                        report_broken_build(&step.id, &step.file, story_id);
+                        return Ok(());
+                    }
+                }
+            }
+
+            roots::reindex();
+        }
+
+        plan.steps[i].status = StepStatus::Done;
+        save_story_plan(story_id, &plan).context("failed to save plan progress")?;
+    }
+
+    println!("\n{written} file(s) written.");
+
+    // Final integration test pass — catches e2e tests and cross-service interaction issues.
+    let implementable: Vec<_> = services.services.iter()
+        .filter(|s| s.component_type.as_deref() != Some("infrastructure"))
+        .filter(|s| s.technology.is_some())
+        .collect();
+
+    for service in &implementable {
+        let service_dir = match service.component_type.as_deref().unwrap_or("service") {
+            "frontend" => format!("frontend/{}", service.name),
+            _ => format!("services/{}", service.name),
+        };
+        if !std::path::Path::new(&service_dir).exists() { continue; }
+
+        if !std::path::Path::new(&format!("{service_dir}/node_modules")).exists()
+            && std::path::Path::new(&format!("{service_dir}/package.json")).exists()
+        {
+            println!("  running npm install in {service_dir}...");
+            let _ = crate::shell::npm_install(&service_dir, &[], false);
+        }
+
+        let svc_tech = service.technology.as_deref().unwrap_or("unknown");
+        let arch_skills = skills_for_architecture(adrs, svc_tech);
+        let test_cmd = test_command_for_service(service, &service_dir);
+        let service_source_files = scan_service_source_files(&service_dir);
+        // Protect test files in the final pass — they are specs, not targets to simplify.
+        let test_files: Vec<String> = service_source_files.iter()
+            .filter(|f| f.contains("/tests/"))
+            .cloned()
+            .collect();
+        let abs_test_files: Vec<String> = test_files.iter()
+            .filter_map(|f| std::fs::canonicalize(f).ok()
+                .map(|p| p.to_string_lossy().to_string()))
+            .collect();
+        let skip_tests: Vec<String> = test_files.into_iter()
+            .chain(abs_test_files.into_iter())
+            .collect();
+        println!("\n  $ {test_cmd}  (final validation — {})", service.name);
+        let final_ok = run_fix_loop_logged(&client, service, &service_dir, &test_cmd,
+            &service_source_files, &skip_tests, adrs, &arch_skills, MAX_FIX_ITERATIONS,
+            Some(fix_log_dir), &format!("final-{}", service.name));
+        if !final_ok {
+            eprintln!("  ✗ Final validation failed for '{}' — fix the errors above.", service.name);
+        }
+    }
+
+    Ok(())
+}
