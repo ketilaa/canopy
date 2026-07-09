@@ -18,8 +18,7 @@ pub(crate) struct FixOutcome {
 /// Runs a build/test command and iterates an LLM fix loop until it succeeds or max_iterations is hit.
 /// `skip_files` lists files that must not be modified (e.g. the unit test in the Green phase).
 /// `adrs` is used to resolve the correct testing skill when fixing test files.
-/// `progress`/`step_idx` anchor fix-attempt spinners under the calling step's checklist line —
-/// pass `Progress::none()` and `0` from a context with no step list (e.g. final validation).
+/// `progress`/`step_idx` anchor fix-attempt spinners under the calling step's checklist line.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_fix_loop_logged(
     client: &LlmClient,

@@ -136,19 +136,40 @@ where
     result
 }
 
+/// One entry in the list `Progress::new` builds a checklist from. `group` is the owning
+/// service/frontend's name — consecutive `StepMeta`s sharing a `group` are rendered together
+/// under one header naming that group and whether it's a backend service or a frontend app.
+pub(crate) struct StepMeta {
+    pub file: String,
+    pub group: String,
+    pub is_frontend: bool,
+}
+
+/// One line in the live checklist: either a permanent section header for a group of steps,
+/// or an actual step (indexing back into `Progress::files`/`group_index`/`group_size`).
+enum Row {
+    Header(String),
+    Step(usize),
+}
+
 /// A checklist of every step in the current `implement` run, rendered as one line per step
-/// via `indicatif::MultiProgress` when interactive. Pending steps sit dim and unmarked; the
-/// active step expands with a live spinner, phase text, and a nested child spinner for
-/// whatever LLM call is currently running; a finished step collapses to a single dim,
-/// struck-through line and is dropped for good — see the `bars` field doc for why that drop
-/// matters. Failed steps freeze red, un-struck (a failure stays visually prominent —
-/// strikethrough would read as "handled").
+/// via `indicatif::MultiProgress` when interactive, GROUPED under a header per owning
+/// service/frontend (consecutive steps sharing a `StepMeta::group` nest under one header —
+/// see `Row`). The header names the group and marks it as a backend service or frontend
+/// application, so at a glance it's clear which is which; headers stay visible for the whole
+/// run once revealed (there are only ever a handful of groups, so this is cheap).
 ///
-/// Step bars are revealed LAZILY, not all created upfront: only the active step plus a
-/// preview window of upcoming steps are ever live at once, sized to the terminal's actual
-/// height (see `new`) so a huge plan can't push the active step off the bottom of the
-/// viewport. Anything beyond the window is summarized in one trailing "N more step(s)" line
-/// that always stays last.
+/// Pending steps sit dim and unmarked; the active step expands with a live spinner, phase
+/// text, and a nested child spinner for whatever LLM call is currently running; a finished
+/// step collapses to a single dim, struck-through line and is dropped for good — see the
+/// `bars` field doc for why that drop matters. Failed steps freeze red, un-struck (a failure
+/// stays visually prominent — strikethrough would read as "handled").
+///
+/// Rows are revealed LAZILY, not all created upfront: only the active step plus a preview
+/// window of upcoming steps (and whatever header precedes them) are ever live at once, sized
+/// to the terminal's actual height (see `new`) so a huge plan can't push the active step off
+/// the bottom of the viewport. Anything beyond the window is summarized in one trailing
+/// "N more step(s)" line that always stays last.
 ///
 /// Each sub-operation `timed` runs (test-gen, stub-gen, one fix attempt, ...) gets its own
 /// nested line that STAYS visible — showing "✓ done" rather than clearing — once it finishes.
@@ -160,43 +181,87 @@ where
 /// terminal, matching `with_spinner`'s fallback for the same reason.
 pub(crate) struct Progress {
     multi: Option<indicatif::MultiProgress>,
-    /// `Mutex<Option<_>>`, not a plain `ProgressBar`, so a finished step's bar can actually be
-    /// dropped (via `.take()`) instead of held for the run's lifetime. Indicatif only folds a
-    /// finished bar permanently into scrollback (stops redrawing it — "collapses" it) when its
-    /// LAST strong handle is dropped; holding every bar in a plain `Vec` for the whole run is
-    /// exactly why finished steps kept reappearing after every subsequent redraw. A slot is
-    /// `None` both before its bar is revealed and after it's finished — the two states are
-    /// never queried in a way that would confuse them, since a step's phase/timed/collapse
-    /// calls only ever happen while it's the active one.
+    /// One slot per ROW (headers included), not per step — see `Row`. `Mutex<Option<_>>`, not
+    /// a plain `ProgressBar`, so a finished step's bar can actually be dropped (via `.take()`)
+    /// instead of held for the run's lifetime. Indicatif only folds a finished bar permanently
+    /// into scrollback (stops redrawing it — "collapses" it) when its LAST strong handle is
+    /// dropped; holding every bar in a plain `Vec` for the whole run is exactly why finished
+    /// steps kept reappearing after every subsequent redraw. A step's slot is `None` both
+    /// before its bar is revealed and after it's finished — the two states are never queried
+    /// in a way that would confuse them, since a step's phase/timed/collapse calls only ever
+    /// happen while it's the active one. A header's slot, once revealed, is simply never
+    /// taken — it stays for the whole run.
     bars: Vec<std::sync::Mutex<Option<indicatif::ProgressBar>>>,
-    /// Finished (but not yet dropped) `timed` sub-bars for each step index, in order. Kept
-    /// alive — unlike `bars`, not taken/dropped as soon as they finish — so they stay visible
-    /// as a nested "done" history until `collapse` drains and drops the whole group at once.
+    /// Finished (but not yet dropped) `timed` sub-bars for each STEP index (not row index —
+    /// only steps have sub-operations, headers never do). Kept alive — unlike `bars`, not
+    /// taken/dropped as soon as they finish — so they stay visible as a nested "done" history
+    /// until `collapse` drains and drops the whole group at once.
     children: Vec<std::sync::Mutex<Vec<indicatif::ProgressBar>>>,
     files: Vec<String>,
-    /// How many upcoming pending steps preview below the active one.
+    /// Per-step 1-based position within its own group, and that group's total step count —
+    /// e.g. step 3 of 9 in "product", not step 3 of 14 overall. Parallel to `files`.
+    group_index: Vec<usize>,
+    group_size: Vec<usize>,
+    /// Maps a step index to its row index in `rows` (accounting for header rows interleaved
+    /// ahead of it).
+    step_to_row: Vec<usize>,
+    rows: Vec<Row>,
+    /// How many upcoming steps preview below the active one (headers don't count against it).
     window: usize,
-    /// How many step bars have been created so far (0..revealed are live; revealed..total
-    /// are still `None`, not yet inserted into the MultiProgress at all).
+    /// How many ROWS have been created so far (0..revealed are live; revealed..rows.len() are
+    /// still `None`, not yet inserted into the MultiProgress at all).
     revealed: std::sync::Mutex<usize>,
-    /// Always the last bar in visual order — every newly-revealed step bar is inserted just
-    /// before it, so it never has to move. Empty message once nothing is left to summarize.
+    /// Always the last bar in visual order — every newly-revealed row is inserted just before
+    /// it, so it never has to move. Empty message once nothing is left to summarize.
     tail: Option<indicatif::ProgressBar>,
 }
 
-fn step_label(idx: usize, total: usize, file: &str) -> String {
-    format!("[{}/{}] {}", idx + 1, total, file)
+fn step_label(group_index: usize, group_size: usize, file: &str) -> String {
+    format!("[{group_index}/{group_size}] {file}")
+}
+
+fn header_label(group: &str, is_frontend: bool) -> String {
+    if is_frontend {
+        console::style(format!("▢ {group} — frontend application")).magenta().bold().to_string()
+    } else {
+        console::style(format!("▣ {group} — backend service")).cyan().bold().to_string()
+    }
 }
 
 impl Progress {
-    pub(crate) fn new(files: &[String]) -> Self {
-        let total = files.len();
+    pub(crate) fn new(steps: &[StepMeta]) -> Self {
+        let total = steps.len();
+        // Precompute the row layout up front: a Header the first time a group is seen,
+        // immediately followed by that group's own steps in order.
+        let mut rows: Vec<Row> = Vec::new();
+        let mut step_to_row = vec![0usize; total];
+        let mut group_index = vec![0usize; total];
+        let mut group_size = vec![0usize; total];
+        let mut group_totals: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for s in steps {
+            *group_totals.entry(s.group.as_str()).or_insert(0) += 1;
+        }
+        let mut seen_groups: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut running_index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (i, s) in steps.iter().enumerate() {
+            if seen_groups.insert(s.group.as_str()) {
+                rows.push(Row::Header(header_label(&s.group, s.is_frontend)));
+            }
+            let counter = running_index.entry(s.group.as_str()).or_insert(0);
+            *counter += 1;
+            group_index[i] = *counter;
+            group_size[i] = group_totals[s.group.as_str()];
+            rows.push(Row::Step(i));
+            step_to_row[i] = rows.len() - 1;
+        }
+        let files: Vec<String> = steps.iter().map(|s| s.file.clone()).collect();
+
         if !interactive() {
             return Self {
                 multi: None,
-                bars: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
+                bars: (0..rows.len()).map(|_| std::sync::Mutex::new(None)).collect(),
                 children: (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect(),
-                files: files.to_vec(),
+                files, group_index, group_size, step_to_row, rows,
                 window: 0,
                 revealed: std::sync::Mutex::new(0),
                 tail: None,
@@ -207,66 +272,84 @@ impl Progress {
         // Reserve a handful of rows for scrollback context, the active step's own parent +
         // child line, and the tail summary itself; clamp so a tiny terminal still previews at
         // least one upcoming step and a huge terminal doesn't preview an unreasonable number.
-        let (rows, _cols) = console::Term::stdout().size();
-        let window = (rows as usize).saturating_sub(6).clamp(1, 8);
+        let (term_rows, _cols) = console::Term::stdout().size();
+        let window = (term_rows as usize).saturating_sub(6).clamp(1, 8);
         let tail = multi.add(ProgressBar::new_spinner());
         tail.set_style(
             ProgressStyle::with_template("  {msg}").unwrap_or_else(|_| ProgressStyle::default_spinner()),
         );
-        let bars = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
+        let bars = (0..rows.len()).map(|_| std::sync::Mutex::new(None)).collect();
         let children = (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect();
         let progress = Self {
             multi: Some(multi),
             bars,
             children,
-            files: files.to_vec(),
+            files, group_index, group_size, step_to_row, rows,
             window,
             revealed: std::sync::Mutex::new(0),
             tail: Some(tail),
         };
-        progress.reveal_through(0);
+        if total > 0 {
+            progress.reveal_through(0);
+        }
         progress
-    }
-
-    /// A no-op checklist for phases with no step list to anchor to (e.g. the final
-    /// cross-service validation pass, which runs after every step bar is already frozen).
-    /// `timed`/`println` fall back to plain output unconditionally — safe because nothing
-    /// is ever drawn through it, so there is no live region for later output to clobber.
-    pub(crate) fn none() -> Self {
-        Self { multi: None, bars: Vec::new(), children: Vec::new(), files: Vec::new(), window: 0, revealed: std::sync::Mutex::new(0), tail: None }
-    }
-
-    fn total(&self) -> usize {
-        self.files.len()
     }
 
     fn file(&self, idx: usize) -> &str {
         self.files.get(idx).map(String::as_str).unwrap_or("")
     }
 
-    /// Ensures every step bar from 0 up through `idx`'s preview window exists, and updates the
-    /// trailing "N more step(s)" summary. A newly-created bar beyond `idx` itself gets a dim
-    /// "pending" message; `phase`/`collapse` handle upgrading `idx`'s own bar afterward.
+    fn bar_slot(&self, idx: usize) -> Option<&std::sync::Mutex<Option<indicatif::ProgressBar>>> {
+        let row = *self.step_to_row.get(idx)?;
+        self.bars.get(row)
+    }
+
+    /// Ensures every row from 0 up through step `idx`'s preview window exists (headers plus
+    /// their steps), and updates the trailing "N more step(s)" summary. A newly-created step
+    /// row beyond `idx` itself gets a dim "pending" message; `phase`/`collapse` handle
+    /// upgrading `idx`'s own bar afterward. Headers get their final style immediately —
+    /// they're never "activated" or collapsed the way a step is.
     fn reveal_through(&self, idx: usize) {
         let (Some(multi), Some(tail)) = (&self.multi, &self.tail) else { return };
-        let target = (idx + self.window + 1).min(self.total());
+        let Some(&target_row) = self.step_to_row.get(idx) else { return };
+        // Walk forward from the target step's own row, counting STEP rows only (a header
+        // doesn't count against the preview budget), until `window` more steps are included.
+        let mut steps_included = 0usize;
+        let mut end_row = target_row;
+        while end_row + 1 < self.rows.len() && steps_included < self.window {
+            end_row += 1;
+            if matches!(self.rows[end_row], Row::Step(_)) {
+                steps_included += 1;
+            }
+        }
+        let target = end_row + 1;
         let mut revealed = self.revealed.lock().unwrap();
         if *revealed >= target {
             return;
         }
         use indicatif::{ProgressBar, ProgressStyle};
-        let style = ProgressStyle::with_template("  {spinner:.cyan} {msg}")
+        let step_style = ProgressStyle::with_template("  {spinner:.cyan} {msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner());
+        let header_style = ProgressStyle::with_template("{msg}")
             .unwrap_or_else(|_| ProgressStyle::default_spinner());
         while *revealed < target {
             let pb = multi.insert_before(tail, ProgressBar::new_spinner());
-            pb.set_style(style.clone());
-            pb.set_message(dim(&step_label(*revealed, self.total(), self.file(*revealed))));
+            match &self.rows[*revealed] {
+                Row::Header(label) => {
+                    pb.set_style(header_style.clone());
+                    pb.set_message(label.clone());
+                }
+                Row::Step(step_idx) => {
+                    pb.set_style(step_style.clone());
+                    pb.set_message(dim(&step_label(self.group_index[*step_idx], self.group_size[*step_idx], self.file(*step_idx))));
+                }
+            }
             *self.bars[*revealed].lock().unwrap() = Some(pb);
             *revealed += 1;
         }
-        let remaining = self.total() - *revealed;
-        tail.set_message(if remaining > 0 {
-            dim(&format!("… {remaining} more step(s)"))
+        let remaining_steps = self.rows[*revealed..].iter().filter(|r| matches!(r, Row::Step(_))).count();
+        tail.set_message(if remaining_steps > 0 {
+            dim(&format!("… {remaining_steps} more step(s)"))
         } else {
             String::new()
         });
@@ -287,8 +370,8 @@ impl Progress {
     /// (e.g. "TDD Red — generating stub"). Safe to call repeatedly as the phase changes.
     pub(crate) fn phase(&self, idx: usize, phase: &str) {
         self.reveal_through(idx);
-        let label = step_label(idx, self.total(), self.file(idx));
-        match self.bars.get(idx).and_then(|m| m.lock().unwrap().clone()) {
+        let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
+        match self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()) {
             Some(pb) => {
                 pb.enable_steady_tick(std::time::Duration::from_millis(80));
                 pb.set_message(format!("{label} — {phase}"));
@@ -314,24 +397,24 @@ impl Progress {
             }
             children.clear();
         }
-        match self.bars.get(idx).and_then(|m| m.lock().unwrap().take()) {
+        match self.bar_slot(idx).and_then(|m| m.lock().unwrap().take()) {
             Some(pb) => pb.finish_with_message(line),
             None => self.println(line),
         }
     }
 
     pub(crate) fn done(&self, idx: usize, note: &str) {
-        let label = step_label(idx, self.total(), self.file(idx));
+        let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
         self.collapse(idx, dim_strike(&format!("✓ {label} ({note})")), true);
     }
 
     pub(crate) fn skipped(&self, idx: usize, note: &str) {
-        let label = step_label(idx, self.total(), self.file(idx));
+        let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
         self.collapse(idx, dim_strike(&format!("↷ {label} ({note})")), true);
     }
 
     pub(crate) fn failed(&self, idx: usize) {
-        let label = step_label(idx, self.total(), self.file(idx));
+        let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
         self.collapse(idx, format!("{} {label}", red("✗")), false);
     }
 
@@ -347,7 +430,7 @@ impl Progress {
         // A bare "done Red — generating test..." line has no visible indication of which step
         // it belongs to once printed on its own — `n` makes every fallback (non-interactive)
         // line self-identifying regardless of what's still visible above it.
-        let n = format!("[{}/{}]", idx + 1, self.total());
+        let n = format!("[{}/{}]", self.group_index[idx], self.group_size[idx]);
         // Anchor the new spinner after whichever bar is currently LAST for this step: the most
         // recently accumulated sub-bar if there is one, else the parent itself. Always anchoring
         // on the parent would insert each new attempt BETWEEN it and the previous ones instead
@@ -355,7 +438,7 @@ impl Progress {
         let children_lock = self.children.get(idx);
         let anchor = match children_lock.and_then(|m| m.lock().unwrap().last().cloned()) {
             Some(last_child) => Some(last_child),
-            None => self.bars.get(idx).and_then(|m| m.lock().unwrap().clone()),
+            None => self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()),
         };
         // "      ↳ " — deliberately NOT just more leading spaces than the parent bar's "  ": a
         // column-count difference alone reads as coincidental once a finished parent bar's blank

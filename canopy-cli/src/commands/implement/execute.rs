@@ -5,7 +5,7 @@ use crate::project_scan::{
 };
 use crate::roots;
 use crate::tdd::{derive_test_file_path, is_tdd_candidate, is_test_file, test_class_name};
-use crate::ui::{format_elapsed, print_step_notes, Progress};
+use crate::ui::{format_elapsed, print_step_notes, Progress, StepMeta};
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{Adr, IntentSpec, ServicesRegistry, StepStatus, StoryPlan, UserStory};
@@ -111,8 +111,14 @@ pub(crate) fn execute_steps(
 
     roots::ensure_indexed();
 
-    let files: Vec<String> = plan.steps.iter().map(|s| s.file.clone()).collect();
-    let progress = Progress::new(&files);
+    let step_metas: Vec<StepMeta> = plan.steps.iter().map(|s| {
+        let service_name = s.service.rsplit('/').next().unwrap_or(&s.service).to_string();
+        let is_frontend = services.services.iter()
+            .find(|svc| svc.name == service_name || svc.name == s.service)
+            .and_then(|svc| svc.component_type.as_deref()) == Some("frontend");
+        StepMeta { file: s.file.clone(), group: service_name, is_frontend }
+    }).collect();
+    let progress = Progress::new(&step_metas);
     progress.println(format!(
         "Implementing {story_id}: As a {}, I want {}, so that {}.",
         story.as_a, story.want, story.so_that
@@ -390,18 +396,29 @@ pub(crate) fn execute_steps(
         .filter(|s| s.technology.is_some())
         .collect();
 
-    let final_progress = Progress::none();
-    for service in &implementable {
+    // Each service is its own group of exactly one "step" — reusing the same grouped
+    // checklist the main loop uses gives the final pass the same live-bar/collapse treatment,
+    // and the header still makes backend vs frontend obvious at a glance.
+    let final_metas: Vec<StepMeta> = implementable.iter().map(|s| StepMeta {
+        file: "no regressions".to_string(),
+        group: s.name.clone(),
+        is_frontend: s.component_type.as_deref() == Some("frontend"),
+    }).collect();
+    let final_progress = Progress::new(&final_metas);
+    for (i, service) in implementable.iter().enumerate() {
         let service_dir = match service.component_type.as_deref().unwrap_or("service") {
             "frontend" => format!("frontend/{}", service.name),
             _ => format!("services/{}", service.name),
         };
-        if !std::path::Path::new(&service_dir).exists() { continue; }
+        if !std::path::Path::new(&service_dir).exists() {
+            final_progress.skipped(i, "not scaffolded");
+            continue;
+        }
 
         if !std::path::Path::new(&format!("{service_dir}/node_modules")).exists()
             && std::path::Path::new(&format!("{service_dir}/package.json")).exists()
         {
-            println!("  running npm install in {service_dir}...");
+            final_progress.println(format!("  running npm install in {service_dir}..."));
             let _ = crate::shell::npm_install(&service_dir, &[], false);
         }
 
@@ -421,11 +438,14 @@ pub(crate) fn execute_steps(
         let skip_tests: Vec<String> = test_files.into_iter()
             .chain(abs_test_files.into_iter())
             .collect();
-        println!("\n  $ {test_cmd}  (final validation — {})", service.name);
+        final_progress.phase(i, &format!("Verifying — no regressions    $ {test_cmd}"));
         let final_result = run_fix_loop_logged(&client, service, &service_dir, &test_cmd,
             &service_source_files, &skip_tests, adrs, &arch_skills, MAX_FIX_ITERATIONS,
-            Some(fix_log_dir), &format!("final-{}", service.name), &final_progress, 0);
-        if !final_result.passed {
+            Some(fix_log_dir), &format!("final-{}", service.name), &final_progress, i);
+        if final_result.passed {
+            final_progress.done(i, "no regressions");
+        } else {
+            final_progress.failed(i);
             eprintln!("  ✗ Final validation failed for '{}' — fix the errors above.", service.name);
         }
     }
