@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use canopy_llm::LlmClient;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, MultiSelect, Select};
 
 pub(crate) fn confirm_required(theme: &ColorfulTheme, prompt: &str, ctx: &'static str) -> Result<bool> {
@@ -105,6 +106,16 @@ pub(crate) fn format_elapsed(d: std::time::Duration) -> String {
     }
 }
 
+/// Compact token-count formatting for checklist lines — "847", "8.4k" — matching the precision
+/// a human scans a running total at, not the exact figure a cost report would need.
+fn format_tokens(n: u64) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 /// Shows a spinner while `f` runs, clears it on return. Used for one-off LLM calls that
 /// happen outside a step checklist (e.g. plan/dependency generation, before there's a
 /// list of steps to anchor a `Progress` bar to) — see `Progress::timed` for the
@@ -197,6 +208,13 @@ pub(crate) struct Progress {
     /// taken/dropped as soon as they finish — so they stay visible as a nested "done" history
     /// until `collapse` drains and drops the whole group at once.
     children: Vec<std::sync::Mutex<Vec<indicatif::ProgressBar>>>,
+    /// Per-step wall-clock start (set once, on the step's first `phase()` call) and cumulative
+    /// (input, output) LLM token totals (accumulated by every `timed()` call for that step) —
+    /// surfaced together on the step's collapsed line in `done`/`skipped`/`failed`. `None`
+    /// start means the step never actually ran any LLM work in this invocation (e.g. "already
+    /// done" on resume), so no time/token summary is shown for it.
+    step_start: Vec<std::sync::Mutex<Option<std::time::Instant>>>,
+    step_tokens: Vec<std::sync::Mutex<(u64, u64)>>,
     files: Vec<String>,
     /// Per-step 1-based position within its own group, and that group's total step count —
     /// e.g. step 3 of 9 in "product", not step 3 of 14 overall. Parallel to `files`.
@@ -261,6 +279,8 @@ impl Progress {
                 multi: None,
                 bars: (0..rows.len()).map(|_| std::sync::Mutex::new(None)).collect(),
                 children: (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect(),
+                step_start: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
+                step_tokens: (0..total).map(|_| std::sync::Mutex::new((0, 0))).collect(),
                 files, group_index, group_size, step_to_row, rows,
                 window: 0,
                 revealed: std::sync::Mutex::new(0),
@@ -280,10 +300,14 @@ impl Progress {
         );
         let bars = (0..rows.len()).map(|_| std::sync::Mutex::new(None)).collect();
         let children = (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect();
+        let step_start = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
+        let step_tokens = (0..total).map(|_| std::sync::Mutex::new((0, 0))).collect();
         let progress = Self {
             multi: Some(multi),
             bars,
             children,
+            step_start,
+            step_tokens,
             files, group_index, group_size, step_to_row, rows,
             window,
             revealed: std::sync::Mutex::new(0),
@@ -370,6 +394,12 @@ impl Progress {
     /// (e.g. "TDD Red — generating stub"). Safe to call repeatedly as the phase changes.
     pub(crate) fn phase(&self, idx: usize, phase: &str) {
         self.reveal_through(idx);
+        if let Some(m) = self.step_start.get(idx) {
+            let mut start = m.lock().unwrap();
+            if start.is_none() {
+                *start = Some(std::time::Instant::now());
+            }
+        }
         let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
         match self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()) {
             Some(pb) => {
@@ -403,30 +433,56 @@ impl Progress {
         }
     }
 
+    /// Elapsed time since the step's first `phase()` call, plus tokens accumulated across every
+    /// `timed()` call for it — `None` when the step never ran any LLM work this invocation.
+    fn step_summary(&self, idx: usize) -> Option<String> {
+        let start = (*self.step_start.get(idx)?.lock().unwrap())?;
+        let (input, output) = self.step_tokens.get(idx).map(|m| *m.lock().unwrap()).unwrap_or((0, 0));
+        Some(format!(
+            "{} · {} in / {} out",
+            format_elapsed(start.elapsed()),
+            format_tokens(input),
+            format_tokens(output),
+        ))
+    }
+
     pub(crate) fn done(&self, idx: usize, note: &str) {
         let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
-        self.collapse(idx, dim_strike(&format!("✓ {label} ({note})")), true);
+        let line = match self.step_summary(idx) {
+            Some(s) => format!("✓ {label} ({note} · {s})"),
+            None => format!("✓ {label} ({note})"),
+        };
+        self.collapse(idx, dim_strike(&line), true);
     }
 
     pub(crate) fn skipped(&self, idx: usize, note: &str) {
         let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
-        self.collapse(idx, dim_strike(&format!("↷ {label} ({note})")), true);
+        let line = match self.step_summary(idx) {
+            Some(s) => format!("↷ {label} ({note} · {s})"),
+            None => format!("↷ {label} ({note})"),
+        };
+        self.collapse(idx, dim_strike(&line), true);
     }
 
     pub(crate) fn failed(&self, idx: usize) {
         let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
-        self.collapse(idx, format!("{} {label}", red("✗")), false);
+        let line = match self.step_summary(idx) {
+            Some(s) => format!("{} {label} ({s})", red("✗")),
+            None => format!("{} {label}", red("✗")),
+        };
+        self.collapse(idx, line, false);
     }
 
     /// Runs `f`, showing a spinner nested directly under step `idx`'s line while it runs
     /// (or a plain line when non-interactive) — the step-checklist equivalent of the
     /// free-standing `with_spinner` above.
-    pub(crate) fn timed<F, T>(&self, idx: usize, label: impl Into<String>, f: F) -> T
+    pub(crate) fn timed<F, T>(&self, idx: usize, label: impl Into<String>, client: &LlmClient, f: F) -> T
     where
         F: FnOnce() -> T,
     {
         let label = label.into();
         let start = std::time::Instant::now();
+        let before_tokens = client.token_totals();
         // A bare "done Red — generating test..." line has no visible indication of which step
         // it belongs to once printed on its own — `n` makes every fallback (non-interactive)
         // line self-identifying regardless of what's still visible above it.
@@ -462,6 +518,12 @@ impl Progress {
             }
         };
         let result = f();
+        let after_tokens = client.token_totals();
+        if let Some(m) = self.step_tokens.get(idx) {
+            let mut t = m.lock().unwrap();
+            t.0 += after_tokens.0.saturating_sub(before_tokens.0);
+            t.1 += after_tokens.1.saturating_sub(before_tokens.1);
+        }
         if let Some(pb) = child {
             // Freeze with a "done" message and KEEP it (finish_with_message, not clear) — it
             // stays visible as part of this step's running history until the whole step

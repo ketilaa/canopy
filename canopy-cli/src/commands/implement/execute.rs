@@ -198,6 +198,7 @@ pub(crate) fn execute_steps(
             let StepResult { content: test_content, summary: test_summary, deviations: test_deviations } = progress.timed(
                 i,
                 format!("Red — generating test    {test_file}"),
+                &client,
                 || generate_unit_test_stub(
                     &client, story, spec, contract_yaml, step, &test_file,
                     service_packages, services, adrs, &stub_siblings,
@@ -216,6 +217,7 @@ pub(crate) fn execute_steps(
             let StepResult { content: stub_content, summary: stub_summary, deviations: stub_deviations } = progress.timed(
                 i,
                 format!("Red — generating stub    {}", step.file),
+                &client,
                 || execute_implementation_stub(
                     &client, story, spec, contract_yaml,
                     step, None, None,
@@ -285,6 +287,7 @@ pub(crate) fn execute_steps(
             let StepResult { content: impl_content, summary: impl_summary, deviations: impl_deviations } = progress.timed(
                 i,
                 format!("Green — implementing      {}", step.file),
+                &client,
                 || execute_implementation_with_test(
                     &client, story, spec, contract_yaml,
                     step, None, roots_context.as_deref(),
@@ -336,6 +339,7 @@ pub(crate) fn execute_steps(
             let StepResult { content, summary, deviations } = progress.timed(
                 i,
                 format!("generating  {}", step.file),
+                &client,
                 || execute_implementation_step(
                     &client, story, spec, contract_yaml,
                     step, current_content.as_deref(), roots_context.as_deref(),

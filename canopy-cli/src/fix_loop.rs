@@ -308,6 +308,7 @@ fn run_fix_loop_inner(
             let fix_result = progress.timed(
                 step_idx,
                 format!("fixing  {short_name} (attempt {}/{max_iterations}){same_error_note} — {error_summary}", iteration + 1),
+                client,
                 || fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts),
             );
             match fix_result {

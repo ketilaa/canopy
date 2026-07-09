@@ -26,6 +26,8 @@ pub struct LlmClient {
     provider: LlmProvider,
     base_url: String,
     log_path: Option<std::path::PathBuf>,
+    total_input_tokens: std::sync::atomic::AtomicU64,
+    total_output_tokens: std::sync::atomic::AtomicU64,
 }
 
 impl LlmClient {
@@ -37,6 +39,8 @@ impl LlmClient {
             provider: LlmProvider::Ollama,
             base_url: "http://localhost:11434".to_string(),
             log_path: None,
+            total_input_tokens: std::sync::atomic::AtomicU64::new(0),
+            total_output_tokens: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -56,12 +60,25 @@ impl LlmClient {
             provider: cfg.provider.clone(),
             base_url,
             log_path: None,
+            total_input_tokens: std::sync::atomic::AtomicU64::new(0),
+            total_output_tokens: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     pub fn with_log_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.log_path = Some(path.into());
         self
+    }
+
+    /// Cumulative (input, output) tokens across every call made through this client so far —
+    /// callers snapshot this before/after a unit of work (a plan step, a fix attempt) and diff
+    /// to attribute usage, rather than this type tracking per-call attribution itself.
+    pub fn token_totals(&self) -> (u64, u64) {
+        use std::sync::atomic::Ordering;
+        (
+            self.total_input_tokens.load(Ordering::Relaxed),
+            self.total_output_tokens.load(Ordering::Relaxed),
+        )
     }
 
     pub fn complete(&self, prompt: &str) -> Result<String, LlmError> {
@@ -94,6 +111,8 @@ impl LlmClient {
             .as_u64()
             .or_else(|| json["usage"]["completion_tokens"].as_u64())
             .unwrap_or(0);
+        self.total_input_tokens.fetch_add(input_tokens, std::sync::atomic::Ordering::Relaxed);
+        self.total_output_tokens.fetch_add(output_tokens, std::sync::atomic::Ordering::Relaxed);
 
         if self.debug {
             eprintln!("╔══ LLM OUTPUT ══════════════════════════════════════════╗");
