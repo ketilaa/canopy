@@ -283,9 +283,18 @@ fn run_fix_loop_inner(
             } else {
                 format!("{base_skill}\n\n{test_skill}")
             };
+            // The bare "fixing {file}" label gave no indication of what was actually wrong —
+            // the real error is already sitting in `errors`, just never shown. One line of it
+            // is enough context to tell attempts apart without overflowing the checklist.
+            let first_error_line = errors.lines().next().unwrap_or("").trim();
+            let error_summary: String = if first_error_line.chars().count() > 70 {
+                first_error_line.chars().take(70).chain(std::iter::once('…')).collect()
+            } else {
+                first_error_line.to_string()
+            };
             let fix_result = progress.timed(
                 step_idx,
-                format!("fixing  {short_name}"),
+                format!("fixing  {short_name} — {error_summary}"),
                 || fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts),
             );
             match fix_result {

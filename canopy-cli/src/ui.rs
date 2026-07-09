@@ -466,7 +466,10 @@ impl Progress {
             // Freeze with a "done" message and KEEP it (finish_with_message, not clear) — it
             // stays visible as part of this step's running history until the whole step
             // collapses via `collapse`, which drains and drops every bar accumulated here.
-            pb.finish_with_message(format!("{} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
+            // No elapsed time embedded here — the bar's own template already appends
+            // `({elapsed_precise})` after {msg} on every render, active or finished; adding
+            // another one here just duplicated it ("(1m29s) (00:01:29)").
+            pb.finish_with_message(format!("{} {label}", dim("done")));
             if let Some(m) = children_lock {
                 m.lock().unwrap().push(pb);
             }
@@ -474,6 +477,24 @@ impl Progress {
             self.println(format!("      ↳ {n} {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
         }
         result
+    }
+
+    /// Freezes every bar that's still live — pending previews, group headers, the tail
+    /// summary — with whatever it's currently showing. Call this before returning early (a
+    /// broken build stopping the run): indicatif's default finish behavior for a bar dropped
+    /// without ever being explicitly finished is `AndClear`, which makes it vanish with no
+    /// trace. Without this, every step that hadn't been reached yet (and even the section
+    /// headers) would silently disappear the moment this checklist itself is torn down,
+    /// instead of staying visible as "here's what was still left."
+    pub(crate) fn freeze(&self) {
+        for m in &self.bars {
+            if let Some(pb) = m.lock().unwrap().as_ref() {
+                pb.finish();
+            }
+        }
+        if let Some(tail) = &self.tail {
+            tail.finish();
+        }
     }
 }
 

@@ -22,6 +22,9 @@ use std::collections::HashMap;
 /// continuing on a broken foundation only compounds errors and burns more LLM calls chasing them.
 fn report_broken_build(progress: &Progress, idx: usize, step_id: &str, file: &str, story_id: &str) {
     progress.failed(idx);
+    // Freeze whatever's still pending/previewed/headered before returning — otherwise every
+    // step that hadn't been reached yet vanishes with no trace the moment `progress` drops.
+    progress.freeze();
     progress.println(format!("\n  ✗ Build is broken after step {step_id} ({file}) — stopping so errors don't compound."));
     progress.println(format!("  Fix the errors above, then re-run `canopy implement {story_id}` to continue."));
 }
