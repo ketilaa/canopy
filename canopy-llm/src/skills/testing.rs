@@ -414,7 +414,15 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
   matches specific fields via objectContaining/toMatchObject. NEVER build a second, separate\n\
   object (by calling the aggregate factory or the event factory a second time) and compare it\n\
   by deep equality — every randomUUID()/new Date() call produces a DIFFERENT value, so two\n\
-  independently-built objects never match, even when the code is completely correct."
+  independently-built objects never match, even when the code is completely correct.\n\
+  This includes id/createdAt/modifiedAt inside a toMatchObject(...) literal — the factory\n\
+  assigns these BEFORE any repository mock is even called, so setting a fake id/date on the\n\
+  mock's resolved value and putting that SAME fake value inside toMatchObject(...) does not\n\
+  make them match either:\n\
+    WRONG: mockRepo.saveWidget.mockResolvedValue({ ...widget, id: 'fake-id' })\n\
+           expect(result).toMatchObject({ id: 'fake-id', name: 'name-value' })   ✗ id differs\n\
+  CORRECT: never put id/createdAt/modifiedAt inside the toMatchObject(...) literal at all —\n\
+  check them separately with expect.any(String) / toBeInstanceOf(Date), exactly as shown above."
          .to_string()),
         ("repository",
          "  ### Repository unit test example (real method, mocked Pool — never mock the method itself)\n\
