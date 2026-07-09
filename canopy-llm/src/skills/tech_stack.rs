@@ -176,7 +176,8 @@ fn react_vite_skill() -> TechStackSkill {
                   EVERY file that contains <JSX> syntax MUST have the .tsx extension.\n\
              Mixing JSX into a .ts file causes: error TS1005: '>' expected (unrecoverable parse error)."
             .to_string(),
-        namespace_rules:
+        namespace_rules: format!(
+            "{}\n{}",
             "  Imports are relative to the file's position inside src/:\n\
              - App.tsx:          import ProductForm from './components/ProductForm'\n\
              - ProductForm.tsx:  import { registerProduct } from '../api/ProductApi'\n\
@@ -184,8 +185,8 @@ fn react_vite_skill() -> TechStackSkill {
              HTTP: use fetch() only — no axios, ky, or any other HTTP library.\n\
              Do not import a file that does not exist yet.\n\
              A file MUST NOT import from its own path — no self-imports.\n\
-             NEVER write 'import React from \"react\"' — the project uses the automatic JSX transform (React 17+); React is in scope without importing it."
-            .to_string(),
+             NEVER write 'import React from \"react\"' — the project uses the automatic JSX transform (React 17+); React is in scope without importing it.",
+            crate::skills::EXACT_OPTIONAL_PROPERTY_RULE),
         common_rules: String::new(),
         layer_rules: std::collections::HashMap::new(),
         layer_order:
@@ -227,15 +228,16 @@ fn angular_skill() -> TechStackSkill {
              - src/app/<feature>/<feature>.model.ts\n\
              File paths in plan steps are relative to the PROJECT ROOT."
             .to_string(),
-        namespace_rules:
+        namespace_rules: format!(
+            "{}\n{}",
             "  Import only from Angular packages and local files:\n\
              - @angular/core        (@Component, @Injectable, @Input, @OnInit, ...)\n\
              - @angular/common/http (HttpClient, HttpClientModule)\n\
              - @angular/forms       (FormBuilder, Validators, ReactiveFormsModule)\n\
              Never call fetch() directly — inject HttpClient and use typed generics:\n\
                this.http.post<ProductResponse>('/products', body)\n\
-             Services: @Injectable({ providedIn: 'root' }) unless feature-lazy-loaded."
-            .to_string(),
+             Services: @Injectable({ providedIn: 'root' }) unless feature-lazy-loaded.",
+            crate::skills::EXACT_OPTIONAL_PROPERTY_RULE),
         common_rules: String::new(),
         layer_rules: std::collections::HashMap::new(),
         layer_order:
@@ -501,7 +503,13 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              .to_string()),
             ("config",
              "  ### tsconfig.json\n\
-             Use exactly this structure — NEVER set rootDir (it conflicts with tests/ outside src/):\n\
+             Use EXACTLY this structure — do not add, remove, or \"improve\" any compilerOption,\n\
+             even a stricter one that sounds like good practice. NEVER set rootDir (it conflicts\n\
+             with tests/ outside src/). Every extra strict flag (exactOptionalPropertyTypes,\n\
+             noUncheckedIndexedAccess, etc.) has to be satisfied by every later generation call for\n\
+             this service, across files that never see each other's output — one call adding a\n\
+             flag on its own initiative is how a self-inflicted, project-wide type error gets\n\
+             created with no corresponding rule anywhere to satisfy it:\n\
              {\n\
                \"compilerOptions\": {\n\
                  \"target\": \"ES2020\",\n\
