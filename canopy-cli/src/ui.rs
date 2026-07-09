@@ -150,6 +150,12 @@ where
 /// viewport. Anything beyond the window is summarized in one trailing "N more step(s)" line
 /// that always stays last.
 ///
+/// Each sub-operation `timed` runs (test-gen, stub-gen, one fix attempt, ...) gets its own
+/// nested line that STAYS visible — showing "✓ done" rather than clearing — once it finishes.
+/// These accumulate under the active step as a running history of what's been tried so far,
+/// and only disappear all at once when the step itself collapses (see `collapse`) — a failed
+/// step's history is kept instead, since what was tried is useful context for a failure.
+///
 /// Falls back to plain `println!` lines (no bars, no strikethrough) when stdout isn't a
 /// terminal, matching `with_spinner`'s fallback for the same reason.
 pub(crate) struct Progress {
@@ -163,6 +169,10 @@ pub(crate) struct Progress {
     /// never queried in a way that would confuse them, since a step's phase/timed/collapse
     /// calls only ever happen while it's the active one.
     bars: Vec<std::sync::Mutex<Option<indicatif::ProgressBar>>>,
+    /// Finished (but not yet dropped) `timed` sub-bars for each step index, in order. Kept
+    /// alive — unlike `bars`, not taken/dropped as soon as they finish — so they stay visible
+    /// as a nested "done" history until `collapse` drains and drops the whole group at once.
+    children: Vec<std::sync::Mutex<Vec<indicatif::ProgressBar>>>,
     files: Vec<String>,
     /// How many upcoming pending steps preview below the active one.
     window: usize,
@@ -185,6 +195,7 @@ impl Progress {
             return Self {
                 multi: None,
                 bars: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
+                children: (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect(),
                 files: files.to_vec(),
                 window: 0,
                 revealed: std::sync::Mutex::new(0),
@@ -203,9 +214,11 @@ impl Progress {
             ProgressStyle::with_template("  {msg}").unwrap_or_else(|_| ProgressStyle::default_spinner()),
         );
         let bars = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
+        let children = (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect();
         let progress = Self {
             multi: Some(multi),
             bars,
+            children,
             files: files.to_vec(),
             window,
             revealed: std::sync::Mutex::new(0),
@@ -220,7 +233,7 @@ impl Progress {
     /// `timed`/`println` fall back to plain output unconditionally — safe because nothing
     /// is ever drawn through it, so there is no live region for later output to clobber.
     pub(crate) fn none() -> Self {
-        Self { multi: None, bars: Vec::new(), files: Vec::new(), window: 0, revealed: std::sync::Mutex::new(0), tail: None }
+        Self { multi: None, bars: Vec::new(), children: Vec::new(), files: Vec::new(), window: 0, revealed: std::sync::Mutex::new(0), tail: None }
     }
 
     fn total(&self) -> usize {
@@ -286,8 +299,21 @@ impl Progress {
 
     /// Finishes step `idx`'s bar with `line`, then drops it — the drop (not `finish_with_message`
     /// alone) is what makes indicatif fold the line permanently into scrollback and stop
-    /// redrawing it. See the `bars` field doc for why.
-    fn collapse(&self, idx: usize, line: String) {
+    /// redrawing it. See the `bars` field doc for why. Also drops every accumulated `timed`
+    /// sub-bar for this step — when `clear_children` is true, each one is cleared first, so
+    /// the whole nested "done" history vanishes along with the parent, leaving just `line`;
+    /// when false, they're dropped as-is, keeping their content (a failure's attempt history
+    /// stays visible as diagnostic context).
+    fn collapse(&self, idx: usize, line: String, clear_children: bool) {
+        if let Some(m) = self.children.get(idx) {
+            let mut children = m.lock().unwrap();
+            if clear_children {
+                for pb in children.iter() {
+                    pb.finish_and_clear();
+                }
+            }
+            children.clear();
+        }
         match self.bars.get(idx).and_then(|m| m.lock().unwrap().take()) {
             Some(pb) => pb.finish_with_message(line),
             None => self.println(line),
@@ -296,17 +322,17 @@ impl Progress {
 
     pub(crate) fn done(&self, idx: usize, note: &str) {
         let label = step_label(idx, self.total(), self.file(idx));
-        self.collapse(idx, dim_strike(&format!("✓ {label} ({note})")));
+        self.collapse(idx, dim_strike(&format!("✓ {label} ({note})")), true);
     }
 
     pub(crate) fn skipped(&self, idx: usize, note: &str) {
         let label = step_label(idx, self.total(), self.file(idx));
-        self.collapse(idx, dim_strike(&format!("↷ {label} ({note})")));
+        self.collapse(idx, dim_strike(&format!("↷ {label} ({note})")), true);
     }
 
     pub(crate) fn failed(&self, idx: usize) {
         let label = step_label(idx, self.total(), self.file(idx));
-        self.collapse(idx, format!("{} {label}", red("✗")));
+        self.collapse(idx, format!("{} {label}", red("✗")), false);
     }
 
     /// Runs `f`, showing a spinner nested directly under step `idx`'s line while it runs
@@ -318,17 +344,23 @@ impl Progress {
     {
         let label = label.into();
         let start = std::time::Instant::now();
-        // The child's OWN permanent println lines below (not the live spinner) are tagged with
-        // this step number — the parent bar's phase text is live-only, never committed to
-        // scrollback, so once it scrolls out of view (or a plain-text capture just shows the
-        // permanent lines in sequence) a bare "done Red — generating test..." line has no visible
-        // indication of which step it belongs to. `n` makes every such line self-identifying.
+        // A bare "done Red — generating test..." line has no visible indication of which step
+        // it belongs to once printed on its own — `n` makes every fallback (non-interactive)
+        // line self-identifying regardless of what's still visible above it.
         let n = format!("[{}/{}]", idx + 1, self.total());
+        // Anchor the new spinner after whichever bar is currently LAST for this step: the most
+        // recently accumulated sub-bar if there is one, else the parent itself. Always anchoring
+        // on the parent would insert each new attempt BETWEEN it and the previous ones instead
+        // of appending after them.
+        let children_lock = self.children.get(idx);
+        let anchor = match children_lock.and_then(|m| m.lock().unwrap().last().cloned()) {
+            Some(last_child) => Some(last_child),
+            None => self.bars.get(idx).and_then(|m| m.lock().unwrap().clone()),
+        };
         // "      ↳ " — deliberately NOT just more leading spaces than the parent bar's "  ": a
         // column-count difference alone reads as coincidental once a finished parent bar's blank
         // spinner slot and an active child spinner glyph land in visually similar positions. The
         // ↳ glyph makes the nesting unambiguous regardless of exact column math.
-        let anchor = self.bars.get(idx).and_then(|m| m.lock().unwrap().clone());
         let child = match (&self.multi, anchor) {
             (Some(multi), Some(anchor)) => {
                 use indicatif::{ProgressBar, ProgressStyle};
@@ -347,13 +379,17 @@ impl Progress {
             }
         };
         let result = f();
-        // finish_and_clear (not finish_with_message) — this child has no permanent line of its
-        // own; the "done" line below is printed separately, so the bar itself should leave no
-        // trace once cleared and dropped.
         if let Some(pb) = child {
-            pb.finish_and_clear();
+            // Freeze with a "done" message and KEEP it (finish_with_message, not clear) — it
+            // stays visible as part of this step's running history until the whole step
+            // collapses via `collapse`, which drains and drops every bar accumulated here.
+            pb.finish_with_message(format!("{} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
+            if let Some(m) = children_lock {
+                m.lock().unwrap().push(pb);
+            }
+        } else {
+            self.println(format!("      ↳ {n} {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
         }
-        self.println(format!("      ↳ {n} {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
         result
     }
 }
