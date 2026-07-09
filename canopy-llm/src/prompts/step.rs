@@ -357,6 +357,22 @@ fn unit_test_stub_prompt_ts(
              }})",
             module_name = module_name,
         )
+    } else if layer_has_worked_example(technology, layer) {
+        // This layer already gets a complete, correct worked example (imports, beforeEach,
+        // mocks, and the exact assertion pattern) from the tech-stack testing skill above —
+        // ask the skill itself rather than hand-copying a layer list here, so this stays
+        // correct automatically as new stacks or new layer examples are added. Checked BEFORE
+        // the "event"/"model" hand-written skeletons below: if the testing skill ever grows a
+        // dedicated example for either (e.g. Node/Express gains an "event" entry), this branch
+        // must win so the two don't end up sent to the model side by side — exactly the "Model
+        // unit test example" + "Test structure (model...)" duplication this comment is fixing.
+        // Do NOT also show a generic Arrange/Act/Assert skeleton here — it has no assertion
+        // content of its own, and being the LAST structural template before the final
+        // instruction, it displaces the specific example instead of reinforcing it.
+        "Test structure: follow the worked example above EXACTLY — same imports, same \
+         beforeEach shape, same assertion pattern (objectContaining/toMatchObject, never a \
+         second factory call compared by deep-equality). Do not fall back to a generic \
+         Arrange/Act/Assert skeleton; the example above is the structure.".to_string()
     } else if layer == "event" {
         format!(
             "Test structure (domain event — THIN factory function, NOT `new`):\n\
@@ -403,18 +419,6 @@ fn unit_test_stub_prompt_ts(
             module_name = module_name,
             import_path = import_path,
         )
-    } else if layer_has_worked_example(technology, layer) {
-        // This layer already gets a complete, correct worked example (imports, beforeEach,
-        // mocks, and the exact assertion pattern) from the tech-stack testing skill above —
-        // ask the skill itself rather than hand-copying a layer list here, so this stays
-        // correct automatically as new stacks or new layer examples are added.
-        // Do NOT also show a generic Arrange/Act/Assert skeleton here — it has no assertion
-        // content of its own, and being the LAST structural template before the final
-        // instruction, it displaces the specific example instead of reinforcing it.
-        "Test structure: follow the worked example above EXACTLY — same imports, same \
-         beforeEach shape, same assertion pattern (objectContaining/toMatchObject, never a \
-         second factory call compared by deep-equality). Do not fall back to a generic \
-         Arrange/Act/Assert skeleton; the example above is the structure.".to_string()
     } else {
         format!(
             "Test structure:\n\
@@ -453,6 +457,18 @@ Import the router from the implementation file — it is a Router INSTANCE, neve
 - Route tests: mock only the service layer (NOT repository or event publisher directly).\n"
     } else {
         ""
+    };
+
+    // tech_rules (above, in this same prompt) already spells out EXACT_OPTIONAL_PROPERTY_RULE
+    // in full for the "model" and "route" layers (see tech_stack.rs's Models/Route sections) —
+    // repeating the whole rule again here would send the identical ~230-word block twice in
+    // one call. Every other layer's tech_rules section doesn't mention it, so they still get
+    // the full text.
+    let optional_fields_note = if layer == "model" || layer == "route" {
+        "follow the exactOptionalPropertyTypes rule already given above — never assign \
+         `undefined` to the key, omit it instead.".to_string()
+    } else {
+        EXACT_OPTIONAL_PROPERTY_RULE.to_string()
     };
 
     let contract_section = if (layer == "route" || layer == "api-client") && !contract_yaml.is_empty() {
@@ -532,7 +548,7 @@ or `.mockImplementation(...)` on a method of the real '{module_name}' instance y
            message text.\n\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
          - Optional fields in test data (declared `field?: Type`, per the rules above):\n\
-           {exact_optional_rule}\n\
+           {optional_fields_note}\n\
          - EXCEPTION — testing a \"missing mandatory field\" scenario: you cannot omit a \
 required property from a typed object literal, or pass `undefined` for a required positional \
 parameter; TypeScript rejects both at COMPILE time, before the test ever runs, even though the \
@@ -570,7 +586,7 @@ signature first, then match ONE of these two shapes (never mix them):\n\
         test_structure = test_structure,
         red_reason = red_reason,
         route_rule = route_rule,
-        exact_optional_rule = EXACT_OPTIONAL_PROPERTY_RULE,
+        optional_fields_note = optional_fields_note,
         contract = canopy_summary_contract(),
     )
 }
