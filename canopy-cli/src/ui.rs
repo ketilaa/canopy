@@ -318,6 +318,12 @@ impl Progress {
     {
         let label = label.into();
         let start = std::time::Instant::now();
+        // The child's OWN permanent println lines below (not the live spinner) are tagged with
+        // this step number — the parent bar's phase text is live-only, never committed to
+        // scrollback, so once it scrolls out of view (or a plain-text capture just shows the
+        // permanent lines in sequence) a bare "done Red — generating test..." line has no visible
+        // indication of which step it belongs to. `n` makes every such line self-identifying.
+        let n = format!("[{}/{}]", idx + 1, self.total());
         // "      ↳ " — deliberately NOT just more leading spaces than the parent bar's "  ": a
         // column-count difference alone reads as coincidental once a finished parent bar's blank
         // spinner slot and an active child spinner glyph land in visually similar positions. The
@@ -336,7 +342,7 @@ impl Progress {
                 Some(pb)
             }
             _ => {
-                self.println(format!("      ↳ … {label}"));
+                self.println(format!("      ↳ {n} … {label}"));
                 None
             }
         };
@@ -347,7 +353,7 @@ impl Progress {
         if let Some(pb) = child {
             pb.finish_and_clear();
         }
-        self.println(format!("      ↳ {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
+        self.println(format!("      ↳ {n} {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
         result
     }
 }

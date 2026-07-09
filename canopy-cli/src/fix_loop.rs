@@ -298,11 +298,17 @@ fn run_fix_loop_inner(
                         is_noop,
                     });
                     if is_noop {
+                        // Don't also print the model's self-reported summary here — it has
+                        // claimed a fix ("Fixed the TypeScript error by...") on the exact same
+                        // attempt that changed nothing, which reads as directly contradicting
+                        // the line above it. "model made no changes" is the trustworthy, byte-
+                        // verified status; the self-report adds nothing but confusion when it's
+                        // already known to be wrong.
                         progress.println(format!("    model made no changes to {file_path}"));
                     } else {
                         let _ = std::fs::write(file_path, &result.content);
+                        print_step_notes(progress, &result.summary, &result.deviations);
                     }
-                    print_step_notes(progress, &result.summary, &result.deviations);
                 }
                 Err(e) => progress.println(format!("    LLM fix failed for {file_path}: {e}")),
             }
