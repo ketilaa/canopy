@@ -75,10 +75,6 @@ pub(crate) fn red(s: &str) -> String {
     console::style(s).red().to_string()
 }
 
-pub(crate) fn green(s: &str) -> String {
-    console::style(s).green().to_string()
-}
-
 pub(crate) fn dim(s: &str) -> String {
     console::style(s).dim().to_string()
 }
@@ -215,6 +211,10 @@ pub(crate) struct Progress {
     /// done" on resume), so no time/token summary is shown for it.
     step_start: Vec<std::sync::Mutex<Option<std::time::Instant>>>,
     step_tokens: Vec<std::sync::Mutex<(u64, u64)>>,
+    /// Current phase text for the active step (e.g. "TDD Red — generating stub") — kept so
+    /// `timed()` can refresh the parent bar's message (phase + latest token total) without
+    /// clobbering the phase text it doesn't otherwise have access to.
+    step_phase_text: Vec<std::sync::Mutex<String>>,
     files: Vec<String>,
     /// Per-step 1-based position within its own group, and that group's total step count —
     /// e.g. step 3 of 9 in "product", not step 3 of 14 overall. Parallel to `files`.
@@ -281,6 +281,7 @@ impl Progress {
                 children: (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect(),
                 step_start: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
                 step_tokens: (0..total).map(|_| std::sync::Mutex::new((0, 0))).collect(),
+                step_phase_text: (0..total).map(|_| std::sync::Mutex::new(String::new())).collect(),
                 files, group_index, group_size, step_to_row, rows,
                 window: 0,
                 revealed: std::sync::Mutex::new(0),
@@ -302,12 +303,14 @@ impl Progress {
         let children = (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect();
         let step_start = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
         let step_tokens = (0..total).map(|_| std::sync::Mutex::new((0, 0))).collect();
+        let step_phase_text = (0..total).map(|_| std::sync::Mutex::new(String::new())).collect();
         let progress = Self {
             multi: Some(multi),
             bars,
             children,
             step_start,
             step_tokens,
+            step_phase_text,
             files, group_index, group_size, step_to_row, rows,
             window,
             revealed: std::sync::Mutex::new(0),
@@ -390,23 +393,63 @@ impl Progress {
         }
     }
 
+    /// " · 3.4k in / 890 out" once the step has spent any tokens, else empty — so a
+    /// just-activated step's header doesn't show a premature "0 in / 0 out".
+    fn tokens_suffix(&self, idx: usize) -> String {
+        let (input, output) = self.step_tokens.get(idx).map(|m| *m.lock().unwrap()).unwrap_or((0, 0));
+        if input == 0 && output == 0 {
+            String::new()
+        } else {
+            format!(" · {} in / {} out", format_tokens(input), format_tokens(output))
+        }
+    }
+
     /// Marks step `idx` as the active one and sets its current phase text
     /// (e.g. "TDD Red — generating stub"). Safe to call repeatedly as the phase changes.
     pub(crate) fn phase(&self, idx: usize, phase: &str) {
         self.reveal_through(idx);
+        let mut first_activation = false;
         if let Some(m) = self.step_start.get(idx) {
             let mut start = m.lock().unwrap();
             if start.is_none() {
                 *start = Some(std::time::Instant::now());
+                first_activation = true;
             }
+        }
+        if let Some(m) = self.step_phase_text.get(idx) {
+            *m.lock().unwrap() = phase.to_string();
         }
         let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
         match self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()) {
             Some(pb) => {
+                if first_activation {
+                    // Only an activated step's bar ticks a live elapsed time — switching style
+                    // (rather than baking it into the shared "pending" style from `reveal_through`)
+                    // keeps upcoming preview steps from showing a growing elapsed since the moment
+                    // they merely scrolled into the preview window, which isn't when they started.
+                    pb.reset_elapsed();
+                    use indicatif::ProgressStyle;
+                    pb.set_style(
+                        ProgressStyle::with_template("  {spinner:.cyan} {msg} ({elapsed_precise})")
+                            .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+                    );
+                }
                 pb.enable_steady_tick(std::time::Duration::from_millis(80));
-                pb.set_message(format!("{label} — {phase}"));
+                pb.set_message(format!("{label} — {phase}{}", self.tokens_suffix(idx)));
             }
-            None => self.println(format!("\n{label} — {phase}")),
+            None => self.println(format!("\n{label} — {phase}{}", self.tokens_suffix(idx))),
+        }
+    }
+
+    /// Re-renders step `idx`'s own header line with its current phase text and latest
+    /// aggregated token total — called after `timed()` updates the token count, so the
+    /// running total on the step header itself advances as sub-operations finish, not just
+    /// once the whole step collapses.
+    fn refresh_step_header(&self, idx: usize) {
+        let label = step_label(self.group_index[idx], self.group_size[idx], self.file(idx));
+        let phase = self.step_phase_text.get(idx).map(|m| m.lock().unwrap().clone()).unwrap_or_default();
+        if let Some(pb) = self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()) {
+            pb.set_message(format!("{label} — {phase}{}", self.tokens_suffix(idx)));
         }
     }
 
@@ -524,6 +567,7 @@ impl Progress {
             t.0 += after_tokens.0.saturating_sub(before_tokens.0);
             t.1 += after_tokens.1.saturating_sub(before_tokens.1);
         }
+        self.refresh_step_header(idx);
         if let Some(pb) = child {
             // Freeze with a "done" message and KEEP it (finish_with_message, not clear) — it
             // stays visible as part of this step's running history until the whole step

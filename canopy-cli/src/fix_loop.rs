@@ -98,7 +98,6 @@ fn run_fix_loop_inner(
         ));
 
         if output.status.success() {
-            progress.println(format!("  {} {}", crate::ui::green("✓"), service.name));
             return true;
         }
 
