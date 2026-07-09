@@ -113,6 +113,10 @@ pub(crate) fn execute_steps(
 
     let files: Vec<String> = plan.steps.iter().map(|s| s.file.clone()).collect();
     let progress = Progress::new(&files);
+    progress.println(format!(
+        "Implementing {story_id}: As a {}, I want {}, so that {}.",
+        story.as_a, story.want, story.so_that
+    ));
     // A resumed plan already has some steps marked done from a prior run — freeze their
     // checklist lines immediately so the whole run's history is visible from the start,
     // not just the steps executed in this particular invocation.
@@ -154,10 +158,6 @@ pub(crate) fn execute_steps(
             save_story_plan(story_id, &plan).context("failed to save plan progress")?;
             continue;
         }
-
-        let op_symbol = if step.operation == "modify" { "✎" } else { "+" };
-        progress.println(format!("\n[{}/{}] {op_symbol} {}", step.id, total, step.file));
-        progress.println(format!("      {}", step.description));
 
         // Resolve the service entry and directory for this step.
         let step_service_name = step.service.rsplit('/').next().unwrap_or(&step.service).to_string();
