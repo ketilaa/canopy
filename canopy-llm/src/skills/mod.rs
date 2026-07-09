@@ -49,6 +49,17 @@ pub(crate) const EXACT_OPTIONAL_PROPERTY_RULE: &str =
      The fix is always the same shape — never assign `undefined` to the key; omit it instead:\n\
        WRONG:   { ...rest, field: value }              // value may be `undefined`\n\
        CORRECT: { ...rest, ...(value !== undefined && { field: value }) }\n\
+     `rest` in that CORRECT line means the source object WITHOUT `field` — destructure it out\n\
+     first (`const { field, ...rest } = source`). Spreading the ORIGINAL object first and only\n\
+     conditionally re-adding `field` after does NOT fix anything: the earlier spread already\n\
+     copied `field` (however it was — including a literal `undefined` value) onto the result,\n\
+     and a conditional spread that evaluates false is a no-op — it cannot remove a key another\n\
+     spread already added:\n\
+       WRONG:   const { name } = source                                    // field not destructured out\n\
+                { ...source, ...(source.field !== undefined && { field: source.field }) }\n\
+                // source.field is still on the result via `...source`, whether or not the second spread runs\n\
+       CORRECT: const { field, ...rest } = source\n\
+                { ...rest, ...(field !== undefined && { field }) }\n\
      Apply this everywhere a possibly-undefined value flows into an optional-typed field: object \
      literals, factory functions forwarding their own optional parameters, route handlers \
      forwarding a validator's parsed output into a service call, and test fixture data.";

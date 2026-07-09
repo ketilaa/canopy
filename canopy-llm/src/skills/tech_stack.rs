@@ -463,7 +463,15 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              "{}\n{}",
              "  ### Route handlers\n\
              Every handler MUST declare next in the signature:\n\
-               router.post('/widgets', async (req: Request, res: Response, next: NextFunction) => {\n\
+               router.post('/', async (req: Request, res: Response, next: NextFunction) => {\n\
+             CRITICAL — the path inside THIS file is relative to wherever app.ts mounts this\n\
+             router (e.g. app.use('/widgets', router)) — it is NEVER the resource name again.\n\
+             Repeating it here creates a double-mounted path (/widgets/widgets, not /widgets),\n\
+             which 404s on every real request:\n\
+               WRONG:   router.post('/widgets', ...)   ✗ mounted at /widgets → accessible at /widgets/widgets\n\
+               CORRECT: router.post('/', ...)          ✓ mounted at /widgets → accessible at /widgets\n\
+             A sub-resource still starts from that same root, not the mount prefix:\n\
+               router.get('/:id', ...)   ✓ mounted at /widgets → accessible at /widgets/:id\n\
              Pass all errors to next(err) — never catch-and-respond in the route body.\n\
              Validate input at the route boundary with zod:\n\
              - define a zod schema in the route file\n\
