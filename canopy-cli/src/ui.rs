@@ -82,12 +82,15 @@ pub(crate) fn dim(s: &str) -> String {
     console::style(s).dim().to_string()
 }
 
-/// console 0.15 has no built-in strikethrough style, so this applies SGR 9 directly —
-/// gated on the same `colors_enabled()` check console's own styles use internally, so it
-/// degrades exactly like `red`/`green`/`dim` do on a non-color terminal or NO_COLOR.
-pub(crate) fn strike(s: &str) -> String {
+/// Dim + strikethrough for a finished checklist entry — it should visibly recede, not just get
+/// a line through it. console 0.15 has no built-in strikethrough style, so this applies SGR 2
+/// (dim) and 9 (strikethrough) directly, in ONE escape sequence with a single trailing reset —
+/// composing two independently-wrapped helpers (each with its own reset) would cut the first
+/// attribute short at the inner wrapper's reset code. Gated on the same `colors_enabled()` check
+/// console's own styles use internally, so it degrades on a non-color terminal or NO_COLOR.
+pub(crate) fn dim_strike(s: &str) -> String {
     if console::colors_enabled() {
-        format!("\x1b[9m{s}\x1b[0m")
+        format!("\x1b[2;9m{s}\x1b[0m")
     } else {
         s.to_string()
     }
@@ -201,18 +204,18 @@ impl Progress {
     }
 
     pub(crate) fn done(&self, idx: usize, total: usize, file: &str, note: &str) {
-        let label = strike(&step_label(idx, total, file));
+        let line = dim_strike(&format!("✓ {} ({note})", step_label(idx, total, file)));
         match self.bars.get(idx) {
-            Some(pb) => pb.finish_with_message(format!("{} {label} ({note})", green("✓"))),
-            None => self.println(format!("{} {} ({note})", green("✓"), step_label(idx, total, file))),
+            Some(pb) => pb.finish_with_message(line),
+            None => self.println(line),
         }
     }
 
     pub(crate) fn skipped(&self, idx: usize, total: usize, file: &str, note: &str) {
-        let label = strike(&step_label(idx, total, file));
+        let line = dim_strike(&format!("↷ {} ({note})", step_label(idx, total, file)));
         match self.bars.get(idx) {
-            Some(pb) => pb.finish_with_message(format!("{} {label} ({note})", dim("↷"))),
-            None => self.println(format!("{} {} ({note})", dim("↷"), step_label(idx, total, file))),
+            Some(pb) => pb.finish_with_message(line),
+            None => self.println(line),
         }
     }
 
@@ -232,12 +235,16 @@ impl Progress {
     {
         let label = label.into();
         let start = std::time::Instant::now();
+        // "      ↳ " — deliberately NOT just more leading spaces than the parent bar's "  ": a
+        // column-count difference alone reads as coincidental once a finished parent bar's blank
+        // spinner slot and an active child spinner glyph land in visually similar positions. The
+        // ↳ glyph makes the nesting unambiguous regardless of exact column math.
         let child = match (&self.multi, self.bars.get(idx)) {
             (Some(multi), Some(anchor)) => {
                 use indicatif::{ProgressBar, ProgressStyle};
                 let pb = multi.insert_after(anchor, ProgressBar::new_spinner());
                 pb.set_style(
-                    ProgressStyle::with_template("    {spinner:.cyan} {msg} ({elapsed_precise})")
+                    ProgressStyle::with_template("      ↳ {spinner:.cyan} {msg} ({elapsed_precise})")
                         .unwrap_or_else(|_| ProgressStyle::default_spinner()),
                 );
                 pb.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -245,7 +252,7 @@ impl Progress {
                 Some(pb)
             }
             _ => {
-                self.println(format!("    … {label}"));
+                self.println(format!("      ↳ … {label}"));
                 None
             }
         };
@@ -253,7 +260,7 @@ impl Progress {
         if let Some(pb) = child {
             pb.finish_and_clear();
         }
-        self.println(format!("    {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
+        self.println(format!("      ↳ {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
         result
     }
 }
