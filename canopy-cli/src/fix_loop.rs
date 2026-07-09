@@ -4,14 +4,23 @@ use crate::build_output::{
 };
 use crate::project_scan::collect_files;
 use crate::roots;
-use crate::ui::{print_step_notes, with_spinner};
+use crate::ui::{print_step_notes, Progress};
 use canopy_core::{Adr, ServiceEntry};
 use canopy_llm::{detect_layer, fix_file, skill_for_build_system, skill_for_technology, testing_skill_for_file_with_adrs, FixAttempt, LlmClient};
+
+/// Outcome of one fix loop run — `iterations` feeds the run-level closing summary
+/// (`execute_steps` sums it across every step) rather than just a pass/fail bool.
+pub(crate) struct FixOutcome {
+    pub(crate) passed: bool,
+    pub(crate) iterations: usize,
+}
 
 /// Runs a build/test command and iterates an LLM fix loop until it succeeds or max_iterations is hit.
 /// `skip_files` lists files that must not be modified (e.g. the unit test in the Green phase).
 /// `adrs` is used to resolve the correct testing skill when fixing test files.
-/// Returns true when the command exits successfully.
+/// `progress`/`step_idx` anchor fix-attempt spinners under the calling step's checklist line —
+/// pass `Progress::none()` and `0` from a context with no step list (e.g. final validation).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_fix_loop_logged(
     client: &LlmClient,
     service: &ServiceEntry,
@@ -24,14 +33,17 @@ pub(crate) fn run_fix_loop_logged(
     max_iterations: usize,
     fix_log_dir: Option<&std::path::Path>,
     step_label: &str,
-) -> bool {
+    progress: &Progress,
+    step_idx: usize,
+) -> FixOutcome {
     let mut telemetry_iterations: Vec<String> = Vec::new();
     let mut total_iterations = 0usize;
 
-    let result = run_fix_loop_inner(
+    let passed = run_fix_loop_inner(
         client, service, service_dir, build_cmd, service_source_files,
         skip_files, adrs, arch_skills, max_iterations,
         &mut telemetry_iterations, &mut total_iterations,
+        progress, step_idx,
     );
 
     if let Some(log_dir) = fix_log_dir {
@@ -39,7 +51,7 @@ pub(crate) fn run_fix_loop_logged(
             .replace('.', "_");
         let log_path = log_dir.join(format!("{}-{}.yaml", service.name, label));
         let tech = service.technology.as_deref().unwrap_or("unknown");
-        let passed = if result { "true" } else { "false" };
+        let passed_str = if passed { "true" } else { "false" };
         let iterations_yaml = if telemetry_iterations.is_empty() {
             "  - iteration: 1\n    errors: []\n    result: pass\n".to_string()
         } else {
@@ -47,14 +59,15 @@ pub(crate) fn run_fix_loop_logged(
         };
         let content = format!(
             "service: \"{}\"\ntechnology: \"{}\"\nstep: \"{}\"\ntotal_iterations: {}\npassed: {}\niterations:\n{}",
-            service.name, tech, step_label, total_iterations, passed, iterations_yaml
+            service.name, tech, step_label, total_iterations, passed_str, iterations_yaml
         );
         let _ = std::fs::write(&log_path, content);
     }
 
-    result
+    FixOutcome { passed, iterations: total_iterations }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_fix_loop_inner(
     client: &LlmClient,
     service: &ServiceEntry,
@@ -67,6 +80,8 @@ fn run_fix_loop_inner(
     max_iterations: usize,
     telemetry: &mut Vec<String>,
     total_iterations: &mut usize,
+    progress: &Progress,
+    step_idx: usize,
 ) -> bool {
     let mut attempt_history: std::collections::HashMap<String, Vec<FixAttempt>> = std::collections::HashMap::new();
     for iteration in 0..max_iterations {
@@ -74,7 +89,7 @@ fn run_fix_loop_inner(
 
         let output = match output {
             Ok(o) => o,
-            Err(e) => { eprintln!("  failed to run command: {e}"); return false; }
+            Err(e) => { progress.println(format!("  failed to run command: {e}")); return false; }
         };
 
         let combined = strip_ansi(format!(
@@ -84,7 +99,7 @@ fn run_fix_loop_inner(
         ));
 
         if output.status.success() {
-            println!("  ✓ {}", service.name);
+            progress.println(format!("  {} {}", crate::ui::green("✓"), service.name));
             return true;
         }
 
@@ -98,7 +113,7 @@ fn run_fix_loop_inner(
         if missing_pkgs.iter().any(|p| p.starts_with("javax.")) {
             let n = migrate_javax_to_jakarta(service_dir);
             if n > 0 {
-                println!("  migrated javax.* → jakarta.* in {n} file(s)");
+                progress.println(format!("  migrated javax.* → jakarta.* in {n} file(s)"));
                 fixed_any = true;
             }
         }
@@ -131,16 +146,16 @@ fn run_fix_loop_inner(
                         ));
                     }
                     let errors = error_lines.join("\n\n");
-                    println!("  fixing pom.xml ({} pom, {} unresolvable, {} missing)",
-                        pom_validation.len(), unresolvable.len(), non_javax.len());
+                    progress.println(format!("  fixing pom.xml ({} pom, {} unresolvable, {} missing)",
+                        pom_validation.len(), unresolvable.len(), non_javax.len()));
                     let pom_skill = skill_for_build_system(&build_file);
                     match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills, &[]) {
                         Ok(result) => {
                             let _ = std::fs::write(&build_file, &result.content);
-                            print_step_notes(&result.summary, &result.deviations);
+                            print_step_notes(progress, &result.summary, &result.deviations);
                             fixed_any = true;
                         }
-                        Err(e) => eprintln!("    LLM fix failed for pom.xml: {e}"),
+                        Err(e) => progress.println(format!("    LLM fix failed for pom.xml: {e}")),
                     }
                 }
             }
@@ -175,8 +190,8 @@ fn run_fix_loop_inner(
         }
 
         if broken_files.is_empty() && !fixed_any {
-            eprintln!("  No fixable errors found — manual fix needed.");
-            eprintln!("{combined}");
+            progress.println("  No fixable errors found — manual fix needed.");
+            progress.println(&combined);
             return false;
         }
 
@@ -185,18 +200,18 @@ fn run_fix_loop_inner(
                 .map(|f| std::path::Path::new(f).file_name()
                     .and_then(|n| n.to_str()).unwrap_or(f.as_str()))
                 .collect();
-            println!("  fix [{}/{}]  {} error(s) in {}",
-                iteration + 1, max_iterations, broken_files.len(), short.join(", "));
+            progress.println(format!("  fix [{}/{}]  {} error(s) in {}",
+                iteration + 1, max_iterations, broken_files.len(), short.join(", ")));
         }
 
         for file_path in &broken_files {
             let content = match std::fs::read_to_string(file_path) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("  cannot read {file_path}: {e}"); continue; }
+                Err(e) => { progress.println(format!("  cannot read {file_path}: {e}")); continue; }
             };
             let errors = errors_for_file(&combined, file_path);
             if errors.trim().is_empty() {
-                eprintln!("  skipping {} — no matching error lines", file_path);
+                progress.println(format!("  skipping {} — no matching error lines", file_path));
                 continue;
             }
             let short_name = std::path::Path::new(file_path).file_name()
@@ -216,7 +231,7 @@ fn run_fix_loop_inner(
             // burning iterations on it rather than asking a third time for the same result.
             if let Some(history) = attempt_history.get(file_path) {
                 if history.len() >= 2 && history[history.len() - 1].is_noop && history[history.len() - 2].is_noop {
-                    eprintln!("  {file_path} made no changes on two consecutive attempts — giving up on it for now.");
+                    progress.println(format!("  {file_path} made no changes on two consecutive attempts — giving up on it for now."));
                     continue;
                 }
             }
@@ -269,7 +284,8 @@ fn run_fix_loop_inner(
             } else {
                 format!("{base_skill}\n\n{test_skill}")
             };
-            let fix_result = with_spinner(
+            let fix_result = progress.timed(
+                step_idx,
                 format!("fixing  {short_name}"),
                 || fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts),
             );
@@ -282,13 +298,13 @@ fn run_fix_loop_inner(
                         is_noop,
                     });
                     if is_noop {
-                        eprintln!("    model made no changes to {file_path}");
+                        progress.println(format!("    model made no changes to {file_path}"));
                     } else {
                         let _ = std::fs::write(file_path, &result.content);
                     }
-                    print_step_notes(&result.summary, &result.deviations);
+                    print_step_notes(progress, &result.summary, &result.deviations);
                 }
-                Err(e) => eprintln!("    LLM fix failed for {file_path}: {e}"),
+                Err(e) => progress.println(format!("    LLM fix failed for {file_path}: {e}")),
             }
         }
     }

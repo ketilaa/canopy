@@ -422,7 +422,18 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
     WRONG: mockRepo.saveWidget.mockResolvedValue({ ...widget, id: 'fake-id' })\n\
            expect(result).toMatchObject({ id: 'fake-id', name: 'name-value' })   ✗ id differs\n\
   CORRECT: never put id/createdAt/modifiedAt inside the toMatchObject(...) literal at all —\n\
-  check them separately with expect.any(String) / toBeInstanceOf(Date), exactly as shown above."
+  check them separately with expect.any(String) / toBeInstanceOf(Date), exactly as shown above.\n\
+  The same mistake also appears as a STANDALONE assertion, not just inside toMatchObject(...) —\n\
+  same root cause (the mock invents a value never asked for), different shape:\n\
+    WRONG: const widgetId = 'test-id-123'\n\
+           mockRepo.saveWidget.mockImplementation(async (widget) => ({ ...widget, id: widgetId }))\n\
+           const result = await service.createWidget({ name: 'name-value' })\n\
+           expect(result.id).toEqual(widgetId)   ✗ the service returns the FACTORY's product,\n\
+           never whatever the repository mock resolved to — reassigning id/createdAt/modifiedAt\n\
+           in the mock's return value cannot make the service's real return value match it.\n\
+  CORRECT: mock the repository to resolve with the SAME object it was called with (as in the\n\
+  worked example above), then assert result.id with expect.any(String) — never against a\n\
+  literal the mock invented."
          .to_string()),
         ("repository",
          "  ### Repository unit test example (real method, mocked Pool — never mock the method itself)\n\

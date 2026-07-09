@@ -11,10 +11,6 @@ mod tdd;
 mod ui;
 mod util;
 
-pub(crate) const RED: &str = "\x1b[31m";
-pub(crate) const GREEN: &str = "\x1b[32m";
-pub(crate) const RESET: &str = "\x1b[0m";
-
 use anyhow::Result;
 use clap::Parser;
 use cli::Cli;
