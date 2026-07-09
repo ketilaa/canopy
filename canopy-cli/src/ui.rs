@@ -136,17 +136,42 @@ where
     result
 }
 
-/// A persistent checklist of every step in the current `implement` run, rendered as one
-/// line per step via `indicatif::MultiProgress` when interactive. Pending steps sit dim
-/// and unmarked; the active step gets a live spinner and phase text; finished steps freeze
-/// with a checkmark and strikethrough; failed steps freeze red, un-struck (a failure stays
-/// visually prominent — strikethrough would read as "handled").
+/// A checklist of every step in the current `implement` run, rendered as one line per step
+/// via `indicatif::MultiProgress` when interactive. Pending steps sit dim and unmarked; the
+/// active step expands with a live spinner, phase text, and a nested child spinner for
+/// whatever LLM call is currently running; a finished step collapses to a single dim,
+/// struck-through line and is dropped for good — see the `bars` field doc for why that drop
+/// matters. Failed steps freeze red, un-struck (a failure stays visually prominent —
+/// strikethrough would read as "handled").
+///
+/// Step bars are revealed LAZILY, not all created upfront: only the active step plus a
+/// preview window of upcoming steps are ever live at once, sized to the terminal's actual
+/// height (see `new`) so a huge plan can't push the active step off the bottom of the
+/// viewport. Anything beyond the window is summarized in one trailing "N more step(s)" line
+/// that always stays last.
 ///
 /// Falls back to plain `println!` lines (no bars, no strikethrough) when stdout isn't a
 /// terminal, matching `with_spinner`'s fallback for the same reason.
 pub(crate) struct Progress {
     multi: Option<indicatif::MultiProgress>,
-    bars: Vec<indicatif::ProgressBar>,
+    /// `Mutex<Option<_>>`, not a plain `ProgressBar`, so a finished step's bar can actually be
+    /// dropped (via `.take()`) instead of held for the run's lifetime. Indicatif only folds a
+    /// finished bar permanently into scrollback (stops redrawing it — "collapses" it) when its
+    /// LAST strong handle is dropped; holding every bar in a plain `Vec` for the whole run is
+    /// exactly why finished steps kept reappearing after every subsequent redraw. A slot is
+    /// `None` both before its bar is revealed and after it's finished — the two states are
+    /// never queried in a way that would confuse them, since a step's phase/timed/collapse
+    /// calls only ever happen while it's the active one.
+    bars: Vec<std::sync::Mutex<Option<indicatif::ProgressBar>>>,
+    files: Vec<String>,
+    /// How many upcoming pending steps preview below the active one.
+    window: usize,
+    /// How many step bars have been created so far (0..revealed are live; revealed..total
+    /// are still `None`, not yet inserted into the MultiProgress at all).
+    revealed: std::sync::Mutex<usize>,
+    /// Always the last bar in visual order — every newly-revealed step bar is inserted just
+    /// before it, so it never has to move. Empty message once nothing is left to summarize.
+    tail: Option<indicatif::ProgressBar>,
 }
 
 fn step_label(idx: usize, total: usize, file: &str) -> String {
@@ -154,22 +179,40 @@ fn step_label(idx: usize, total: usize, file: &str) -> String {
 }
 
 impl Progress {
-    pub(crate) fn new(total: usize) -> Self {
+    pub(crate) fn new(files: &[String]) -> Self {
+        let total = files.len();
         if !interactive() {
-            return Self { multi: None, bars: Vec::new() };
+            return Self {
+                multi: None,
+                bars: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
+                files: files.to_vec(),
+                window: 0,
+                revealed: std::sync::Mutex::new(0),
+                tail: None,
+            };
         }
         use indicatif::{ProgressBar, ProgressStyle};
         let multi = indicatif::MultiProgress::new();
-        let style = ProgressStyle::with_template("  {spinner:.cyan} {msg}")
-            .unwrap_or_else(|_| ProgressStyle::default_spinner());
-        let bars: Vec<ProgressBar> = (0..total)
-            .map(|_| {
-                let pb = multi.add(ProgressBar::new_spinner());
-                pb.set_style(style.clone());
-                pb
-            })
-            .collect();
-        Self { multi: Some(multi), bars }
+        // Reserve a handful of rows for scrollback context, the active step's own parent +
+        // child line, and the tail summary itself; clamp so a tiny terminal still previews at
+        // least one upcoming step and a huge terminal doesn't preview an unreasonable number.
+        let (rows, _cols) = console::Term::stdout().size();
+        let window = (rows as usize).saturating_sub(6).clamp(1, 8);
+        let tail = multi.add(ProgressBar::new_spinner());
+        tail.set_style(
+            ProgressStyle::with_template("  {msg}").unwrap_or_else(|_| ProgressStyle::default_spinner()),
+        );
+        let bars = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
+        let progress = Self {
+            multi: Some(multi),
+            bars,
+            files: files.to_vec(),
+            window,
+            revealed: std::sync::Mutex::new(0),
+            tail: Some(tail),
+        };
+        progress.reveal_through(0);
+        progress
     }
 
     /// A no-op checklist for phases with no step list to anchor to (e.g. the final
@@ -177,7 +220,43 @@ impl Progress {
     /// `timed`/`println` fall back to plain output unconditionally — safe because nothing
     /// is ever drawn through it, so there is no live region for later output to clobber.
     pub(crate) fn none() -> Self {
-        Self { multi: None, bars: Vec::new() }
+        Self { multi: None, bars: Vec::new(), files: Vec::new(), window: 0, revealed: std::sync::Mutex::new(0), tail: None }
+    }
+
+    fn total(&self) -> usize {
+        self.files.len()
+    }
+
+    fn file(&self, idx: usize) -> &str {
+        self.files.get(idx).map(String::as_str).unwrap_or("")
+    }
+
+    /// Ensures every step bar from 0 up through `idx`'s preview window exists, and updates the
+    /// trailing "N more step(s)" summary. A newly-created bar beyond `idx` itself gets a dim
+    /// "pending" message; `phase`/`collapse` handle upgrading `idx`'s own bar afterward.
+    fn reveal_through(&self, idx: usize) {
+        let (Some(multi), Some(tail)) = (&self.multi, &self.tail) else { return };
+        let target = (idx + self.window + 1).min(self.total());
+        let mut revealed = self.revealed.lock().unwrap();
+        if *revealed >= target {
+            return;
+        }
+        use indicatif::{ProgressBar, ProgressStyle};
+        let style = ProgressStyle::with_template("  {spinner:.cyan} {msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner());
+        while *revealed < target {
+            let pb = multi.insert_before(tail, ProgressBar::new_spinner());
+            pb.set_style(style.clone());
+            pb.set_message(dim(&step_label(*revealed, self.total(), self.file(*revealed))));
+            *self.bars[*revealed].lock().unwrap() = Some(pb);
+            *revealed += 1;
+        }
+        let remaining = self.total() - *revealed;
+        tail.set_message(if remaining > 0 {
+            dim(&format!("… {remaining} more step(s)"))
+        } else {
+            String::new()
+        });
     }
 
     /// Prints a line while the checklist may be live. A bare `println!` is unsafe here:
@@ -193,37 +272,41 @@ impl Progress {
 
     /// Marks step `idx` as the active one and sets its current phase text
     /// (e.g. "TDD Red — generating stub"). Safe to call repeatedly as the phase changes.
-    pub(crate) fn phase(&self, idx: usize, total: usize, file: &str, phase: &str) {
-        match self.bars.get(idx) {
+    pub(crate) fn phase(&self, idx: usize, phase: &str) {
+        self.reveal_through(idx);
+        let label = step_label(idx, self.total(), self.file(idx));
+        match self.bars.get(idx).and_then(|m| m.lock().unwrap().clone()) {
             Some(pb) => {
                 pb.enable_steady_tick(std::time::Duration::from_millis(80));
-                pb.set_message(format!("{} — {phase}", step_label(idx, total, file)));
+                pb.set_message(format!("{label} — {phase}"));
             }
-            None => self.println(format!("\n{} — {phase}", step_label(idx, total, file))),
+            None => self.println(format!("\n{label} — {phase}")),
         }
     }
 
-    pub(crate) fn done(&self, idx: usize, total: usize, file: &str, note: &str) {
-        let line = dim_strike(&format!("✓ {} ({note})", step_label(idx, total, file)));
-        match self.bars.get(idx) {
+    /// Finishes step `idx`'s bar with `line`, then drops it — the drop (not `finish_with_message`
+    /// alone) is what makes indicatif fold the line permanently into scrollback and stop
+    /// redrawing it. See the `bars` field doc for why.
+    fn collapse(&self, idx: usize, line: String) {
+        match self.bars.get(idx).and_then(|m| m.lock().unwrap().take()) {
             Some(pb) => pb.finish_with_message(line),
             None => self.println(line),
         }
     }
 
-    pub(crate) fn skipped(&self, idx: usize, total: usize, file: &str, note: &str) {
-        let line = dim_strike(&format!("↷ {} ({note})", step_label(idx, total, file)));
-        match self.bars.get(idx) {
-            Some(pb) => pb.finish_with_message(line),
-            None => self.println(line),
-        }
+    pub(crate) fn done(&self, idx: usize, note: &str) {
+        let label = step_label(idx, self.total(), self.file(idx));
+        self.collapse(idx, dim_strike(&format!("✓ {label} ({note})")));
     }
 
-    pub(crate) fn failed(&self, idx: usize, total: usize, file: &str) {
-        match self.bars.get(idx) {
-            Some(pb) => pb.finish_with_message(format!("{} {}", red("✗"), step_label(idx, total, file))),
-            None => self.println(format!("{} {}", red("✗"), step_label(idx, total, file))),
-        }
+    pub(crate) fn skipped(&self, idx: usize, note: &str) {
+        let label = step_label(idx, self.total(), self.file(idx));
+        self.collapse(idx, dim_strike(&format!("↷ {label} ({note})")));
+    }
+
+    pub(crate) fn failed(&self, idx: usize) {
+        let label = step_label(idx, self.total(), self.file(idx));
+        self.collapse(idx, format!("{} {label}", red("✗")));
     }
 
     /// Runs `f`, showing a spinner nested directly under step `idx`'s line while it runs
@@ -239,10 +322,11 @@ impl Progress {
         // column-count difference alone reads as coincidental once a finished parent bar's blank
         // spinner slot and an active child spinner glyph land in visually similar positions. The
         // ↳ glyph makes the nesting unambiguous regardless of exact column math.
-        let child = match (&self.multi, self.bars.get(idx)) {
+        let anchor = self.bars.get(idx).and_then(|m| m.lock().unwrap().clone());
+        let child = match (&self.multi, anchor) {
             (Some(multi), Some(anchor)) => {
                 use indicatif::{ProgressBar, ProgressStyle};
-                let pb = multi.insert_after(anchor, ProgressBar::new_spinner());
+                let pb = multi.insert_after(&anchor, ProgressBar::new_spinner());
                 pb.set_style(
                     ProgressStyle::with_template("      ↳ {spinner:.cyan} {msg} ({elapsed_precise})")
                         .unwrap_or_else(|_| ProgressStyle::default_spinner()),
@@ -257,6 +341,9 @@ impl Progress {
             }
         };
         let result = f();
+        // finish_and_clear (not finish_with_message) — this child has no permanent line of its
+        // own; the "done" line below is printed separately, so the bar itself should leave no
+        // trace once cleared and dropped.
         if let Some(pb) = child {
             pb.finish_and_clear();
         }

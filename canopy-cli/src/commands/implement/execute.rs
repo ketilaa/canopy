@@ -20,8 +20,8 @@ use std::collections::HashMap;
 /// the build green. Stopping here — rather than marking the step done and moving on — matters
 /// because every later step's compile/test check assumes everything before it already works;
 /// continuing on a broken foundation only compounds errors and burns more LLM calls chasing them.
-fn report_broken_build(progress: &Progress, idx: usize, total: usize, step_id: &str, file: &str, story_id: &str) {
-    progress.failed(idx, total, file);
+fn report_broken_build(progress: &Progress, idx: usize, step_id: &str, file: &str, story_id: &str) {
+    progress.failed(idx);
     progress.println(format!("\n  ✗ Build is broken after step {step_id} ({file}) — stopping so errors don't compound."));
     progress.println(format!("  Fix the errors above, then re-run `canopy implement {story_id}` to continue."));
 }
@@ -111,13 +111,14 @@ pub(crate) fn execute_steps(
 
     roots::ensure_indexed();
 
-    let progress = Progress::new(total);
+    let files: Vec<String> = plan.steps.iter().map(|s| s.file.clone()).collect();
+    let progress = Progress::new(&files);
     // A resumed plan already has some steps marked done from a prior run — freeze their
     // checklist lines immediately so the whole run's history is visible from the start,
     // not just the steps executed in this particular invocation.
     for (idx, step) in plan.steps.iter().enumerate() {
         if step.status == StepStatus::Done {
-            progress.done(idx, total, &step.file, "already done");
+            progress.done(idx, "already done");
         }
     }
 
@@ -148,7 +149,7 @@ pub(crate) fn execute_steps(
 
         // If this plan step targets a test file that the TDD cycle already wrote, skip it.
         if is_test_file(&step.file) && std::path::Path::new(&step.file).exists() {
-            progress.skipped(i, total, &step.file, "already written by TDD cycle");
+            progress.skipped(i, "already written by TDD cycle");
             plan.steps[i].status = StepStatus::Done;
             save_story_plan(story_id, &plan).context("failed to save plan progress")?;
             continue;
@@ -180,7 +181,7 @@ pub(crate) fn execute_steps(
             let test_class = test_class_name(&test_file).unwrap_or_else(|| "Test".to_string());
 
             // ── RED PHASE ────────────────────────────────────────────────────────
-            progress.phase(i, total, &step.file, "TDD Red — write failing test + compilable stub");
+            progress.phase(i, "TDD Red — write failing test + compilable stub");
             // Build sibling context first — the test prompt needs the type surfaces
             // so it can produce test data with all required fields.
             let stub_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
@@ -229,7 +230,7 @@ pub(crate) fn execute_steps(
                 if std::path::Path::new(&step_service_dir).exists() {
                     ensure_npm_installed(&step_service_dir);
                     let compile_cmd = compile_command_for_service(svc, &step_service_dir);
-                    progress.phase(i, total, &step.file, &format!("TDD Red — compile stub    $ {compile_cmd}"));
+                    progress.phase(i, &format!("TDD Red — compile stub    $ {compile_cmd}"));
                     let src_files = scan_service_source_files(&step_service_dir);
                     // Red fix loop protects done-step impl files and test files from
                     // earlier TDD steps — but NOT the current step's test, which the
@@ -254,7 +255,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("red-{}", step.file), &progress, i);
                     total_fix_iterations += red.iterations;
                     if !red.passed {
-                        report_broken_build(&progress, i, total, &step.id, &step.file, story_id);
+                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
                 }
@@ -262,7 +263,7 @@ pub(crate) fn execute_steps(
             roots::reindex();
 
             // ── GREEN PHASE ──────────────────────────────────────────────────────
-            progress.phase(i, total, &step.file, "TDD Green — implement to pass the test");
+            progress.phase(i, "TDD Green — implement to pass the test");
             let roots_context = roots::get_feature_context(&step.description)
                 .map(|p| format_roots_context(&p))
                 .filter(|s| !s.is_empty());
@@ -293,7 +294,7 @@ pub(crate) fn execute_steps(
                 if std::path::Path::new(&step_service_dir).exists() {
                     ensure_npm_installed(&step_service_dir);
                     let test_cmd = test_class_command_for_service(svc, &test_class);
-                    progress.phase(i, total, &step.file, &format!("TDD Green — run tests      $ {test_cmd}"));
+                    progress.phase(i, &format!("TDD Green — run tests      $ {test_cmd}"));
                     let src_files = scan_service_source_files(&step_service_dir);
                     let abs_test = std::fs::canonicalize(&test_file)
                         .map(|p| p.to_string_lossy().to_string())
@@ -303,7 +304,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("green-{}", step.file), &progress, i);
                     total_fix_iterations += green.iterations;
                     if !green.passed {
-                        report_broken_build(&progress, i, total, &step.id, &step.file, story_id);
+                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
                 }
@@ -320,7 +321,7 @@ pub(crate) fn execute_steps(
                 .map(|p| format_roots_context(&p))
                 .filter(|s| !s.is_empty());
 
-            progress.phase(i, total, &step.file, "generating");
+            progress.phase(i, "generating");
             let step_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
             let StepResult { content, summary, deviations } = progress.timed(
@@ -350,7 +351,7 @@ pub(crate) fn execute_steps(
                 if std::path::Path::new(&step_service_dir).exists() {
                     ensure_npm_installed(&step_service_dir);
                     let compile_cmd = compile_command_for_service(svc, &step_service_dir);
-                    progress.phase(i, total, &step.file, &format!("compile   $ {compile_cmd}"));
+                    progress.phase(i, &format!("compile   $ {compile_cmd}"));
                     let src_files = scan_service_source_files(&step_service_dir);
                     let mut direct_skip: Vec<String> = Vec::new();
                     for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
@@ -364,7 +365,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("direct-{}", step.file), &progress, i);
                     total_fix_iterations += direct.iterations;
                     if !direct.passed {
-                        report_broken_build(&progress, i, total, &step.id, &step.file, story_id);
+                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
                 }
@@ -373,7 +374,7 @@ pub(crate) fn execute_steps(
             roots::reindex();
         }
 
-        progress.done(i, total, &step.file, "done");
+        progress.done(i, "done");
         plan.steps[i].status = StepStatus::Done;
         save_story_plan(story_id, &plan).context("failed to save plan progress")?;
     }
