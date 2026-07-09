@@ -226,6 +226,17 @@ fn run_fix_loop_inner(
                 }
             }
 
+            // Same error signature (first line) as what the PREVIOUS attempt left behind —
+            // a real (non-noop) code change that didn't actually move the error is easy to
+            // miss when every "fixing" line looks alike; call it out explicitly instead of
+            // making the reader diff two truncated strings themselves.
+            let error_signature = |e: &str| e.lines().next().unwrap_or("").trim().to_string();
+            let same_error_as_before = attempt_history.get(file_path)
+                .and_then(|history| history.len().checked_sub(2).map(|i| &history[i]))
+                .and_then(|prev| prev.resulting_error.as_deref())
+                .map(|prev_err| error_signature(prev_err) == error_signature(&errors))
+                .unwrap_or(false);
+
             // Two consecutive no-op attempts mean the model is stuck on this file — stop
             // burning iterations on it rather than asking a third time for the same result.
             if let Some(history) = attempt_history.get(file_path) {
@@ -283,18 +294,20 @@ fn run_fix_loop_inner(
             } else {
                 format!("{base_skill}\n\n{test_skill}")
             };
-            // The bare "fixing {file}" label gave no indication of what was actually wrong —
-            // the real error is already sitting in `errors`, just never shown. One line of it
-            // is enough context to tell attempts apart without overflowing the checklist.
+            // The bare "fixing {file}" label gave no indication of what was actually wrong, or
+            // which attempt this was — the real error is already sitting in `errors`, just
+            // never shown, and the iteration/max is only ever printed on a separate line that
+            // scrolls away from the per-file history. Both now travel with the label itself.
             let first_error_line = errors.lines().next().unwrap_or("").trim();
             let error_summary: String = if first_error_line.chars().count() > 70 {
                 first_error_line.chars().take(70).chain(std::iter::once('…')).collect()
             } else {
                 first_error_line.to_string()
             };
+            let same_error_note = if same_error_as_before { " [same error persists]" } else { "" };
             let fix_result = progress.timed(
                 step_idx,
-                format!("fixing  {short_name} — {error_summary}"),
+                format!("fixing  {short_name} (attempt {}/{max_iterations}){same_error_note} — {error_summary}", iteration + 1),
                 || fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts),
             );
             match fix_result {
