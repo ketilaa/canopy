@@ -22,8 +22,9 @@ const DEVIATIONS_SEPARATOR: &str = "##CANOPY_DEVIATIONS##";
 pub(crate) fn canopy_summary_contract() -> &'static str {
     "Then append exactly this separator on its own line:\n\
      ##CANOPY_SUMMARY##\n\
-     Then one line: what you did and the key decision you made (max 20 words).\n\
-     Then one line: why — the reason behind that decision (max 20 words).\n\
+     Then one line: what you did and the key decision you made — up to 60 words, be concrete\n\
+     and specific (name the exact fields, types, or patterns involved) rather than terse.\n\
+     Then one line: why — the reason behind that decision, same 60-word allowance.\n\
      Then append exactly this separator on its own line:\n\
      ##CANOPY_DEVIATIONS##\n\
      Then one line: any rule or instruction above that you did NOT fully follow, and why — \

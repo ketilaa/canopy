@@ -307,42 +307,62 @@ import, `new EventPublisher(...)` throws ReferenceError at parse time.
 fn node_express_layer_examples() -> std::collections::HashMap<&'static str, String> {
     std::collections::HashMap::from([
         ("route",
-         "  ### Route test example\n\
-  jest.mock('../src/infrastructure/EventPublisher', () => ({\n\
-    EventPublisher: jest.fn().mockImplementation(() => ({ publish: jest.fn().mockResolvedValue(undefined) }))\n\
-  }))\n\
-\n\
+         "  ### Route test example (mock ONLY the service layer — per the Route rules above,\n\
+  never the repository or event publisher directly; this isolates the route test from every\n\
+  infrastructure concern, including any Kafka/DB connection attempt)\n\
   import request from 'supertest'\n\
-  import app from '../src/app'\n\
+  import express from 'express'\n\
+  import router from '../src/routes/widgets'\n\
+  import { WidgetService } from '../src/services/WidgetService'\n\
 \n\
-  describe('POST /api/products', () => {\n\
+  jest.mock('../src/services/WidgetService')\n\
+\n\
+  let app: express.Express\n\
+  let mockWidgetService: jest.Mocked<WidgetService>\n\
+\n\
+  beforeEach(() => {\n\
+    mockWidgetService = new WidgetService({} as any, {} as any) as jest.Mocked<WidgetService>\n\
+    app = express()\n\
+    app.use(express.json())\n\
+    app.locals.widgetService = mockWidgetService\n\
+    app.use('/widgets', router)\n\
+  })\n\
+\n\
+  describe('POST /widgets', () => {\n\
     it('returns 201 with Location header when payload is valid', async () => {\n\
-      const res = await request(app).post('/api/products')\n\
-        .send({ name: 'Widget', manufacturer: 'Acme', model: 'X1', categoryIds: ['cat1'] })\n\
+      mockWidgetService.createWidget.mockResolvedValue({\n\
+        id: 'widget-1', createdAt: new Date(), name: 'name-value', otherField: 'other-field-value',\n\
+      })\n\
+      const res = await request(app).post('/widgets')\n\
+        .send({ name: 'name-value', otherField: 'other-field-value' })\n\
         .set('Content-Type', 'application/json')\n\
       expect(res.status).toBe(201)\n\
-      expect(res.headers.location).toMatch(/\\/api\\/products\\//)\n\
+      expect(res.headers.location).toMatch(/\\/widgets\\//)\n\
     })\n\
-    it('returns 400 when mandatory field is missing', async () => {\n\
-      const res = await request(app).post('/api/products').send({})\n\
+    it('returns 400 when a mandatory field is missing', async () => {\n\
+      const res = await request(app).post('/widgets').send({})\n\
       expect(res.status).toBe(400)\n\
     })\n\
   })\n\
 \n\
+  CRITICAL — mocking a CLASS is a different pattern from mocking an interface (the Repository\n\
+  and EventPublisher examples elsewhere use a plain `{ method: jest.fn() } as any` object because\n\
+  those are constructed by the service via a plain object, not `new`'d directly by the test).\n\
+  A class the test itself constructs with `new` needs `jest.mock('../src/services/WidgetService')`\n\
+  (auto-mocks every prototype method) PLUS a cast on the constructed instance, because\n\
+  TypeScript's static type of `new WidgetService(...)` is still the REAL class, which has no\n\
+  `.mockResolvedValue`:\n\
+    WRONG:   let mockWidgetService: WidgetService = new WidgetService(a, b)\n\
+             mockWidgetService.createWidget.mockResolvedValue(...)   ✗ TS2339: no .mockResolvedValue\n\
+    CORRECT: let mockWidgetService: jest.Mocked<WidgetService>\n\
+             mockWidgetService = new WidgetService(a, b) as jest.Mocked<WidgetService>\n\
+  The constructor arguments passed to `new WidgetService(...)` are never used — jest.mock replaces\n\
+  the real constructor body with a no-op — so pass `{} as any` for each one, matching however many\n\
+  the real constructor declares.\n\
+\n\
 ### Scope discipline\n\
   Only write tests for the HTTP methods and service operations described in the story.\n\
-  Do NOT generate GET/DELETE/PUT route tests unless the story's acceptance criteria require them.\n\
-  Mock EventPublisher at the top of every route test file to prevent Kafka connection attempts.\n\
-  EventPublisher's only public methods are connect, disconnect, and the generic publish<T> —\n\
-  NEVER mock a domain-specific method name (e.g. publishWidgetCreated) that does not exist\n\
-  on the class:\n\
-    jest.mock('../src/infrastructure/EventPublisher', () => ({\n\
-      EventPublisher: jest.fn().mockImplementation(() => ({\n\
-        connect: jest.fn().mockResolvedValue(undefined),\n\
-        disconnect: jest.fn().mockResolvedValue(undefined),\n\
-        publish: jest.fn().mockResolvedValue(undefined)\n\
-      }))\n\
-    }))"
+  Do NOT generate GET/DELETE/PUT route tests unless the story's acceptance criteria require them."
          .to_string()),
         ("model",
          "  ### Model unit test example\n\
