@@ -134,9 +134,9 @@ do not add extra arguments or change parameter order relative to what is declare
          {roots_section}\
          {test_hint_section}\n\
          {pkg_section}\
-         {tech_rules}\n\
-         {build_rules}\n\
          {arch_rules}\n\
+         {build_rules}\n\
+         {tech_rules}\n\
          Write the file content first — complete and ready to save.\n\
          {contract}",
         file = step.file,
