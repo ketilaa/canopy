@@ -16,16 +16,30 @@ fn step_prompt(
     test_hint: Option<(&str, &str, bool)>,
     package_constraints: Option<&str>,
 ) -> String {
-    let schema_yaml = spec.entity_schema.as_ref()
-        .map(|s| serde_yaml::to_string(s).unwrap_or_default())
-        .unwrap_or_default();
-
     // The plan LLM sometimes prefixes service names with their directory (e.g. "frontend/admin-portal").
     // Strip any leading path component before looking up in the registry.
     let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
     let service_entry = services.services.iter()
         .find(|s| s.name == service_name || s.name == step.service);
     let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+    let layer = detect_layer(&step.file);
+
+    // Entity schema and OAS contract are only relevant to layers that actually touch domain
+    // fields or HTTP shapes — showing them unconditionally to e.g. infrastructure/middleware/
+    // app/config files is pure bloat, displacing more decisive content from the model's
+    // attention for no benefit (those files have no entity fields or endpoints to align with).
+    let schema_yaml = if matches!(layer, "infrastructure" | "middleware" | "app" | "config" | "module") {
+        String::new()
+    } else {
+        spec.entity_schema.as_ref()
+            .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+            .unwrap_or_default()
+    };
+    let contract_yaml = if matches!(layer, "route" | "api-client" | "app") {
+        contract_yaml
+    } else {
+        ""
+    };
     // Detect frontend by registry entry OR by file extension (belt-and-suspenders).
     let _is_frontend = service_entry
         .and_then(|s| s.component_type.as_deref())
@@ -39,7 +53,6 @@ fn step_prompt(
         .unwrap_or_else(|| service_name.replace('-', "_"));
     let pkg_path = pkg.replace('.', "/");
 
-    let layer = detect_layer(&step.file);
     let tech_rules = skill_for_technology(technology, &pkg, &pkg_path, service_name, layer);
     // For build manifest files, also inject the build system skill.
     // The tech skill says WHICH dependencies belong; the build skill says HOW to write the file.
@@ -132,11 +145,11 @@ do not add extra arguments or change parameter order relative to what is declare
          {sibling_section}\
          {current_section}\
          {roots_section}\
-         {test_hint_section}\n\
          {pkg_section}\
          {arch_rules}\n\
          {build_rules}\n\
          {tech_rules}\n\
+         {test_hint_section}\n\
          Write the file content first — complete and ready to save.\n\
          {contract}",
         file = step.file,
@@ -206,6 +219,7 @@ fn unit_test_stub_prompt(
     let pkg = service_packages.get(service_name)
         .cloned()
         .unwrap_or_else(|| service_name.replace('-', "_"));
+    let pkg_path = pkg.replace('.', "/");
 
     let class_name = std::path::Path::new(impl_file.as_str())
         .file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
@@ -225,6 +239,11 @@ fn unit_test_stub_prompt(
     let service_entry = services.services.iter()
         .find(|s| s.name == service_name || s.name == step.service);
     let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
+    // Structural rules (exact class shapes, package layout, jakarta.* namespace rules, etc.) —
+    // the same skill the Green phase sees. Without this, the Red-phase test is written blind
+    // to the class shape the skill mandates and has to guess before the implementation exists
+    // to check against. Mirrors the TS path's tech_rules wiring below.
+    let tech_rules = skill_for_technology(technology, &pkg, &pkg_path, service_name, layer);
     let test_skill = testing_skill_from_adrs(adrs, technology, layer);
 
     format!(
@@ -243,6 +262,7 @@ fn unit_test_stub_prompt(
          BDD scenarios — one @Test method per scenario:\n\
          {scenarios_yaml}\n\
          \n\
+         {tech_rules}\n\
          {test_skill}\n\
          \n\
          Method naming: should_<expected_outcome>_when_<condition>  (snake_case)\n\
@@ -274,6 +294,7 @@ fn unit_test_stub_prompt(
         so_that = story.so_that,
         schema_yaml = schema_yaml,
         scenarios_yaml = scenarios_yaml,
+        tech_rules = tech_rules,
         test_skill = test_skill,
         contract = canopy_summary_contract(),
     )
@@ -482,6 +503,7 @@ Import the router from the implementation file — it is a Router INSTANCE, neve
          {test_structure}\n\
          \n\
          IMPORTANT:\n\
+         - Write one test per BDD scenario listed above — cover every scenario, do not skip or merge any.\n\
          - Import the subject from '{import_path}'.\n\
          - The tech-stack rules above describe the EXACT shape of any file this skill governs\n\
            (e.g. a constructor signature, a domain event's fields). If the implementation file\n\

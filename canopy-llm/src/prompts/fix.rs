@@ -152,14 +152,14 @@ fn fix_prompt(
         "Fix the {lang} file below so that all listed errors are resolved.\n\
          \n\
          File: {file_path}\n\
-         \n\
-         Errors:\n\
-         {errors}\n\
          {files_section}\
          {referenced_section}\
          {skill_section}\
          {arch_section}\
          {attempts_section}\n\
+         Errors:\n\
+         {errors}\n\
+         \n\
          Current content:\n\
          {content}\n\
          \n\
