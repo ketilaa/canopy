@@ -151,7 +151,7 @@ fn run_fix_loop_inner(
                     match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills, &[]) {
                         Ok(result) => {
                             let _ = std::fs::write(&build_file, &result.content);
-                            print_step_notes(progress, &result.summary, &result.deviations);
+                            print_step_notes(progress, step_idx, &result.summary, &result.deviations);
                             fixed_any = true;
                         }
                         Err(e) => progress.println(format!("    LLM fix failed for pom.xml: {e}")),
@@ -328,7 +328,7 @@ fn run_fix_loop_inner(
                         progress.println(format!("    model made no changes to {file_path}"));
                     } else {
                         let _ = std::fs::write(file_path, &result.content);
-                        print_step_notes(progress, &result.summary, &result.deviations);
+                        print_step_notes(progress, step_idx, &result.summary, &result.deviations);
                     }
                 }
                 Err(e) => progress.println(format!("    LLM fix failed for {file_path}: {e}")),

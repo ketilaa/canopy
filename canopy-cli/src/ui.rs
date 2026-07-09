@@ -496,12 +496,31 @@ impl Progress {
             tail.finish();
         }
     }
+
+    /// Appends `note` to the most recently finished `timed` sub-bar for step `idx` — used for
+    /// the model's self-reported summary/deviations, which used to go through `println` and
+    /// land as a bare top-level line ABOVE THE ENTIRE MultiProgress (that's what indicatif's
+    /// own `println` does: prints above every bar, not near any specific one), completely
+    /// disconnected from the "done fixing ..." line it was actually describing. Attaching it
+    /// to the bar itself means it travels with that bar: visible while the step is active,
+    /// and cleared/kept together with the rest of the step's history on collapse.
+    pub(crate) fn annotate_last_child(&self, idx: usize, note: &str) {
+        if let Some(m) = self.children.get(idx) {
+            if let Some(pb) = m.lock().unwrap().last() {
+                let current = pb.message();
+                pb.set_message(format!("{current}\n        {note}"));
+                return;
+            }
+        }
+        self.println(format!("      {note}"));
+    }
 }
 
-/// Prints the model's self-reported summary and, when present, anything it flagged as
-/// not fully followed — the latter is a direct signal of a skill/prompt gap, surfaced
-/// immediately instead of waiting for it to show up as a compile error later.
-pub(crate) fn print_step_notes(progress: &Progress, summary: &Option<String>, deviations: &Option<String>) {
-    if let Some(s) = summary { progress.println(format!("    {}", s)); }
-    if let Some(d) = deviations { progress.println(format!("    ⚠ did not follow: {}", d)); }
+/// Attaches the model's self-reported summary, and anything it flagged as not fully
+/// followed, to step `idx`'s most recent `timed` sub-bar — the latter is a direct signal of a
+/// skill/prompt gap, surfaced immediately instead of waiting for it to show up as a compile
+/// error later.
+pub(crate) fn print_step_notes(progress: &Progress, idx: usize, summary: &Option<String>, deviations: &Option<String>) {
+    if let Some(s) = summary { progress.annotate_last_child(idx, s); }
+    if let Some(d) = deviations { progress.annotate_last_child(idx, &format!("⚠ did not follow: {d}")); }
 }
