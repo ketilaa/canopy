@@ -319,6 +319,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
             .to_string(),
         layer_rules: std::collections::HashMap::from([
             ("model",
+             format!(
+             "{}\n{}",
              "  ### Models\n\
              A model file exports one interface AND one standalone factory function:\n\
                import { randomUUID } from 'crypto'\n\
@@ -334,37 +336,16 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              No imports from npm packages — use only built-in Node.js APIs ('crypto', 'path', etc.).\n\
              \n\
              #### Optional fields — CRITICAL TypeScript rule\n\
-             Declare optional fields with `?: Type` — NEVER with `field: Type | undefined`.\n\
-               description?: string          ✓  optional — can be omitted from object literals\n\
-               description: string | undefined  ✗  required key — must be present even when undefined\n\
-             Under `strict: true` and `exactOptionalPropertyTypes: true`, `Type | undefined` is a\n\
-             REQUIRED field that must appear in every object literal. This causes TS2345 in tests\n\
-             and downstream code that constructs the type without the field.\n\
-             Rule: if a field can be absent, use `?: Type`. Always.\n\
+             Declare optional fields with `?: Type` — NEVER with `field: Type | undefined`:\n\
+               description?: string             ✓\n\
+               description: string | undefined  ✗  a REQUIRED key, not an optional one\n\
              NEVER call Widget.create() — Widget is an interface; interfaces have no static methods.\n\
              Callers import and call the factory function: import { createWidget } from '../models/Widget'\n\
              \n\
-             #### Optional PARAMETER into optional PROPERTY — CRITICAL TypeScript rule\n\
-             An optional parameter `description?: string` has type `string | undefined` INSIDE the\n\
-             function body — parameter optionality does not carry over to object-literal property\n\
-             optionality. Shorthand-assigning it into a `description?: string` property produces a\n\
-             REQUIRED key holding `string | undefined`, which `exactOptionalPropertyTypes: true`\n\
-             rejects with TS2375 (\"not assignable ... with exactOptionalPropertyTypes: true\").\n\
-             WRONG:\n\
-               function createWidget(name: string, description?: string): Widget {\n\
-                 return { id: randomUUID(), createdAt: new Date(), name, description };  ✗ TS2375\n\
-               }\n\
-             CORRECT — spread the key in only when the value is defined:\n\
-               function createWidget(name: string, description?: string): Widget {\n\
-                 return {\n\
-                   id: randomUUID(),\n\
-                   createdAt: new Date(),\n\
-                   name,\n\
-                   ...(description !== undefined && { description }),\n\
-                 };\n\
-               }\n\
-             Apply this pattern to every optional parameter forwarded into an optional property."
-             .to_string()),
+             This same rule governs how the factory builds the object it returns — an optional\n\
+             PARAMETER forwarded by shorthand into the optional PROPERTY of the same name does NOT\n\
+             automatically satisfy it:",
+             crate::skills::EXACT_OPTIONAL_PROPERTY_RULE)),
             ("event",
              "  ### Domain events\n\
              A domain event is a thin, immutable record that something happened — NEVER a copy of\n\
@@ -476,6 +457,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                connected after the method returns."
              .to_string()),
             ("route",
+             format!(
+             "{}\n{}",
              "  ### Route handlers\n\
              Every handler MUST declare next in the signature:\n\
                router.post('/widgets', async (req: Request, res: Response, next: NextFunction) => {\n\
@@ -496,25 +479,14 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                .maxLength() does NOT exist on zod arrays — always use .max() on both array and element\n\
              - call schema.parse(req.body); pass errors to next(err)\n\
              - CRITICAL — never pass the parsed zod object straight to the service. A field\n\
-               declared `z.string().optional()` infers as `field?: T | undefined` — the KEY may\n\
-               be absent, but if present may also hold `undefined`. The service method's parameter\n\
-               type (`Omit<Widget, 'id' | 'createdAt' | 'modifiedAt'>`) declares `field?: T` with NO\n\
-               `| undefined` — under `exactOptionalPropertyTypes: true` these are NOT the same type,\n\
-               and passing the parsed object directly fails to compile (TS2379):\n\
-                 WRONG:   const parsed = widgetSchema.parse(req.body)\n\
-                          await widgetService.createWidget(parsed)   ✗ TS2379 on the optional field\n\
-                 CORRECT: const { optionalField, ...rest } = widgetSchema.parse(req.body)\n\
-                          await widgetService.createWidget({\n\
-                            ...rest,\n\
-                            ...(optionalField !== undefined && { optionalField }),\n\
-                          })\n\
-               This is the same \"omit the key entirely, never hold an explicit undefined\" rule\n\
-               applied to a parsed request body instead of a hand-written object literal.\n\
+               declared `z.string().optional()` infers as `field?: T | undefined` — the SAME\n\
+               exactOptionalPropertyTypes rule as the Models section applies here too, just\n\
+               triggered by a validator's output instead of a hand-written literal:\n\
              async/await everywhere — no raw .then() chains.\n\
              Route handlers do NOT instantiate EventPublisher or any infrastructure class.\n\
              The service (obtained from req.app.locals) handles all business logic including event publishing.\n\
-             Route responsibility: validate input → call service → return HTTP response. Nothing else."
-             .to_string()),
+             Route responsibility: validate input → call service → return HTTP response. Nothing else.",
+             crate::skills::EXACT_OPTIONAL_PROPERTY_RULE)),
             ("middleware",
              "  ### Error handling\n\
              src/middleware/errorHandler.ts exports a named ErrorRequestHandler:\n\

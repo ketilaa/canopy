@@ -1,5 +1,5 @@
 use crate::client::{LlmClient, LlmError};
-use crate::skills::{detect_layer, layer_has_worked_example, skill_for_build_system, skill_for_technology, testing_skill_from_adrs};
+use crate::skills::{detect_layer, layer_has_worked_example, skill_for_build_system, skill_for_technology, testing_skill_from_adrs, EXACT_OPTIONAL_PROPERTY_RULE};
 use canopy_core::*;
 
 fn step_prompt(
@@ -542,16 +542,8 @@ or `.mockImplementation(...)` on a method of the real '{module_name}' instance y
            inside the array for max_length) — never borrow the other constraint's number or\n\
            message text.\n\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
-         - Optional fields (declared `field?: Type`, per the Optional fields rule above): to\n\
-           represent \"no value\", OMIT the key entirely — do NOT write `field: undefined`.\n\
-           Under `exactOptionalPropertyTypes: true`, an optional key explicitly holding\n\
-           `undefined` is a type error (TS2375), because omittable and present-but-undefined\n\
-           are different things to that flag.\n\
-             WRONG: const widget: Widget = {{ name: 'Widget', description: undefined }}   ✗ TS2375\n\
-             CORRECT: const widget: Widget = {{ name: 'Widget' }}                          ✓ key omitted\n\
-           (Only a field declared `field: Type | undefined` — a REQUIRED key, not an optional\n\
-           one — needs an explicit `undefined` value. This project's models never use that\n\
-           style; every optional field uses `field?: Type` instead.)\n\
+         - Optional fields in test data (declared `field?: Type`, per the rules above):\n\
+           {exact_optional_rule}\n\
          - EXCEPTION — testing a \"missing mandatory field\" scenario: you cannot omit a \
 required property from a typed object literal, or pass `undefined` for a required positional \
 parameter; TypeScript rejects both at COMPILE time, before the test ever runs, even though the \
@@ -589,6 +581,7 @@ signature first, then match ONE of these two shapes (never mix them):\n\
         test_structure = test_structure,
         red_reason = red_reason,
         route_rule = route_rule,
+        exact_optional_rule = EXACT_OPTIONAL_PROPERTY_RULE,
         contract = canopy_summary_contract(),
     )
 }
