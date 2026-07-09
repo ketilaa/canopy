@@ -165,6 +165,8 @@ fn react_vite_skill() -> TechStackSkill {
              - <prefix>/src/App.tsx                    — renders the form\n\
              File paths in plan steps are relative to the PROJECT ROOT;\n\
              always include the full prefix (e.g. frontend/admin-portal/src/api/WidgetApi.ts).\n\
+             Test files (*.test.ts/.tsx) are co-located NEXT TO the file they test, in the same\n\
+             directory — e.g. src/api/WidgetApi.test.ts, never a separate tests/ root.\n\
              \n\
              FILE EXTENSION RULES — STRICTLY ENFORCED:\n\
              .ts  files are PURE TYPESCRIPT: interfaces, types, and plain functions ONLY.\n\
@@ -193,7 +195,8 @@ fn react_vite_skill() -> TechStackSkill {
             "  1. src/api/<Entity>Api.ts         — request/response interfaces + fetch function\n\
              2. src/components/<Entity>Form.tsx  — controlled form; manages its own state; accepts NO props\n\
              3. src/App.tsx                      — imports and renders the form with NO props: <WidgetForm />\n\
-             4. tests (if any)\n\
+             Test files are not a separate layer step — the TDD cycle generates one\n\
+             automatically, co-located next to each file above, as that file's own step runs.\n\
              Reason: each file imports from the previous; generating out of order causes type mismatches."
             .to_string(),
         notes: Some(
@@ -272,6 +275,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              - src/middleware/       — cross-cutting (errorHandler, auth, logging)\n\
              - src/app.ts            — builds and exports the Express app; MUST NOT call app.listen()\n\
              - src/index.ts          — entry point; imports app and calls app.listen()\n\
+             Test files (*.test.ts) are co-located NEXT TO the file they test, in the same\n\
+             directory — e.g. src/services/WidgetService.test.ts, never a separate tests/ root.\n\
              File paths in plan steps are relative to the PROJECT ROOT."
             .to_string(),
         namespace_rules: String::new(),
@@ -462,6 +467,12 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              format!(
              "{}\n{}",
              "  ### Route handlers\n\
+             This file MUST export a Router instance as the default export — NEVER a\n\
+             factory function. app.ts imports it as a default import and mounts it directly:\n\
+               const router = Router()       ✓\n\
+               export default router         ✓\n\
+               export const registerRoutes = (router: Router) => { ... }   ✗ app.ts and\n\
+                 tests both do `import router from './widgets'` — a factory breaks that import\n\
              Every handler MUST declare next in the signature:\n\
                router.post('/', async (req: Request, res: Response, next: NextFunction) => {\n\
              CRITICAL — the path inside THIS file is relative to wherever app.ts mounts this\n\
@@ -513,12 +524,13 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
             ("config",
              "  ### tsconfig.json\n\
              Use EXACTLY this structure — do not add, remove, or \"improve\" any compilerOption,\n\
-             even a stricter one that sounds like good practice. NEVER set rootDir (it conflicts\n\
-             with tests/ outside src/). Every extra strict flag (exactOptionalPropertyTypes,\n\
-             noUncheckedIndexedAccess, etc.) has to be satisfied by every later generation call for\n\
-             this service, across files that never see each other's output — one call adding a\n\
-             flag on its own initiative is how a self-inflicted, project-wide type error gets\n\
-             created with no corresponding rule anywhere to satisfy it:\n\
+             even a stricter one that sounds like good practice. Every extra strict flag\n\
+             (exactOptionalPropertyTypes, noUncheckedIndexedAccess, etc.) has to be satisfied by\n\
+             every later generation call for this service, across files that never see each\n\
+             other's output — one call adding a flag on its own initiative is how a\n\
+             self-inflicted, project-wide type error gets created with no corresponding rule\n\
+             anywhere to satisfy it. Test files are co-located under src/ (never a separate\n\
+             tests/ directory), so a single include entry covers everything:\n\
              {\n\
                \"compilerOptions\": {\n\
                  \"target\": \"ES2020\",\n\
@@ -532,7 +544,7 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                  \"moduleResolution\": \"node16\",\n\
                  \"types\": [\"jest\", \"node\"]\n\
                },\n\
-               \"include\": [\"src/**/*\", \"tests/**/*\"],\n\
+               \"include\": [\"src/**/*\"],\n\
                \"exclude\": [\"node_modules\"]\n\
              }"
              .to_string()),
@@ -551,12 +563,10 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                app.use(express.json())      ✓  built into Express\n\
                import bodyParser from 'body-parser'  ✗  not in package.json\n\
                app.use(bodyParser.json())   ✗  not in package.json\n\
-             src/routes/*.ts MUST export a Router instance as the default export — NEVER a factory.\n\
+             Every router is a default export (see the Route handlers rule) — import it as\n\
+             `import widgetRouter from './routes/widgets'`, never as a named import.\n\
              app.ts creates service/repository instances (via new) and registers them on app.locals;\n\
-             routers access them via req.app.locals — no constructor arguments needed:\n\
-               const router = Router()       ✓\n\
-               export default router         ✓\n\
-               export const r = (svc) => Router()   ✗  app.use() receives a factory, not a router\n\
+             routers access them via req.app.locals — no constructor arguments needed.\n\
              Import middleware using its actual export style — named exports need braces:\n\
                import { errorHandler } from './middleware/errorHandler'   ✓  (named export)\n\
                import errorHandler from './middleware/errorHandler'        ✗  default import of named export → undefined\n\
@@ -592,7 +602,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              7. src/middleware/errorHandler.ts — depends on nothing; must be created before app.ts\n\
              8. src/app.ts            — assembles the Express app; imports routes and middleware\n\
              9. src/index.ts          — starts the server; imports app; calls app.listen()\n\
-             10. tests/               — import app from src/app.ts; use Supertest for route tests\n\
+             Test files are not a separate layer step — the TDD cycle generates one\n\
+             automatically, co-located next to each file above, as that file's own step runs.\n\
              Reason: services must not import from routes; app.ts must not call listen()."
             .to_string(),
         notes: None,

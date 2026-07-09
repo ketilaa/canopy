@@ -36,9 +36,9 @@ fn fix_prompt(
         "xml" => "XML",
         _ => "source",
     };
-    // Detect TDD context from file path and content.
-    let is_test_file = file_path.contains("/tests/")
-        || file_path.contains("/src/test/java/")
+    // Detect TDD context from file path and content. Suffix-based for TS/TSX — tests are
+    // co-located next to their implementation file, not under a separate directory.
+    let is_test_file = file_path.contains("/src/test/java/")
         || file_path.ends_with(".test.ts")
         || file_path.ends_with(".test.tsx")
         || file_path.ends_with("Test.java")

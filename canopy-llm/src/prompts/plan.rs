@@ -126,37 +126,32 @@ fn plan_prompt_for_service(
              {it_skill}\n"
         )
     } else if is_node {
-        let svc = &service.name;
         format!(
             "\n## Testing plan\n\
              - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
                installed by `canopy scaffold` — do NOT include jest.config.js or package.json in the plan.\n\
-             - Test files MUST live in the flat services/{svc}/tests/ directory — NEVER under src/.\n\
+             - Test files live NEXT TO the file they test, in the SAME directory under src/ — \
+               never a separate tests/ directory (standard JS/TS convention, not Java's).\n\
              - TDD cycle (automatic): EVERY file under src/models/, src/events/, src/repositories/, \
-               src/infrastructure/, src/middleware/, src/services/, and src/routes/ gets a test \
-               file written automatically by the TDD cycle — NEVER add test steps for any of them.\n\
-               ✗ DO NOT write: tests/Product.test.ts  tests/ProductCreated.test.ts\n\
-               ✗ DO NOT write: tests/ProductRepository.test.ts  tests/EventPublisher.test.ts\n\
-               ✗ DO NOT write: tests/ProductService.test.ts  tests/products.test.ts\n\
-             - Test file stem MUST match the source file stem exactly.\n\
-               ✓ src/models/Product.ts → tests/Product.test.ts\n\
-               ✗ src/routes/products.ts → tests/routes.products.test.ts  (never composite names)\n\
+               src/infrastructure/, src/middleware/, src/services/, and src/routes/ gets a co-located \
+               test file written automatically by the TDD cycle — NEVER add test steps for any of them.\n\
+               ✗ DO NOT write: src/models/Product.test.ts  src/events/ProductCreated.test.ts\n\
+               ✗ DO NOT write: src/repositories/ProductRepository.test.ts  src/infrastructure/EventPublisher.test.ts\n\
+               ✗ DO NOT write: src/services/ProductService.test.ts  src/routes/products.test.ts\n\
              - Test steps MUST list the implementation file they test in depends_on.\n\
              - Test files MUST be the last steps in the plan.\n\
-             - Do NOT include a test file for src/app.ts or src/index.ts.\n",
-            svc = svc,
+             - Do NOT include a test file for src/app.ts or src/index.ts.\n"
         )
     } else if is_react {
-        let svc = &service.name;
         format!(
             "\n## Testing plan\n\
-             - Test files MUST live in the flat frontend/{svc}/tests/ directory — NEVER under src/.\n\
+             - Test files live NEXT TO the file they test, in the SAME directory under src/ — \
+               never a separate tests/ directory (standard JS/TS convention, not Java's).\n\
              - TDD cycle (automatic): EVERY file under src/api/ and EVERY file under src/components/ \
-               gets a test file written automatically — NEVER add test steps for them.\n\
-               ✗ DO NOT write: tests/ProductApi.test.ts  tests/ProductForm.test.tsx\n\
+               gets a co-located test file written automatically — NEVER add test steps for them.\n\
+               ✗ DO NOT write: src/api/ProductApi.test.ts  src/components/ProductForm.test.tsx\n\
              - Only libraries from the testing strategy ADR; no msw, Playwright, or Cypress.\n\
-             - Test steps MUST be the last steps in the list.\n",
-            svc = svc,
+             - Test steps MUST be the last steps in the list.\n"
         )
     } else {
         let it_skill = integration_testing_skill(tech);
@@ -344,8 +339,9 @@ fn layer_weight(file: &str) -> u8 {
     let f = file.to_lowercase();
     // Build manifests first.
     if f.ends_with("pom.xml") || f.ends_with("build.gradle") { return 0; }
-    // Tests last.
-    if f.contains("/tests/") || f.contains(".test.") || f.contains("test") && f.ends_with(".ts")
+    // Tests last — suffix-based; TS/TSX tests are co-located next to source, not under a
+    // separate directory, so this must fire before any layer-directory check below matches.
+    if f.contains(".test.") || f.contains("test") && f.ends_with(".ts")
         || f.ends_with("test.java") || f.contains("spec") { return 10; }
     // Node.js / Express layer order (plural directory names).
     if f.contains("/models/")         { return 1; }
@@ -370,7 +366,8 @@ fn layer_weight(file: &str) -> u8 {
 
 fn frontend_tier(file: &str) -> u8 {
     let f = file.to_lowercase();
-    if f.contains(".test.") || f.contains("/tests/") { return 3; }
+    // Suffix-based — co-located next to source, not under a separate directory.
+    if f.contains(".test.") { return 3; }
     if f.contains("/api/") { return 0; }
     if f.ends_with("app.tsx") || f.ends_with("app.ts")
         || f.ends_with("main.tsx") || f.ends_with("main.ts") { return 2; }
@@ -409,14 +406,12 @@ fn inject_missing_app_tsx(steps: &mut Vec<ImplementationStep>, service: &Service
 }
 
 fn inject_missing_frontend_tests(steps: &mut Vec<ImplementationStep>, _service_name: &str) {
-    // Remove any test files the LLM placed under src/ — they belong in tests/.
-    // The TDD loop generates test files for src/api/ and src/components/ automatically,
-    // so no injection is needed here.
-    steps.retain(|s| {
-        let is_test = s.file.to_lowercase().contains(".test.");
-        if !is_test { return true; }
-        s.file.contains("/tests/")
-    });
+    // The TDD loop generates a co-located test file for every src/api/ and src/components/
+    // step automatically — strip out any explicit test step the planner added anyway, since
+    // it would just duplicate that automatic file. Location no longer distinguishes a
+    // legitimate test step from a redundant one now that co-located IS the correct location;
+    // the planner should never add one at all.
+    steps.retain(|s| !s.file.to_lowercase().contains(".test."));
 }
 
 pub fn generate_story_plan(

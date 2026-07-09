@@ -112,10 +112,10 @@ delete c.compilerOptions.jsx;\
 c.compilerOptions.isolatedModules=true;\
 delete c.compilerOptions.noUncheckedSideEffectImports;\
 delete c.compilerOptions.moduleDetection;\
-c.include=['src/**/*','tests/**/*'];\
+c.include=['src/**/*'];\
 c.exclude=['node_modules'];\
 fs.writeFileSync('tsconfig.json',JSON.stringify(c,null,2));\" && \
-                 mkdir -p src tests && \
+                 mkdir -p src && \
                  npx --yes ts-jest config:init && \
                  npm pkg set scripts.test=\"jest --forceExit\" \
                              scripts.build=\"tsc --noEmit\" \

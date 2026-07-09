@@ -211,31 +211,33 @@ const NODE_EXPRESS_UNIT_TEST_COMMON: &str = "\
 
 ### File locations
   service root/
-    src/         ← all source files live here
+    src/
       app.ts     ← exports the Express app as DEFAULT export
       services/
+        WidgetService.ts
+        WidgetService.test.ts    ← co-located, SAME directory as what it tests
       repositories/
       infrastructure/
       models/
-    tests/       ← test files live here, one level above src/
+  Test files live NEXT TO the file they test, in the SAME directory — never a separate
+  tests/ directory. This is the standard JS/TS convention (not Java's mirrored-tree one).
 
-### Import and jest.mock paths from tests/
-The path MUST contain src/ — this rule applies to BOTH import statements AND jest.mock() calls:
+### Import and jest.mock paths — co-located, so imports follow the SAME depth rule as
+### production code (see the tech-stack rules' Import depth within src/ section): the
+### file being tested is same-directory; everything else is one dot-dot to a sibling folder.
   import request from 'supertest'                                          ✓
-  import app from '../src/app'                                             ✓  (no braces — default export)
-  import { ProductService } from '../src/services/ProductService'          ✓
-  import { ProductRepository } from '../src/repositories/ProductRepository' ✓
-  import { EventPublisher } from '../src/infrastructure/EventPublisher'    ✓
-  jest.mock('../src/repositories/ProductRepository')                       ✓
-  jest.mock('../src/infrastructure/EventPublisher', () => ({ ... }))      ✓
+  import { ProductService } from './ProductService'                       ✓  (same directory — the file under test)
+  import { ProductRepository } from '../repositories/ProductRepository'   ✓  (sibling directory)
+  import { EventPublisher } from '../infrastructure/EventPublisher'       ✓  (sibling directory)
+  jest.mock('../repositories/ProductRepository')                          ✓
+  jest.mock('../infrastructure/EventPublisher', () => ({ ... }))         ✓
+  Route tests do NOT import app.ts at all — see the Route test example below, which mounts
+  the router on a local Express instance instead.
 
 ### Forbidden paths (imports AND jest.mock)
 These will cause module-not-found errors at runtime:
-  import { app } from '../src/app'               ✗  app is a DEFAULT export — remove the braces
-  import ... from '../services/...'              ✗  missing src/ — must be '../src/services/...'
-  jest.mock('../repositories/ProductRepository') ✗  missing src/ — must be '../src/repositories/...'
-  import ... from '../../src/...'               ✗  two dot-dots — always wrong from tests/
-  jest.mock('../../src/repositories/...')        ✗  two dot-dots — always wrong from tests/
+  import ... from '../src/...'                    ✗  there is no src/ segment to cross — the test is ALREADY inside src/
+  import ... from '../../services/...'           ✗  too many dot-dots — siblings under src/ are ONE dot-dot away, not two
   import ... from '@services/...'               ✗  no path aliases configured in tsconfig
   require(...)                                   ✗  use ES import syntax
   uuid(), faker()                                ✗  not in devDependencies — use plain strings
@@ -298,7 +300,7 @@ never existed outside beforeEach's own function body.
 Every class or function used in a test MUST be explicitly imported — even when mocked.
 jest.mock() replaces the module at runtime but does NOT create the binding; without the
 import, `new EventPublisher(...)` throws ReferenceError at parse time.
-  import { EventPublisher } from '../src/infrastructure/EventPublisher'   ✓ (after jest.mock)
+  import { EventPublisher } from '../infrastructure/EventPublisher'   ✓ (after jest.mock; sibling directory)
   new EventPublisher('', '')  without importing EventPublisher            ✗ ReferenceError";
 
 /// Layer-specific examples for the Node/Express unit test skill — only the entry matching the
@@ -312,10 +314,10 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
   infrastructure concern, including any Kafka/DB connection attempt)\n\
   import request from 'supertest'\n\
   import express from 'express'\n\
-  import router from '../src/routes/widgets'\n\
-  import { WidgetService } from '../src/services/WidgetService'\n\
+  import router from './widgets'\n\
+  import { WidgetService } from '../services/WidgetService'\n\
 \n\
-  jest.mock('../src/services/WidgetService')\n\
+  jest.mock('../services/WidgetService')\n\
 \n\
   let app: express.Express\n\
   let mockWidgetService: jest.Mocked<WidgetService>\n\
@@ -348,7 +350,7 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
   CRITICAL — mocking a CLASS is a different pattern from mocking an interface (the Repository\n\
   and EventPublisher examples elsewhere use a plain `{ method: jest.fn() } as any` object because\n\
   those are constructed by the service via a plain object, not `new`'d directly by the test).\n\
-  A class the test itself constructs with `new` needs `jest.mock('../src/services/WidgetService')`\n\
+  A class the test itself constructs with `new` needs `jest.mock('../services/WidgetService')`\n\
   (auto-mocks every prototype method) PLUS a cast on the constructed instance, because\n\
   TypeScript's static type of `new WidgetService(...)` is still the REAL class, which has no\n\
   `.mockResolvedValue`:\n\
@@ -367,8 +369,8 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
         ("model",
          "  ### Model unit test example\n\
   Models are interfaces + factory functions — NEVER classes. Tests call the factory, not `new`.\n\
-  import { createWidget } from '../src/models/Widget'\n\
-  import type { Widget } from '../src/models/Widget'\n\
+  import { createWidget } from './Widget'\n\
+  import type { Widget } from './Widget'\n\
 \n\
   describe('createWidget', () => {\n\
     it('creates a widget with all mandatory fields', () => {\n\
@@ -390,11 +392,11 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
          .to_string()),
         ("service",
          "  ### Service unit test example\n\
-  import { WidgetService } from '../src/services/WidgetService'\n\
-  import { WidgetRepository } from '../src/repositories/WidgetRepository'\n\
-  import { EventPublisher } from '../src/infrastructure/EventPublisher'\n\
+  import { WidgetService } from './WidgetService'\n\
+  import { WidgetRepository } from '../repositories/WidgetRepository'\n\
+  import { EventPublisher } from '../infrastructure/EventPublisher'\n\
   // The event factory lives in its OWN file under src/events/ — NEVER in the model file.\n\
-  // WRONG: import { createWidgetCreated } from '../src/models/Widget'          ✗ TS2305\n\
+  // WRONG: import { createWidgetCreated } from '../models/Widget'          ✗ TS2305\n\
 \n\
   let mockRepo: jest.Mocked<WidgetRepository>\n\
   let mockPublisher: jest.Mocked<EventPublisher>\n\
@@ -460,8 +462,8 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
   The repository's OWN test must call its REAL methods and assert on their REAL behavior. Mock\n\
   the injected pg.Pool (an external dependency) — never jest.spyOn the repository's own method:\n\
     import { Pool } from 'pg'\n\
-    import { WidgetRepository } from '../src/repositories/WidgetRepository'\n\
-    import { createWidget } from '../src/models/Widget'\n\
+    import { WidgetRepository } from './WidgetRepository'\n\
+    import { createWidget } from '../models/Widget'\n\
 \n\
     NEVER declare the mock as `jest.Mocked<Pool>` — pg.Pool.query is a heavily overloaded\n\
     generic method, and TypeScript's Mocked<> utility collapses its parameter type to `never`\n\
@@ -662,9 +664,10 @@ pub(crate) fn integration_testing_skill(tech: &str) -> String {
 /// When a "Testing Strategy" ADR exists its decision overrides the technology-based default
 /// (e.g. "jest" keyword routes React to the Jest skill instead of the Vitest skill).
 ///
-/// `service_source_files` lets a flat `tests/Foo.test.ts` (test files carry no subdirectory
-/// mirroring `src/repositories/`, `src/models/`, etc.) be matched back to its implementation
-/// file by stem, so the correct layer's example gets injected instead of common-only rules.
+/// `service_source_files` is a fallback for an old-style flat `tests/Foo.test.ts` (no
+/// subdirectory of its own) — matched back to its implementation file by stem so the correct
+/// layer's example still gets injected. A co-located test's own path already carries the
+/// layer signal directly and doesn't need this.
 pub fn testing_skill_for_file_with_adrs(file_path: &str, tech: &str, adrs: &[Adr], service_source_files: &[String]) -> String {
     let is_test_file =
         file_path.ends_with("Test.java")
@@ -687,20 +690,32 @@ pub fn testing_skill_for_file_with_adrs(file_path: &str, tech: &str, adrs: &[Adr
     testing_skill_from_adrs(adrs, tech, &layer)
 }
 
-/// A flat `tests/Foo.test.ts` carries no layer signal in its own path — match it back to its
-/// implementation file (e.g. `src/repositories/Foo.ts`) by stem to find the real layer.
+/// A co-located test file (e.g. `src/repositories/Foo.test.ts`) carries the layer signal
+/// directly in its own path — `detect_layer` resolves it with no extra work. The stem-match
+/// against sibling source files is a fallback for a flat `tests/Foo.test.ts` (no subdirectory
+/// of its own), which older/pre-existing test files may still use.
 fn layer_for_ts_test_file(file_path: &str, service_source_files: &[String]) -> String {
+    let direct = crate::skills::detect_layer(file_path);
+    if direct != "module" {
+        return direct.to_string();
+    }
     let stem = std::path::Path::new(file_path)
         .file_stem().and_then(|s| s.to_str()).unwrap_or("")
         .trim_end_matches(".test").trim_end_matches(".spec");
     service_source_files.iter()
         .find(|f| {
             (f.ends_with(".ts") || f.ends_with(".tsx"))
-                && !f.contains("/tests/")
+                && !is_test_file_path(f)
                 && std::path::Path::new(f).file_stem().and_then(|s| s.to_str()) == Some(stem)
         })
         .map(|f| crate::skills::detect_layer(f).to_string())
         .unwrap_or_default()
+}
+
+/// Suffix-based test-file check, local to this module — TS/TSX tests are co-located next to
+/// source, so a directory-based check can't distinguish them.
+fn is_test_file_path(f: &str) -> bool {
+    f.ends_with(".test.ts") || f.ends_with(".test.tsx") || f.ends_with(".spec.ts") || f.ends_with(".spec.tsx")
 }
 
 /// Resolves the unit testing skill for the given technology, consulting the Testing Strategy ADRs.

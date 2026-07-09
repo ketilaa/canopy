@@ -430,8 +430,9 @@ pub(crate) fn execute_steps(
         let test_cmd = test_command_for_service(service, &service_dir);
         let service_source_files = scan_service_source_files(&service_dir);
         // Protect test files in the final pass — they are specs, not targets to simplify.
+        // Suffix-based: TS/TSX tests are co-located next to source, not under a separate dir.
         let test_files: Vec<String> = service_source_files.iter()
-            .filter(|f| f.contains("/tests/"))
+            .filter(|f| is_test_file(f))
             .cloned()
             .collect();
         let abs_test_files: Vec<String> = test_files.iter()

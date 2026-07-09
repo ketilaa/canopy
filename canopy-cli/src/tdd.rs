@@ -28,9 +28,11 @@ pub(crate) fn is_tdd_candidate(file: &str) -> bool {
 }
 
 /// Returns true for test files that should be skipped when TDD already wrote them.
+/// Suffix-based, not path-based — Java keeps a mirrored `/src/test/java/` tree (its own
+/// ecosystem's convention), but TypeScript/TSX tests are co-located next to their
+/// implementation file, so the directory alone can't distinguish a test from a source file.
 pub(crate) fn is_test_file(file: &str) -> bool {
-    file.contains("/tests/")
-        || file.contains("/src/test/java/")
+    file.contains("/src/test/java/")
         || file.ends_with(".test.ts")
         || file.ends_with(".test.tsx")
         || file.ends_with("Test.java")
@@ -39,7 +41,8 @@ pub(crate) fn is_test_file(file: &str) -> bool {
 
 /// Maps implementation file → test file path.
 pub(crate) fn derive_test_file_path(impl_file: &str) -> Option<String> {
-    // Java
+    // Java: mirrors the full directory structure under a parallel src/test/java root — this
+    // project's own ecosystem convention (Maven standard layout).
     if impl_file.contains("/src/main/java/") {
         let test_path = impl_file.replace("/src/main/java/", "/src/test/java/");
         let p = std::path::Path::new(&test_path);
@@ -47,18 +50,15 @@ pub(crate) fn derive_test_file_path(impl_file: &str) -> Option<String> {
         let parent = p.parent()?.to_str()?;
         return Some(format!("{}/{}Test.java", parent, stem));
     }
-    // TypeScript / TSX: split on /src/ to find the service root
-    // e.g. services/product/src/services/ProductService.ts
-    //   → services/product/tests/ProductService.test.ts
+    // TypeScript / TSX: co-located next to the implementation file, per JS/TS ecosystem
+    // convention — e.g. services/product/src/services/ProductService.ts
+    //               → services/product/src/services/ProductService.test.ts
     if impl_file.ends_with(".ts") || impl_file.ends_with(".tsx") {
-        let parts: Vec<&str> = impl_file.splitn(2, "/src/").collect();
-        if parts.len() < 2 { return None; }
-        let service_root = parts[0];
-        let rel = parts[1];
-        // Use only the filename stem — drop subdirectory (components/, routes/, etc.)
-        let stem = std::path::Path::new(rel).file_stem()?.to_str()?;
+        let p = std::path::Path::new(impl_file);
+        let stem = p.file_stem()?.to_str()?;
+        let parent = p.parent()?.to_str()?;
         let ext = if impl_file.ends_with(".tsx") { "tsx" } else { "ts" };
-        return Some(format!("{}/tests/{}.test.{}", service_root, stem, ext));
+        return Some(format!("{}/{}.test.{}", parent, stem, ext));
     }
     None
 }

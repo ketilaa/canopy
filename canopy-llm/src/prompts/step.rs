@@ -335,20 +335,9 @@ fn unit_test_stub_prompt_ts(
     // and has to guess, often wrongly, before the implementation exists to check against.
     let tech_rules = skill_for_technology(technology, "", "", service_name, layer);
 
-    let import_path = {
-        let test_parts: Vec<&str> = test_file.splitn(2, "/tests/").collect();
-        let impl_parts: Vec<&str> = impl_file.splitn(2, "/src/").collect();
-        if test_parts.len() == 2 && impl_parts.len() == 2 {
-            let rel = impl_parts[1];
-            let stem = std::path::Path::new(rel)
-                .with_extension("")
-                .to_string_lossy()
-                .to_string();
-            format!("../src/{}", stem)
-        } else {
-            format!("../{}", impl_file)
-        }
-    };
+    // Co-located: the test file lives in the SAME directory as its implementation, so the
+    // import is always same-directory relative — no more crossing a tests/-to-src/ boundary.
+    let import_path = format!("./{module_name}");
 
     let red_reason = if is_component {
         "Tests MUST be Red: the stub renders null so queries like getByRole/getByText will fail."
