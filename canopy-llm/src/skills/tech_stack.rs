@@ -495,6 +495,21 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              - for array fields with element constraints: z.array(z.string().max(100)).max(5)\n\
                .maxLength() does NOT exist on zod arrays — always use .max() on both array and element\n\
              - call schema.parse(req.body); pass errors to next(err)\n\
+             - CRITICAL — never pass the parsed zod object straight to the service. A field\n\
+               declared `z.string().optional()` infers as `field?: T | undefined` — the KEY may\n\
+               be absent, but if present may also hold `undefined`. The service method's parameter\n\
+               type (`Omit<Widget, 'id' | 'createdAt' | 'modifiedAt'>`) declares `field?: T` with NO\n\
+               `| undefined` — under `exactOptionalPropertyTypes: true` these are NOT the same type,\n\
+               and passing the parsed object directly fails to compile (TS2379):\n\
+                 WRONG:   const parsed = widgetSchema.parse(req.body)\n\
+                          await widgetService.createWidget(parsed)   ✗ TS2379 on the optional field\n\
+                 CORRECT: const { optionalField, ...rest } = widgetSchema.parse(req.body)\n\
+                          await widgetService.createWidget({\n\
+                            ...rest,\n\
+                            ...(optionalField !== undefined && { optionalField }),\n\
+                          })\n\
+               This is the same \"omit the key entirely, never hold an explicit undefined\" rule\n\
+               applied to a parsed request body instead of a hand-written object literal.\n\
              async/await everywhere — no raw .then() chains.\n\
              Route handlers do NOT instantiate EventPublisher or any infrastructure class.\n\
              The service (obtained from req.app.locals) handles all business logic including event publishing.\n\
