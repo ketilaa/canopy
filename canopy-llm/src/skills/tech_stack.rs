@@ -452,6 +452,17 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              The parameter type matches exactly what the model's factory function takes as\n\
              arguments — check the factory's signature (via the sibling context above) before\n\
              declaring the service method's parameter type; do not guess a different shape.\n\
+             \n\
+             Calling the factory: it takes POSITIONAL arguments (see the Model rule above),\n\
+             NEVER a single object — destructure the method's own parameter into the factory call.\n\
+             The factory generates id/createdAt/modifiedAt internally; do NOT generate or pass\n\
+             them yourself, and do NOT import randomUUID/crypto/uuid into the service AT ALL —\n\
+             the service has no reason to touch id generation, only the factory does:\n\
+               WRONG:\n\
+                 import { v4 as randomUUID } from 'crypto';  ✗ crypto has no v4 export\n\
+                 const widget = createWidget({ ...widgetData, id: randomUUID(), createdAt: new Date() });  ✗ wrong call shape AND wrong responsibility\n\
+               CORRECT:\n\
+                 const widget = createWidget(widgetData.name, widgetData.otherField, widgetData.optionalField);\n\
              RULES:\n\
              - Call the factory to construct the aggregate, call the repository to persist it,\n\
                then call the event publisher — in that order.\n\
