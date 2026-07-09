@@ -322,10 +322,15 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              "  ### Models\n\
              A model file exports one interface AND one standalone factory function:\n\
                import { randomUUID } from 'crypto'\n\
-               export interface Widget { id: string; createdAt: Date; modifiedAt: Date | null; ... }\n\
+               export interface Widget { id: string; createdAt: Date; ... }\n\
                export function createWidget(name: string, ...): Widget {\n\
-                 return { id: randomUUID(), createdAt: new Date(), modifiedAt: null, name, ... }\n\
+                 return { id: randomUUID(), createdAt: new Date(), name, ... }\n\
                }\n\
+             Only include fields this entity's schema actually lists — do not add a field (e.g.\n\
+             modifiedAt) the skill did not ask for. When the schema DOES list a system-generated\n\
+             field beyond id/createdAt, set its initial value from the story's own acceptance\n\
+             criteria or BDD scenarios (e.g. \"the system sets modifiedAt to the current timestamp\"\n\
+             means `new Date()` at construction, not `null`) — never assume a default for it here.\n\
              No imports from npm packages — use only built-in Node.js APIs ('crypto', 'path', etc.).\n\
              \n\
              #### Optional fields — CRITICAL TypeScript rule\n\

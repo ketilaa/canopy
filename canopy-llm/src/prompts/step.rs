@@ -534,6 +534,13 @@ or `.mockImplementation(...)` on a method of the real '{module_name}' instance y
              WRONG: jest.spyOn(String.prototype, 'length', 'get').mockReturnValue(201)\n\
              CORRECT: const name = 'x'.repeat(201)   // an actual 201-character string\n\
              CORRECT: const categories = Array.from({{ length: 6 }}, (_, i) => `cat-${{i}}`)   // actually 6 items\n\
+           An array-typed field (e.g. `type: '[string]'`) can carry TWO independent validations —\n\
+           `max_length` bounds EACH element's string length, `max_items` bounds the ARRAY's item\n\
+           count. These are different conditions with different error messages: write a separate\n\
+           test for each one that is actually declared, and make each test's boundary data match\n\
+           the condition it exercises (an over-count array for max_items, an over-length string\n\
+           inside the array for max_length) — never borrow the other constraint's number or\n\
+           message text.\n\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
          - Optional fields (declared `field?: Type`, per the Optional fields rule above): to\n\
            represent \"no value\", OMIT the key entirely — do NOT write `field: undefined`.\n\
