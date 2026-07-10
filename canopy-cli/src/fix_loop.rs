@@ -1,6 +1,7 @@
 use crate::build_output::{
     errors_for_file, extract_error_files, extract_missing_packages,
     extract_pom_validation_errors, extract_unresolvable_dependencies, parse_ts_imports, strip_ansi,
+    test_file_passed_cleanly,
 };
 use crate::project_scan::collect_files;
 use crate::roots;
@@ -375,6 +376,18 @@ pub(crate) fn run_red_test_sanity_check(
         ));
         // Expected Red state: the test fails, and the ONLY reason is the stub's own rejection.
         if combined.contains("not implemented") {
+            return true;
+        }
+        // The "stub" step is sometimes over-implemented by the model (ignoring the
+        // stub-only instruction) and the test passes outright on the first run. The test
+        // file itself isn't broken in that case — looping "fix" attempts on it just invites
+        // the model to invent unrelated changes with nothing real to fix (observed: it
+        // drifted the test into an unrelated schema after a few rounds). Accept it and move
+        // on; Green phase regenerates the implementation file from scratch regardless.
+        if test_file_passed_cleanly(&combined, test_file) {
+            progress.println(format!(
+                "  {test_file}'s stub was already a full implementation (test passed immediately) — accepting, continuing to Green phase"
+            ));
             return true;
         }
         let content = match std::fs::read_to_string(test_file) {

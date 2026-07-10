@@ -257,27 +257,29 @@ pub(crate) fn parse_ts_imports(content: &str, file_path: &str, service_dir: &str
     result
 }
 
-pub(crate) fn errors_for_file(output: &str, file_path: &str) -> String {
-    // tsc emits relative paths from within the service dir; file_path may be the
-    // fully-resolved absolute-or-project-relative path. Match on any suffix.
-    let suffixes: Vec<&str> = {
-        let mut v = vec![file_path];
-        // strip leading service-dir prefix variants (frontend/admin-portal/, services/product-service/)
-        for sep in &['/', '\\'] {
-            if let Some(pos) = file_path.find(*sep) {
-                // try each progressively shorter tail
-                let mut rest = &file_path[pos + 1..];
-                loop {
-                    v.push(rest);
-                    match rest.find(*sep) {
-                        Some(p) => rest = &rest[p + 1..],
-                        None => break,
-                    }
+// tsc/Jest emit relative paths from within the service dir; file_path may be the
+// fully-resolved absolute-or-project-relative path. Match on any suffix.
+fn path_suffixes(file_path: &str) -> Vec<&str> {
+    let mut v = vec![file_path];
+    // strip leading service-dir prefix variants (frontend/admin-portal/, services/product-service/)
+    for sep in &['/', '\\'] {
+        if let Some(pos) = file_path.find(*sep) {
+            // try each progressively shorter tail
+            let mut rest = &file_path[pos + 1..];
+            loop {
+                v.push(rest);
+                match rest.find(*sep) {
+                    Some(p) => rest = &rest[p + 1..],
+                    None => break,
                 }
             }
         }
-        v
-    };
+    }
+    v
+}
+
+pub(crate) fn errors_for_file(output: &str, file_path: &str) -> String {
+    let suffixes = path_suffixes(file_path);
     let lines: Vec<&str> = output.lines().collect();
     // Jest's own failure detail (the "●" message and code frame) doesn't repeat the file path
     // on every line — a plain substring filter below would keep only the "FAIL <path>" header
@@ -297,4 +299,47 @@ pub(crate) fn errors_for_file(output: &str, file_path: &str) -> String {
         .filter(|l| suffixes.iter().any(|s| l.contains(s)))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// True when the test runner reports `file_path`'s suite as a clean PASS with no
+/// matching FAIL line — i.e. every test in it succeeded. Used by the Red-phase sanity
+/// check to detect a stub that was actually a full implementation: the test file itself
+/// isn't broken, so it shouldn't be sent through the "fix the test file" loop.
+pub(crate) fn test_file_passed_cleanly(output: &str, file_path: &str) -> bool {
+    let suffixes = path_suffixes(file_path);
+    let matches = |prefix: &str, l: &&str| {
+        l.strip_prefix(prefix).map(|rest| suffixes.iter().any(|s| rest.trim() == *s || rest.trim().ends_with(s))).unwrap_or(false)
+    };
+    let lines: Vec<&str> = output.lines().collect();
+    let passed = lines.iter().any(|l| matches("PASS ", l));
+    let failed = lines.iter().any(|l| matches("FAIL ", l));
+    passed && !failed
+}
+
+#[cfg(test)]
+mod test_file_passed_cleanly_tests {
+    use super::test_file_passed_cleanly;
+
+    #[test]
+    fn clean_pass_with_project_relative_path() {
+        let output = "PASS src/models/Product.test.ts\n\nTest Suites: 1 passed, 1 total\n";
+        assert!(test_file_passed_cleanly(output, "services/product/src/models/Product.test.ts"));
+    }
+
+    #[test]
+    fn fail_line_for_the_same_file_is_not_a_clean_pass() {
+        let output = "FAIL src/models/Product.test.ts\n  ● createProduct › throws\n";
+        assert!(!test_file_passed_cleanly(output, "services/product/src/models/Product.test.ts"));
+    }
+
+    #[test]
+    fn pass_for_an_unrelated_file_does_not_count() {
+        let output = "PASS src/models/Other.test.ts\n";
+        assert!(!test_file_passed_cleanly(output, "services/product/src/models/Product.test.ts"));
+    }
+
+    #[test]
+    fn no_output_is_not_a_clean_pass() {
+        assert!(!test_file_passed_cleanly("", "services/product/src/models/Product.test.ts"));
+    }
 }
