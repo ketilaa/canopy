@@ -72,6 +72,17 @@ pub(crate) fn extract_error_files(output: &str, service_dir: &str) -> Vec<String
                 }
             }
         }
+        // Jest suite-level failure header: FAIL path/to/File.test.ts
+        // Catches failures with no usable in-body stack frame for the pattern below (e.g. a
+        // parse/syntax error in the test file itself, which crashes before any test runs).
+        if let Some(rest) = line.strip_prefix("FAIL ") {
+            let path = rest.trim();
+            if path.ends_with(".ts") || path.ends_with(".tsx") || path.ends_with(".js") || path.ends_with(".jsx") {
+                if let Some(resolved) = resolve(path) {
+                    if !files.contains(&resolved) { files.push(resolved); }
+                }
+            }
+        }
         // Jest module resolution: Cannot find module '...' from 'tests/Foo.ts'
         // The file after `from '` is the test file that contains the bad import.
         if line.contains("Cannot find module") {
@@ -267,8 +278,22 @@ pub(crate) fn errors_for_file(output: &str, file_path: &str) -> String {
         }
         v
     };
-    output
-        .lines()
+    let lines: Vec<&str> = output.lines().collect();
+    // Jest's own failure detail (the "●" message and code frame) doesn't repeat the file path
+    // on every line — a plain substring filter below would keep only the "FAIL <path>" header
+    // and any stack-trace lines, dropping the actual error message. When a "FAIL <path>" header
+    // is present, capture the whole block through to the next suite header or the run summary
+    // instead, so the LLM actually sees what went wrong.
+    if let Some(start) = lines.iter().position(|l| {
+        l.strip_prefix("FAIL ").map(|rest| suffixes.iter().any(|s| rest.trim() == *s || rest.trim().ends_with(s))).unwrap_or(false)
+    }) {
+        let end = lines[start + 1..].iter().position(|l| {
+            l.starts_with("FAIL ") || l.starts_with("PASS ") || l.starts_with("Test Suites:")
+        }).map(|p| start + 1 + p).unwrap_or(lines.len());
+        return lines[start..end].join("\n");
+    }
+    lines
+        .into_iter()
         .filter(|l| suffixes.iter().any(|s| l.contains(s)))
         .collect::<Vec<_>>()
         .join("\n")

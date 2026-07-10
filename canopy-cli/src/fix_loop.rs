@@ -337,6 +337,84 @@ fn run_fix_loop_inner(
     }
     false
 }
+/// After Red-phase's compile check passes, sanity-checks that the test's CURRENT failure is
+/// the one TDD actually expects (the stub's `Error('not implemented')` rejection) rather than a
+/// crash caused by a test-authoring mistake (e.g. `jest.spyOn` on an empty mock object) — `tsc`
+/// has no way to catch that class of bug, since it only manifests once Jest actually runs the
+/// test, and by Green phase the test file is protected from further edits. Scoped to non-component
+/// TS files only: React's "renders null" Red state has no single deterministic string to check
+/// the failure message against, so components are left to the existing behavior.
+///
+/// Runs the test command directly rather than through `run_fix_loop_inner` — success here means
+/// "still fails, but for the RIGHT reason," the inverse of that loop's exit-code-0 check, so the
+/// two can't share the same success condition.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_red_test_sanity_check(
+    client: &LlmClient,
+    service_dir: &str,
+    test_cmd: &str,
+    test_file: &str,
+    service_source_files: &[String],
+    tech: &str,
+    adrs: &[Adr],
+    arch_skills: &str,
+    max_iterations: usize,
+    progress: &Progress,
+    step_idx: usize,
+) -> bool {
+    let mut prior_attempts: Vec<FixAttempt> = Vec::new();
+    for iteration in 0..max_iterations {
+        let output = match crate::shell::run_capture_in_dir("bash", test_cmd, service_dir) {
+            Ok(o) => o,
+            Err(e) => { progress.println(format!("  failed to run command: {e}")); return false; }
+        };
+        let combined = strip_ansi(format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+        // Expected Red state: the test fails, and the ONLY reason is the stub's own rejection.
+        if combined.contains("not implemented") {
+            return true;
+        }
+        let content = match std::fs::read_to_string(test_file) {
+            Ok(c) => c,
+            Err(e) => { progress.println(format!("  cannot read {test_file}: {e}")); return false; }
+        };
+        let errors = errors_for_file(&combined, test_file);
+        let test_skill = testing_skill_for_file_with_adrs(test_file, tech, adrs, service_source_files);
+        let short_name = std::path::Path::new(test_file).file_name().and_then(|n| n.to_str()).unwrap_or(test_file);
+        let fix_result = progress.timed(
+            step_idx,
+            format!("TDD 🔴 sanity — fixing {short_name} (attempt {}/{max_iterations}) — test fails for an unexpected reason", iteration + 1),
+            client,
+            || fix_file(client, test_file, &content, &errors, service_source_files, &[], &test_skill, arch_skills, &prior_attempts),
+        );
+        match fix_result {
+            Ok(result) => {
+                let is_noop = result.content.trim() == content.trim();
+                prior_attempts.push(FixAttempt {
+                    summary: result.summary.clone(),
+                    resulting_error: None,
+                    is_noop,
+                });
+                if is_noop {
+                    progress.println(format!("    model made no changes to {test_file}"));
+                } else {
+                    let _ = std::fs::write(test_file, &result.content);
+                    print_step_notes(progress, step_idx, &result.summary, &result.deviations);
+                }
+            }
+            Err(e) => {
+                progress.println(format!("    LLM fix failed for {test_file}: {e}"));
+                return false;
+            }
+        }
+    }
+    progress.println("  Red-phase test still fails for an unexpected reason after max attempts — manual fix needed.");
+    false
+}
+
 fn migrate_javax_to_jakarta(service_dir: &str) -> usize {
     let mut count = 0;
     let mut java_files = Vec::new();

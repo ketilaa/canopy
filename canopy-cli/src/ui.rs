@@ -79,6 +79,14 @@ pub(crate) fn dim(s: &str) -> String {
     console::style(s).dim().to_string()
 }
 
+/// Light grey for a step that hasn't started yet — deliberately a DIFFERENT ANSI attribute
+/// (bright black, SGR 90) from `dim`/`dim_strike`'s faint (SGR 2), not just the same grey minus
+/// strikethrough: a pending step and a completed one should read as two different states at a
+/// glance, not the same shade with the only difference being a line through it.
+pub(crate) fn pending_grey(s: &str) -> String {
+    console::style(s).black().bright().to_string()
+}
+
 /// Dim + strikethrough for a finished checklist entry — it should visibly recede, not just get
 /// a line through it. console 0.15 has no built-in strikethrough style, so this applies SGR 2
 /// (dim) and 9 (strikethrough) directly, in ONE escape sequence with a single trailing reset —
@@ -93,13 +101,31 @@ pub(crate) fn dim_strike(s: &str) -> String {
     }
 }
 
+/// Consistent "1h 2m 3s" elapsed format, used everywhere a duration is shown — including the
+/// live-ticking bars via the custom `{myelapsed}` template key registered by `with_myelapsed`,
+/// so a step's active header and its finished summary line never disagree on format.
 pub(crate) fn format_elapsed(d: std::time::Duration) -> String {
-    let secs = d.as_secs_f64();
-    if secs < 60.0 {
-        format!("{secs:.1}s")
+    let total_secs = d.as_secs();
+    let h = total_secs / 3600;
+    let m = (total_secs % 3600) / 60;
+    let s = total_secs % 60;
+    if h > 0 {
+        format!("{h}h {m}m {s}s")
+    } else if m > 0 {
+        format!("{m}m {s}s")
     } else {
-        format!("{}m{:02}s", (secs / 60.0) as u64, (secs % 60.0) as u64)
+        format!("{s}s")
     }
+}
+
+/// Registers a custom `{myelapsed}` template key rendering via `format_elapsed`, replacing
+/// indicatif's own `{elapsed_precise}` (which is a fixed `HH:MM:SS`/`Hh:MMm:SSs`-ish format we
+/// don't control) so every live-ticking bar matches the same "1h 2m 3s" format used everywhere
+/// else in this file.
+fn with_myelapsed(style: indicatif::ProgressStyle) -> indicatif::ProgressStyle {
+    style.with_key("myelapsed", |state: &indicatif::ProgressState, w: &mut dyn std::fmt::Write| {
+        let _ = write!(w, "{}", format_elapsed(state.elapsed()));
+    })
 }
 
 /// Compact token-count formatting for checklist lines — "847", "8.4k" — matching the precision
@@ -131,10 +157,10 @@ where
     use indicatif::{ProgressBar, ProgressStyle};
     use std::time::Duration;
     let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::with_template("  {spinner:.cyan} {msg} ({elapsed_precise})")
+    pb.set_style(with_myelapsed(
+        ProgressStyle::with_template("  {spinner:.cyan} {msg} ({myelapsed})")
             .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-    );
+    ));
     pb.enable_steady_tick(Duration::from_millis(80));
     pb.set_message(label.clone());
     let result = f();
@@ -204,6 +230,16 @@ pub(crate) struct Progress {
     /// taken/dropped as soon as they finish — so they stay visible as a nested "done" history
     /// until `collapse` drains and drops the whole group at once.
     children: Vec<std::sync::Mutex<Vec<indicatif::ProgressBar>>>,
+    /// A per-step "… N earlier attempt(s) folded" line, created lazily the first time that
+    /// step's `children` grows past `MAX_VISIBLE_CHILDREN` — older child bars are dropped
+    /// (finish_and_clear'd) rather than left to accumulate forever. A step needing several
+    /// fix attempts (5 is the existing max) would otherwise keep growing the live region's
+    /// height for the rest of the run; once a live region has ever grown taller than the
+    /// terminal, indicatif's cursor-based redraw can't fully reach its own earlier rows,
+    /// which is how a supposedly-permanent line (e.g. a group header) has been seen to render
+    /// twice — a stray copy where the cursor undershot, plus the real one printed later.
+    fold_bar: Vec<std::sync::Mutex<Option<indicatif::ProgressBar>>>,
+    folded_count: Vec<std::sync::Mutex<usize>>,
     /// Per-step wall-clock start (set once, on the step's first `phase()` call) and cumulative
     /// (input, output) LLM token totals (accumulated by every `timed()` call for that step) —
     /// surfaced together on the step's collapsed line in `done`/`skipped`/`failed`. `None`
@@ -233,6 +269,10 @@ pub(crate) struct Progress {
     /// it, so it never has to move. Empty message once nothing is left to summarize.
     tail: Option<indicatif::ProgressBar>,
 }
+
+/// How many finished `timed()` sub-bars stay individually visible under an active step before
+/// older ones fold into a single summary line — see the `fold_bar` field doc.
+const MAX_VISIBLE_CHILDREN: usize = 3;
 
 fn step_label(group_index: usize, group_size: usize, file: &str) -> String {
     format!("[{group_index}/{group_size}] {file}")
@@ -279,6 +319,8 @@ impl Progress {
                 multi: None,
                 bars: (0..rows.len()).map(|_| std::sync::Mutex::new(None)).collect(),
                 children: (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect(),
+                fold_bar: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
+                folded_count: (0..total).map(|_| std::sync::Mutex::new(0)).collect(),
                 step_start: (0..total).map(|_| std::sync::Mutex::new(None)).collect(),
                 step_tokens: (0..total).map(|_| std::sync::Mutex::new((0, 0))).collect(),
                 step_phase_text: (0..total).map(|_| std::sync::Mutex::new(String::new())).collect(),
@@ -301,6 +343,8 @@ impl Progress {
         );
         let bars = (0..rows.len()).map(|_| std::sync::Mutex::new(None)).collect();
         let children = (0..total).map(|_| std::sync::Mutex::new(Vec::new())).collect();
+        let fold_bar = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
+        let folded_count = (0..total).map(|_| std::sync::Mutex::new(0)).collect();
         let step_start = (0..total).map(|_| std::sync::Mutex::new(None)).collect();
         let step_tokens = (0..total).map(|_| std::sync::Mutex::new((0, 0))).collect();
         let step_phase_text = (0..total).map(|_| std::sync::Mutex::new(String::new())).collect();
@@ -308,6 +352,8 @@ impl Progress {
             multi: Some(multi),
             bars,
             children,
+            fold_bar,
+            folded_count,
             step_start,
             step_tokens,
             step_phase_text,
@@ -368,7 +414,7 @@ impl Progress {
                 }
                 Row::Step(step_idx) => {
                     pb.set_style(step_style.clone());
-                    pb.set_message(dim(&step_label(self.group_index[*step_idx], self.group_size[*step_idx], self.file(*step_idx))));
+                    pb.set_message(pending_grey(&step_label(self.group_index[*step_idx], self.group_size[*step_idx], self.file(*step_idx))));
                 }
             }
             *self.bars[*revealed].lock().unwrap() = Some(pb);
@@ -376,7 +422,7 @@ impl Progress {
         }
         let remaining_steps = self.rows[*revealed..].iter().filter(|r| matches!(r, Row::Step(_))).count();
         tail.set_message(if remaining_steps > 0 {
-            dim(&format!("… {remaining_steps} more step(s)"))
+            pending_grey(&format!("… {remaining_steps} more step(s)"))
         } else {
             String::new()
         });
@@ -400,7 +446,7 @@ impl Progress {
         if input == 0 && output == 0 {
             String::new()
         } else {
-            format!(" · {} in / {} out", format_tokens(input), format_tokens(output))
+            format!(" · tokens: {} in / {} out", format_tokens(input), format_tokens(output))
         }
     }
 
@@ -429,10 +475,10 @@ impl Progress {
                     // they merely scrolled into the preview window, which isn't when they started.
                     pb.reset_elapsed();
                     use indicatif::ProgressStyle;
-                    pb.set_style(
-                        ProgressStyle::with_template("  {spinner:.cyan} {msg} ({elapsed_precise})")
+                    pb.set_style(with_myelapsed(
+                        ProgressStyle::with_template("  {spinner:.cyan} {msg} ({myelapsed})")
                             .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-                    );
+                    ));
                 }
                 pb.enable_steady_tick(std::time::Duration::from_millis(80));
                 pb.set_message(format!("{label} — {phase}{}", self.tokens_suffix(idx)));
@@ -453,6 +499,30 @@ impl Progress {
         }
     }
 
+    /// Creates (once) or updates the "… N earlier attempt(s) folded" line for step `idx`,
+    /// positioned right after the step's own parent bar so it always sits above whatever
+    /// children remain visible.
+    fn ensure_fold_bar(&self, idx: usize, n: usize) {
+        let Some(multi) = &self.multi else { return };
+        let msg = pending_grey(&format!("… {n} earlier attempt(s) folded"));
+        let Some(slot_lock) = self.fold_bar.get(idx) else { return };
+        let mut slot = slot_lock.lock().unwrap();
+        match slot.as_ref() {
+            Some(pb) => pb.set_message(msg),
+            None => {
+                if let Some(parent) = self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()) {
+                    use indicatif::{ProgressBar, ProgressStyle};
+                    let pb = multi.insert_after(&parent, ProgressBar::new_spinner());
+                    pb.set_style(
+                        ProgressStyle::with_template("      {msg}").unwrap_or_else(|_| ProgressStyle::default_spinner()),
+                    );
+                    pb.set_message(msg);
+                    *slot = Some(pb);
+                }
+            }
+        }
+    }
+
     /// Finishes step `idx`'s bar with `line`, then drops it — the drop (not `finish_with_message`
     /// alone) is what makes indicatif fold the line permanently into scrollback and stop
     /// redrawing it. See the `bars` field doc for why. Also drops every accumulated `timed`
@@ -469,6 +539,14 @@ impl Progress {
                 }
             }
             children.clear();
+        }
+        if let Some(m) = self.fold_bar.get(idx) {
+            if let Some(pb) = m.lock().unwrap().take() {
+                if clear_children { pb.finish_and_clear(); } else { pb.finish(); }
+            }
+        }
+        if let Some(m) = self.folded_count.get(idx) {
+            *m.lock().unwrap() = 0;
         }
         match self.bar_slot(idx).and_then(|m| m.lock().unwrap().take()) {
             Some(pb) => {
@@ -494,7 +572,7 @@ impl Progress {
         let start = (*self.step_start.get(idx)?.lock().unwrap())?;
         let (input, output) = self.step_tokens.get(idx).map(|m| *m.lock().unwrap()).unwrap_or((0, 0));
         Some(format!(
-            "{} · {} in / {} out",
+            "{} · tokens: {} in / {} out",
             format_elapsed(start.elapsed()),
             format_tokens(input),
             format_tokens(output),
@@ -559,10 +637,10 @@ impl Progress {
             (Some(multi), Some(anchor)) => {
                 use indicatif::{ProgressBar, ProgressStyle};
                 let pb = multi.insert_after(&anchor, ProgressBar::new_spinner());
-                pb.set_style(
-                    ProgressStyle::with_template("      ↳ {spinner:.cyan} {msg} ({elapsed_precise})")
+                pb.set_style(with_myelapsed(
+                    ProgressStyle::with_template("      ↳ {spinner:.cyan} {msg} ({myelapsed})")
                         .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-                );
+                ));
                 pb.enable_steady_tick(std::time::Duration::from_millis(80));
                 pb.set_message(label.clone());
                 Some(pb)
@@ -581,18 +659,37 @@ impl Progress {
         }
         self.refresh_step_header(idx);
         if let Some(pb) = child {
-            // Freeze with a "done" message and KEEP it (finish_with_message, not clear) — it
-            // stays visible as part of this step's running history until the whole step
+            // Freeze with the label struck through (matching the grey/strikethrough a finished
+            // STEP collapses to via `dim_strike`) and KEEP it (finish_with_message, not clear) —
+            // it stays visible as part of this step's running history until the whole step
             // collapses via `collapse`, which drains and drops every bar accumulated here.
             // No elapsed time embedded here — the bar's own template already appends
             // `({elapsed_precise})` after {msg} on every render, active or finished; adding
             // another one here just duplicated it ("(1m29s) (00:01:29)").
-            pb.finish_with_message(format!("{} {label}", dim("done")));
+            pb.finish_with_message(dim_strike(&label));
             if let Some(m) = children_lock {
-                m.lock().unwrap().push(pb);
+                let mut children = m.lock().unwrap();
+                children.push(pb);
+                // Fold the oldest attempts away once there are more than MAX_VISIBLE_CHILDREN —
+                // see the `fold_bar` field doc for why unbounded growth here is worth avoiding.
+                let mut newly_folded = 0usize;
+                while children.len() > MAX_VISIBLE_CHILDREN {
+                    children.remove(0).finish_and_clear();
+                    newly_folded += 1;
+                }
+                drop(children);
+                if newly_folded > 0 {
+                    if let Some(fc) = self.folded_count.get(idx) {
+                        let mut count = fc.lock().unwrap();
+                        *count += newly_folded;
+                        let n = *count;
+                        drop(count);
+                        self.ensure_fold_bar(idx, n);
+                    }
+                }
             }
         } else {
-            self.println(format!("      ↳ {n} {} {label} ({})", dim("done"), format_elapsed(start.elapsed())));
+            self.println(format!("      ↳ {n} {} ({})", dim_strike(&label), format_elapsed(start.elapsed())));
         }
         result
     }

@@ -1,4 +1,4 @@
-use crate::fix_loop::run_fix_loop_logged;
+use crate::fix_loop::{run_fix_loop_logged, run_red_test_sanity_check};
 use crate::project_scan::{
     compile_command_for_service, ensure_npm_installed, scan_service_source_files,
     test_class_command_for_service, test_command_for_service,
@@ -190,14 +190,14 @@ pub(crate) fn execute_steps(
             let test_class = test_class_name(&test_file).unwrap_or_else(|| "Test".to_string());
 
             // ── RED PHASE ────────────────────────────────────────────────────────
-            progress.phase(i, "TDD Red — write failing test + compilable stub");
+            progress.phase(i, "TDD 🔴 — write failing test + compilable stub");
             // Build sibling context first — the test prompt needs the type surfaces
             // so it can produce test data with all required fields.
             let stub_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
 
             let StepResult { content: test_content, summary: test_summary, deviations: test_deviations } = progress.timed(
                 i,
-                format!("Red — generating test    {test_file}"),
+                format!("TDD 🔴 — generating test    {test_file}"),
                 &client,
                 || generate_unit_test_stub(
                     &client, story, spec, contract_yaml, step, &test_file,
@@ -216,7 +216,7 @@ pub(crate) fn execute_steps(
             let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
             let StepResult { content: stub_content, summary: stub_summary, deviations: stub_deviations } = progress.timed(
                 i,
-                format!("Red — generating stub    {}", step.file),
+                format!("TDD 🔴 — generating stub    {}", step.file),
                 &client,
                 || execute_implementation_stub(
                     &client, story, spec, contract_yaml,
@@ -241,7 +241,7 @@ pub(crate) fn execute_steps(
                 if std::path::Path::new(&step_service_dir).exists() {
                     ensure_npm_installed(&step_service_dir);
                     let compile_cmd = compile_command_for_service(svc, &step_service_dir);
-                    progress.phase(i, &format!("TDD Red — compile stub    $ {compile_cmd}"));
+                    progress.phase(i, &format!("TDD 🔴 — compile stub    $ {compile_cmd}"));
                     let src_files = scan_service_source_files(&step_service_dir);
                     // Red fix loop protects done-step impl files and test files from
                     // earlier TDD steps — but NOT the current step's test, which the
@@ -269,12 +269,31 @@ pub(crate) fn execute_steps(
                         report_broken_build(&progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
+
+                    // tsc has no way to catch a test that compiles fine but crashes at Jest
+                    // RUNTIME (e.g. jest.spyOn on an empty mock object) — it only surfaces once
+                    // Jest actually runs the test, and by Green phase the test file is protected
+                    // from edits. Catch it here instead, while the test is still freely
+                    // editable. Scoped to non-component TS: a .tsx component's Red state
+                    // ("renders null") has no single deterministic failure string to check.
+                    if test_file.ends_with(".ts") && !test_file.ends_with(".tsx") {
+                        progress.phase(i, "TDD 🔴 — sanity-check the test actually fails as expected");
+                        let sane = run_red_test_sanity_check(
+                            &client, &step_service_dir, &test_class_command_for_service(svc, &test_class),
+                            &test_file, &src_files, step_tech, adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                            &progress, i,
+                        );
+                        if !sane {
+                            report_broken_build(&progress, i, &step.id, &test_file, story_id);
+                            return Ok(());
+                        }
+                    }
                 }
             }
             roots::reindex();
 
             // ── GREEN PHASE ──────────────────────────────────────────────────────
-            progress.phase(i, "TDD Green — implement to pass the test");
+            progress.phase(i, "TDD 🟢 — implement to pass the test");
             let roots_context = roots::get_feature_context(&step.description)
                 .map(|p| format_roots_context(&p))
                 .filter(|s| !s.is_empty());
@@ -286,7 +305,7 @@ pub(crate) fn execute_steps(
             let green_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let StepResult { content: impl_content, summary: impl_summary, deviations: impl_deviations } = progress.timed(
                 i,
-                format!("Green — implementing      {}", step.file),
+                format!("TDD 🟢 — implementing      {}", step.file),
                 &client,
                 || execute_implementation_with_test(
                     &client, story, spec, contract_yaml,
@@ -306,7 +325,7 @@ pub(crate) fn execute_steps(
                 if std::path::Path::new(&step_service_dir).exists() {
                     ensure_npm_installed(&step_service_dir);
                     let test_cmd = test_class_command_for_service(svc, &test_class);
-                    progress.phase(i, &format!("TDD Green — run tests      $ {test_cmd}"));
+                    progress.phase(i, &format!("TDD 🟢 — run tests      $ {test_cmd}"));
                     let src_files = scan_service_source_files(&step_service_dir);
                     let abs_test = std::fs::canonicalize(&test_file)
                         .map(|p| p.to_string_lossy().to_string())

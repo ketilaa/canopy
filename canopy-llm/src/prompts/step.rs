@@ -440,6 +440,24 @@ fn unit_test_stub_prompt_ts(
         format!("Dependency types (use these exact field names in test data):\n{sibling_section}\n\n")
     };
 
+    // Infrastructure/repository files never receive invalid input in practice — by the time
+    // an aggregate reaches EventPublisher.publish() or a repository's save(), it has already
+    // been validated at the route (zod) or model (factory) layer. Blindly telling the model to
+    // "cover every BDD scenario" causes it to write a validation test against a layer that has
+    // no validation responsibility at all (e.g. EventPublisher asserting a missing-name reject
+    // that only the route layer should ever enforce) — the implementation then correctly does
+    // NOT throw, and the test fails for a reason that has nothing to do with a real defect.
+    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" {
+        "- This layer never receives invalid/unvalidated input — validation happens upstream, \
+at the route or model layer, before anything reaches here. Do NOT write a test asserting this \
+file throws or rejects for a missing/invalid field; skip any BDD scenario whose ONLY \
+distinguishing behavior is input validation. Write one test per scenario that actually \
+exercises THIS layer's own responsibility (e.g. correctly publishing/persisting a valid \
+aggregate) — merge scenarios that only differ by a field this layer never inspects.".to_string()
+    } else {
+        "- Write one test per BDD scenario listed above — cover every scenario, do not skip or merge any.".to_string()
+    };
+
     let route_rule = if layer == "route" {
         "- Route tests: DO NOT import from 'app.ts' or '../src/app'. \
 Import the router from the implementation file — it is a Router INSTANCE, never a factory\n\
@@ -508,7 +526,7 @@ Import the router from the implementation file — it is a Router INSTANCE, neve
          {test_structure}\n\
          \n\
          IMPORTANT:\n\
-         - Write one test per BDD scenario listed above — cover every scenario, do not skip or merge any.\n\
+         {scenario_coverage_note}\n\
          - Import the subject from '{import_path}'.\n\
          - The tech-stack rules above describe the EXACT shape of any file this skill governs\n\
            (e.g. a constructor signature, a domain event's fields). If the implementation file\n\
@@ -587,6 +605,7 @@ signature first, then match ONE of these two shapes (never mix them):\n\
         red_reason = red_reason,
         route_rule = route_rule,
         optional_fields_note = optional_fields_note,
+        scenario_coverage_note = scenario_coverage_note,
         contract = canopy_summary_contract(),
     )
 }
