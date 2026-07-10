@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPO_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\" && cd \"$REPO_ROOT\" && git status --porcelain -- canopy-cli roots-cli roots-parser roots-core roots-storage roots-context canopy-llm canopy-core 2>/dev/null | grep -q . && cargo install --path canopy-cli && cargo install --path roots-cli || true",
+            "timeout": 120,
+            "statusMessage": "Installing canopy..."
+          }
+        ]
+      }
+    ]
+  }
+}
