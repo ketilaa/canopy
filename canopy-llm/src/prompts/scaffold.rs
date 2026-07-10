@@ -112,6 +112,8 @@ delete c.compilerOptions.jsx;\
 c.compilerOptions.isolatedModules=true;\
 delete c.compilerOptions.noUncheckedSideEffectImports;\
 delete c.compilerOptions.moduleDetection;\
+delete c.compilerOptions.exactOptionalPropertyTypes;\
+delete c.compilerOptions.noUncheckedIndexedAccess;\
 c.include=['src/**/*'];\
 c.exclude=['node_modules'];\
 fs.writeFileSync('tsconfig.json',JSON.stringify(c,null,2));\" && \
