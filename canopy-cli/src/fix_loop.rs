@@ -339,6 +339,24 @@ fn run_fix_loop_inner(
     }
     false
 }
+/// Outcome of `run_red_test_sanity_check`. Deliberately NOT a bool: "the stub already passed"
+/// and "the stub is Red for the expected reason" both mean "proceed," but they call for
+/// different next steps in the caller — only `ExpectedRed` still needs Green phase's fresh
+/// implementation call. Collapsing them into one `true` (as an earlier version did) meant Green
+/// always regenerated from scratch even when the stub already compiled and passed cleanly,
+/// discarding a working answer for a fresh gamble — which is exactly how an
+/// exactOptionalPropertyTypes violation got introduced in an implementation that was otherwise
+/// already correct.
+pub(crate) enum RedSanityOutcome {
+    /// The stub throws `not implemented` as expected — proceed to Green phase normally.
+    ExpectedRed,
+    /// The stub was already a full, correct implementation — Red's own compile check plus this
+    /// sanity check have already proven it compiles and passes. Skip Green phase entirely.
+    AlreadyImplemented,
+    /// Exhausted fix attempts without reaching either state above.
+    Broken,
+}
+
 /// After Red-phase's compile check passes, sanity-checks that the test's CURRENT failure is
 /// the one TDD actually expects (the stub's `Error('not implemented')` rejection) rather than a
 /// crash caused by a test-authoring mistake (e.g. `jest.spyOn` on an empty mock object) — `tsc`
@@ -363,12 +381,12 @@ pub(crate) fn run_red_test_sanity_check(
     max_iterations: usize,
     progress: &Progress,
     step_idx: usize,
-) -> bool {
+) -> RedSanityOutcome {
     let mut prior_attempts: Vec<FixAttempt> = Vec::new();
     for iteration in 0..max_iterations {
         let output = match crate::shell::run_capture_in_dir("bash", test_cmd, service_dir) {
             Ok(o) => o,
-            Err(e) => { progress.note(step_idx, format!("failed to run command: {e}")); return false; }
+            Err(e) => { progress.note(step_idx, format!("failed to run command: {e}")); return RedSanityOutcome::Broken; }
         };
         let combined = strip_ansi(format!(
             "{}\n{}",
@@ -377,23 +395,24 @@ pub(crate) fn run_red_test_sanity_check(
         ));
         // Expected Red state: the test fails, and the ONLY reason is the stub's own rejection.
         if combined.contains("not implemented") {
-            return true;
+            return RedSanityOutcome::ExpectedRed;
         }
         // The "stub" step is sometimes over-implemented by the model (ignoring the
         // stub-only instruction) and the test passes outright on the first run. The test
         // file itself isn't broken in that case — looping "fix" attempts on it just invites
         // the model to invent unrelated changes with nothing real to fix (observed: it
-        // drifted the test into an unrelated schema after a few rounds). Accept it and move
-        // on; Green phase regenerates the implementation file from scratch regardless.
+        // drifted the test into an unrelated schema after a few rounds). Accept it as the
+        // final implementation — Green phase would only regenerate from scratch and risk
+        // introducing a NEW bug the stub didn't have.
         if test_file_passed_cleanly(&combined, test_file) {
             progress.note(step_idx, format!(
-                "{test_file}'s stub was already a full implementation (test passed immediately) — accepting, continuing to Green phase"
+                "{test_file}'s stub was already a full implementation (test passed immediately) — accepting as done, skipping Green phase"
             ));
-            return true;
+            return RedSanityOutcome::AlreadyImplemented;
         }
         let content = match std::fs::read_to_string(test_file) {
             Ok(c) => c,
-            Err(e) => { progress.note(step_idx, format!("cannot read {test_file}: {e}")); return false; }
+            Err(e) => { progress.note(step_idx, format!("cannot read {test_file}: {e}")); return RedSanityOutcome::Broken; }
         };
         let errors = errors_for_file(&combined, test_file);
         let test_skill = testing_skill_for_file_with_adrs(test_file, tech, adrs, service_source_files);
@@ -422,12 +441,12 @@ pub(crate) fn run_red_test_sanity_check(
             }
             Err(e) => {
                 progress.annotate_last_child(step_idx, &format!("LLM fix failed: {e}"));
-                return false;
+                return RedSanityOutcome::Broken;
             }
         }
     }
     progress.annotate_last_child(step_idx, "Red-phase test still fails for an unexpected reason after max attempts — manual fix needed.");
-    false
+    RedSanityOutcome::Broken
 }
 
 fn migrate_javax_to_jakarta(service_dir: &str) -> usize {

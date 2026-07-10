@@ -1,4 +1,4 @@
-use crate::fix_loop::{run_fix_loop_logged, run_red_test_sanity_check};
+use crate::fix_loop::{run_fix_loop_logged, run_red_test_sanity_check, RedSanityOutcome};
 use crate::project_scan::{
     compile_command_for_service, ensure_npm_installed, scan_service_source_files,
     test_class_command_for_service, test_command_for_service,
@@ -303,9 +303,24 @@ pub(crate) fn execute_steps(
                             &test_file, &src_files, step_tech, adrs, &arch_skills, MAX_FIX_ITERATIONS,
                             &progress, i,
                         );
-                        if !sane {
-                            report_broken_build(progress, i, &step.id, &test_file, story_id);
-                            return Ok(());
+                        match sane {
+                            RedSanityOutcome::Broken => {
+                                report_broken_build(progress, i, &step.id, &test_file, story_id);
+                                return Ok(());
+                            }
+                            // Red's own compile check plus this sanity check already proved the
+                            // stub compiles and passes — nothing left for Green to verify, and
+                            // regenerating from scratch would only risk replacing a working
+                            // answer with a fresh gamble. session_written already has the stub's
+                            // content (inserted above, before the compile check ran).
+                            RedSanityOutcome::AlreadyImplemented => {
+                                progress.done(i, "done");
+                                plan.steps[i].status = StepStatus::Done;
+                                save_story_plan(story_id, &plan).context("failed to save plan progress")?;
+                                roots::reindex();
+                                continue;
+                            }
+                            RedSanityOutcome::ExpectedRed => {}
                         }
                     }
                 }

@@ -399,11 +399,17 @@ different failure classes.
 **A clean test PASS at Red phase means the stub lied, not that the test is broken.** The model
 is sometimes asked for a stub (`throw new Error('not implemented')` in every method) and hands
 back a full implementation instead, ignoring the stub-only instruction. `run_red_test_sanity_check`
-detects this via `test_file_passed_cleanly` (`canopy-cli/src/build_output.rs`) and accepts it
-immediately rather than treating the PASS as "an error to fix" — Green phase regenerates the impl
-file from scratch regardless, so nothing is lost. Before this fix, a PASS fell through to the
-generic "fix the test file" loop with the literal string `PASS <file>` as its "errors," and with
-nothing real to fix, the model invented unrelated changes across attempts until it drifted the
+detects this via `test_file_passed_cleanly` (`canopy-cli/src/build_output.rs`) and returns
+`RedSanityOutcome::AlreadyImplemented` rather than treating the PASS as "an error to fix." The
+caller (`canopy-cli/src/commands/implement/execute.rs`) skips Green phase entirely in that case —
+Red's own compile check plus this sanity check have already proven the file compiles and passes,
+so there's nothing left for Green to verify, and regenerating from scratch would only risk
+replacing a working answer with a fresh gamble (confirmed: this is exactly how an
+exactOptionalPropertyTypes violation got introduced into an implementation that was otherwise
+already correct — Green's unconditional regeneration is what broke it, not the over-eager stub).
+Before the PASS-detection fix, a PASS fell through to the generic "fix the test file" loop with
+the literal string `PASS <file>` as its "errors," and with nothing real to fix, the model invented
+unrelated changes across attempts until it drifted the
 test into a completely different, unrelated shape. If a fix loop's output looks like it hallucinated
 an unrelated domain, check whether the input it was fed was ever a real error in the first place.
 
