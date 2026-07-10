@@ -372,12 +372,16 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              .to_string()),
             ("repository",
              "  ### Repository\n\
-             RESPONSIBILITY: persistence ONLY. A repository exposes only the methods the current story requires:\n\
+             RESPONSIBILITY: persistence ONLY.\n\
+             ALWAYS generate ONLY the method(s) the current story requires — NEVER add a\n\
+             find/list/delete method speculatively just because the entity could support one.\n\
+             A story that only registers a new entity needs exactly ONE method:\n\
                async saveWidget(widget: Widget): Promise<Widget>          // create / update\n\
-               async findWidgetById(id: string): Promise<Widget | null>   // read by id\n\
-               async findWidgets(): Promise<Widget[]>                     // list\n\
-               async deleteWidget(id: string): Promise<void>              // delete\n\
-             ALWAYS generate only the methods the story needs — NEVER add methods speculatively.\n\
+             A LATER story that needs a lookup, listing, or delete names it accordingly — but\n\
+             ONLY generate that method when such a story actually requires it:\n\
+               async findWidgetById(id: string): Promise<Widget | null>   // read by id — only if needed\n\
+               async findWidgets(): Promise<Widget[]>                     // list — only if needed\n\
+               async deleteWidget(id: string): Promise<void>              // delete — only if needed\n\
              Method naming: save<Entity>, find<Entity>ById, find<Entity>s, delete<Entity>.\n\
              ALWAYS use real 'pg' persistence against PostgreSQL. NEVER use an in-memory\n\
              array/object/Map or a stub comment (\"// Simulate database save\") in its place.\n\
