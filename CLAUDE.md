@@ -450,6 +450,22 @@ legitimately produced (a stub that over-delivers, a test that passes when it "sh
 a Rust-side classification gap — fixing it in code is correct, not a violation of "fix prompts,
 not code," because the thing being fixed is deterministic control flow, not LLM output.
 
+**Always dig deep on the prompt before reaching for anything else — and gate the next move on
+the human.** Before proposing (let alone implementing) a code-level workaround, confirm from the
+log: was the rule actually in the prompt, worded correctly, and reasonably positioned? Read the
+model's own `##CANOPY_DEVIATIONS##` self-report too, but don't trust it uncritically — it can
+confidently say "None" on the exact same response that violated a rule and ignored a formatting
+instruction, so a clean self-report is not proof of compliance. Only once that dig is done and
+genuinely inconclusive (the rule was right there, correctly placed, and the model still ignored
+it — a real compliance limitation, not a missing/misplaced instruction) does a structural or
+code-level fix become the right next move. Even then: propose it and stop — get the human's
+explicit go-ahead before implementing, don't fold "diagnosed the root cause" and "here's the code
+fix, already applied" into the same turn. What counts as sufficient digging: grep the actual
+prompt dump for the rule's exact text (confirms presence and position), check whether it's a
+generic/default TS pattern the rule overrides (weak in-context rule vs. strong training prior is
+a very different failure mode than "instruction never arrived"), and read the self-reported
+deviations for that specific call before concluding anything.
+
 ---
 
 ## Commit Discipline
