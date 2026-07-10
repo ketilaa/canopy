@@ -177,8 +177,7 @@ fn react_vite_skill() -> TechStackSkill {
                   EVERY file that contains <JSX> syntax MUST have the .tsx extension.\n\
              Mixing JSX into a .ts file causes: error TS1005: '>' expected (unrecoverable parse error)."
             .to_string(),
-        namespace_rules: format!(
-            "{}\n{}",
+        namespace_rules:
             "  Imports are relative to the file's position inside src/:\n\
              - App.tsx:          import ProductForm from './components/ProductForm'\n\
              - ProductForm.tsx:  import { registerProduct } from '../api/ProductApi'\n\
@@ -186,8 +185,8 @@ fn react_vite_skill() -> TechStackSkill {
              HTTP: use fetch() only — no axios, ky, or any other HTTP library.\n\
              Do not import a file that does not exist yet.\n\
              A file MUST NOT import from its own path — no self-imports.\n\
-             NEVER import React explicitly (\"import React from 'react'\") — the automatic JSX transform puts it in scope already.",
-            crate::skills::EXACT_OPTIONAL_PROPERTY_RULE),
+             NEVER import React explicitly (\"import React from 'react'\") — the automatic JSX transform puts it in scope already."
+            .to_string(),
         common_rules: String::new(),
         layer_rules: std::collections::HashMap::new(),
         layer_order:
@@ -228,16 +227,15 @@ fn angular_skill() -> TechStackSkill {
              - src/app/<feature>/<feature>.model.ts\n\
              File paths in plan steps are relative to the PROJECT ROOT."
             .to_string(),
-        namespace_rules: format!(
-            "{}\n{}",
+        namespace_rules:
             "  Import only from Angular packages and local files:\n\
              - @angular/core        (@Component, @Injectable, @Input, @OnInit, ...)\n\
              - @angular/common/http (HttpClient, HttpClientModule)\n\
              - @angular/forms       (FormBuilder, Validators, ReactiveFormsModule)\n\
              Never call fetch() directly — inject HttpClient and use typed generics:\n\
                this.http.post<ProductResponse>('/products', body)\n\
-             Services: @Injectable({ providedIn: 'root' }) unless feature-lazy-loaded.",
-            crate::skills::EXACT_OPTIONAL_PROPERTY_RULE),
+             Services: @Injectable({ providedIn: 'root' }) unless feature-lazy-loaded."
+            .to_string(),
         common_rules: String::new(),
         layer_rules: std::collections::HashMap::new(),
         layer_order:
@@ -323,8 +321,6 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
             .to_string(),
         layer_rules: std::collections::HashMap::from([
             ("model",
-             format!(
-             "{}\n{}",
              "  ### Models\n\
              A model file exports one interface AND one standalone factory function:\n\
                import { randomUUID } from 'crypto'\n\
@@ -337,17 +333,13 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              (e.g. \"system sets modifiedAt to the current timestamp\" means `new Date()` at\n\
              construction). NEVER import npm packages here — built-in Node APIs only ('crypto', 'path').\n\
              \n\
-             #### Optional fields — CRITICAL TypeScript rule\n\
+             #### Optional fields\n\
              Declare optional fields with `?: Type` — NEVER with `field: Type | undefined`:\n\
                description?: string             ✓\n\
                description: string | undefined  ✗  a REQUIRED key, not an optional one\n\
              NEVER call Widget.create() — Widget is an interface; interfaces have no static methods.\n\
-             Callers import and call the factory function: import { createWidget } from '../models/Widget'\n\
-             \n\
-             This same rule governs how the factory builds the object it returns — an optional\n\
-             PARAMETER forwarded by shorthand into the optional PROPERTY of the same name does NOT\n\
-             automatically satisfy it:",
-             crate::skills::EXACT_OPTIONAL_PROPERTY_RULE)),
+             Callers import and call the factory function: import { createWidget } from '../models/Widget'"
+             .to_string()),
             ("event",
              "  ### Domain events\n\
              ALWAYS treat an event as a thin, immutable record that something happened. NEVER\n\
@@ -460,8 +452,6 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                connected after the method returns."
              .to_string()),
             ("route",
-             format!(
-             "{}\n{}",
              "  ### Route handlers\n\
              ALWAYS export a Router instance as the default export — NEVER a factory function.\n\
              app.ts imports it as a default import and mounts it directly:\n\
@@ -491,11 +481,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              ALWAYS use async/await — NEVER raw .then() chains.\n\
              NEVER instantiate EventPublisher or any infrastructure class in a route handler —\n\
              the service (from req.app.locals) owns all business logic, including publishing.\n\
-             Route responsibility: validate input → call service → return HTTP response. Nothing else.\n\
-             \n\
-             NEVER pass the parsed zod object straight to the service — `z.string().optional()`\n\
-             infers `field?: T | undefined`, the same exactOptionalPropertyTypes rule as Models:",
-             crate::skills::EXACT_OPTIONAL_PROPERTY_RULE)),
+             Route responsibility: validate input → call service → return HTTP response. Nothing else."
+             .to_string()),
             ("middleware",
              "  ### Error handling\n\
              src/middleware/errorHandler.ts exports a named ErrorRequestHandler:\n\

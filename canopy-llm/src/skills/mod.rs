@@ -35,35 +35,6 @@ pub fn detect_layer(file_path: &str) -> &'static str {
     }
 }
 
-/// The one fix pattern for every `exactOptionalPropertyTypes: true` violation this project has
-/// hit — declaring an optional field, a factory forwarding its own optional parameter, a route
-/// forwarding a validator's parsed output, and test fixture data all reduce to the same rule.
-/// Defined once and referenced from each layer/prompt that needs it, instead of a separate
-/// case-specific WRONG/CORRECT block per call site (which is how this grew the first three times).
-pub(crate) const EXACT_OPTIONAL_PROPERTY_RULE: &str =
-    "Under `exactOptionalPropertyTypes: true`, a property declared `field?: T` may be ABSENT \
-     from an object, but if the key IS present its value must be exactly `T` — never `undefined`. \
-     This applies no matter where the value comes from: a hand-written literal, a parameter \
-     forwarded by shorthand, or a third-party library's parsed/validated output (e.g. Zod's \
-     `.optional()` infers `T | undefined`, a wider type that is NOT assignable to `field?: T`).\n\
-     The fix is always the same shape — never assign `undefined` to the key; omit it instead:\n\
-       WRONG:   { ...rest, field: value }              // value may be `undefined`\n\
-       CORRECT: { ...rest, ...(value !== undefined && { field: value }) }\n\
-     `rest` in that CORRECT line means the source object WITHOUT `field` — destructure it out\n\
-     first (`const { field, ...rest } = source`). Spreading the ORIGINAL object first and only\n\
-     conditionally re-adding `field` after does NOT fix anything: the earlier spread already\n\
-     copied `field` (however it was — including a literal `undefined` value) onto the result,\n\
-     and a conditional spread that evaluates false is a no-op — it cannot remove a key another\n\
-     spread already added:\n\
-       WRONG:   const { name } = source                                    // field not destructured out\n\
-                { ...source, ...(source.field !== undefined && { field: source.field }) }\n\
-                // source.field is still on the result via `...source`, whether or not the second spread runs\n\
-       CORRECT: const { field, ...rest } = source\n\
-                { ...rest, ...(field !== undefined && { field }) }\n\
-     Apply this everywhere a possibly-undefined value flows into an optional-typed field: object \
-     literals, factory functions forwarding their own optional parameters, route handlers \
-     forwarding a validator's parsed output into a service call, and test fixture data.";
-
 /// Join a header with an ordered list of (heading, body) sections using the
 /// separator shape every skill type's render() output already used.
 pub(super) fn render_skill(header: &str, sections: &[(&str, &str)]) -> String {

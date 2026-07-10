@@ -1,5 +1,5 @@
 use crate::client::{LlmClient, LlmError};
-use crate::skills::{detect_layer, layer_has_worked_example, skill_for_build_system, skill_for_technology, testing_skill_from_adrs, EXACT_OPTIONAL_PROPERTY_RULE};
+use crate::skills::{detect_layer, layer_has_worked_example, skill_for_build_system, skill_for_technology, testing_skill_from_adrs};
 use canopy_core::*;
 
 fn step_prompt(
@@ -476,18 +476,6 @@ missing/invalid field or an error message; write tests only for this layer's own
         ""
     };
 
-    // tech_rules (above, in this same prompt) already spells out EXACT_OPTIONAL_PROPERTY_RULE
-    // in full for the "model" and "route" layers (see tech_stack.rs's Models/Route sections) —
-    // repeating the whole rule again here would send the identical ~230-word block twice in
-    // one call. Every other layer's tech_rules section doesn't mention it, so they still get
-    // the full text.
-    let optional_fields_note = if layer == "model" || layer == "route" {
-        "follow the exactOptionalPropertyTypes rule already given above — never assign \
-         `undefined` to the key, omit it instead.".to_string()
-    } else {
-        EXACT_OPTIONAL_PROPERTY_RULE.to_string()
-    };
-
     let contract_section = if (layer == "route" || layer == "api-client") && !contract_yaml.is_empty() {
         format!("OAS Contract — the route/endpoint path in your test MUST match this exactly:\n{contract_yaml}\n\n")
     } else {
@@ -559,8 +547,6 @@ missing/invalid field or an error message; write tests only for this layer's own
            ALWAYS write a separate test per declared condition, with boundary data matching that\n\
            condition — NEVER borrow the other constraint's number or message text.\n\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
-         - Optional fields in test data (declared `field?: Type`, per the rules above):\n\
-           {optional_fields_note}\n\
          - EXCEPTION — testing a \"missing mandatory field\" scenario: TypeScript rejects an\n\
 omitted required property or `undefined` positional argument at COMPILE time, before the test\n\
 can even run the RUNTIME check it's meant to test. ALWAYS cast `as any` at the narrowest point\n\
@@ -597,7 +583,6 @@ ONE of these two shapes (never mix them):\n\
         test_structure = test_structure,
         red_reason = red_reason,
         route_rule = route_rule,
-        optional_fields_note = optional_fields_note,
         scenario_coverage_note = scenario_coverage_note,
         contract = canopy_summary_contract(),
     )
