@@ -386,7 +386,7 @@ pub(crate) fn run_red_test_sanity_check(
         let short_name = std::path::Path::new(test_file).file_name().and_then(|n| n.to_str()).unwrap_or(test_file);
         let fix_result = progress.timed(
             step_idx,
-            format!("TDD 🔴 sanity — fixing {short_name} (attempt {}/{max_iterations}) — test fails for an unexpected reason", iteration + 1),
+            format!("sanity — fixing {short_name} (attempt {}/{max_iterations}) — test fails for an unexpected reason", iteration + 1),
             client,
             || fix_file(client, test_file, &content, &errors, service_source_files, &[], &test_skill, arch_skills, &prior_attempts),
         );

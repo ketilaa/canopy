@@ -197,7 +197,7 @@ pub(crate) fn execute_steps(
 
             let StepResult { content: test_content, summary: test_summary, deviations: test_deviations } = progress.timed(
                 i,
-                format!("TDD 🔴 — generating test    {test_file}"),
+                format!("generating test    {test_file}"),
                 &client,
                 || generate_unit_test_stub(
                     &client, story, spec, contract_yaml, step, &test_file,
@@ -216,7 +216,7 @@ pub(crate) fn execute_steps(
             let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
             let StepResult { content: stub_content, summary: stub_summary, deviations: stub_deviations } = progress.timed(
                 i,
-                format!("TDD 🔴 — generating stub    {}", step.file),
+                format!("generating stub    {}", step.file),
                 &client,
                 || execute_implementation_stub(
                     &client, story, spec, contract_yaml,
@@ -305,7 +305,7 @@ pub(crate) fn execute_steps(
             let green_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let StepResult { content: impl_content, summary: impl_summary, deviations: impl_deviations } = progress.timed(
                 i,
-                format!("TDD 🟢 — implementing      {}", step.file),
+                format!("implementing      {}", step.file),
                 &client,
                 || execute_implementation_with_test(
                     &client, story, spec, contract_yaml,
