@@ -396,6 +396,60 @@ the test file while it's still editable (`run_red_test_sanity_check` in `canopy-
 Don't remove this check thinking the compile check alone is redundant with it — they catch
 different failure classes.
 
+**A clean test PASS at Red phase means the stub lied, not that the test is broken.** The model
+is sometimes asked for a stub (`throw new Error('not implemented')` in every method) and hands
+back a full implementation instead, ignoring the stub-only instruction. `run_red_test_sanity_check`
+detects this via `test_file_passed_cleanly` (`canopy-cli/src/build_output.rs`) and accepts it
+immediately rather than treating the PASS as "an error to fix" — Green phase regenerates the impl
+file from scratch regardless, so nothing is lost. Before this fix, a PASS fell through to the
+generic "fix the test file" loop with the literal string `PASS <file>` as its "errors," and with
+nothing real to fix, the model invented unrelated changes across attempts until it drifted the
+test into a completely different, unrelated shape. If a fix loop's output looks like it hallucinated
+an unrelated domain, check whether the input it was fed was ever a real error in the first place.
+
+---
+
+## Diagnosing Dogfooding Runs
+
+Canopy is dogfooded against separate throwaway projects driven entirely through the `canopy`
+REPL — these are personal to whoever is running the session; never name one in a commit message
+or anything else shared from this repo, refer to it generically ("a dogfooding project") instead.
+When a dogfooding run misbehaves, the primary source of truth is that project's own
+`.canopy/logs/llm-debug.log` — every prompt and every raw LLM response, in call order, with a
+`[YYYY-MM-DDThh:mm:ssZ]` timestamp on every line.
+
+**Find the right slice of the log before reading it.** The log accumulates across every run ever
+made against that project, often spanning days and hundreds of thousands of lines. Grepping a
+skill/error string in isolation will surface matches from unrelated earlier runs. Anchor first:
+check the relevant `.canopy/stories/<id>/plan.yaml`'s mtime (or the log file's own tail) to find
+roughly when the run in question happened, then locate the actual boundary by searching for the
+step's own marker text (`Test file to create : <path>`, `Implementation file : <path>`) near that
+timestamp rather than trusting line-count proximity alone.
+
+**Rule out a recent prompt/skill change before blaming it.** "This got worse after our last fix"
+is a hypothesis, not a finding. Two checks settle it quickly: (1) could the changed text even
+reach the affected prompt? — `render_for_layer`/`render_for_planning` scope skill text to one
+layer, so an edit to the `"repository"` block cannot appear in a `"model"`-layer prompt; grep the
+actual prompt dump in the log for a distinctive phrase from your change to confirm one way or the
+other. (2) `git log -S '<distinctive phrase>'` (or `git blame` on the surrounding lines) to find
+when the suspect text was actually introduced, then compare that commit's timestamp to the failing
+run's log timestamps — a run that predates the change cannot have been caused by it.
+
+**A hallucination is a symptom, not the defect.** When a fix loop drifts into content that bears
+no relation to the story (wrong field names, an unrelated entity shape), don't fix the drifted
+output — walk backward through the log to the first iteration in that loop and read exactly what
+was fed to the model as "the error." If it wasn't a real error (e.g. a bare `PASS <file>` line
+handed to a "fix these errors" prompt), the defect is in the harness's outcome classification, not
+in prompt wording — fix the Rust-side check that misclassified the outcome (see the TDD Red-phase
+note above for a concrete example), not the prompt.
+
+**Compliance gap vs. harness gap.** If the model ignores an instruction that's demonstrably
+present in the actual prompt (confirmed via the log), that's a prompt-wording problem — see
+Prompt House Style. If the harness's own control flow has no branch for an outcome the model
+legitimately produced (a stub that over-delivers, a test that passes when it "shouldn't"), that's
+a Rust-side classification gap — fixing it in code is correct, not a violation of "fix prompts,
+not code," because the thing being fixed is deterministic control flow, not LLM output.
+
 ---
 
 ## Commit Discipline
