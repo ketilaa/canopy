@@ -465,8 +465,19 @@ fn unit_test_stub_prompt_ts(
     // Dogfooding Runs section). The implementation otherwise correctly does NOT throw, and the
     // test fails for a reason that has nothing to do with a real defect.
     let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" {
-        "This layer never validates input — that happens upstream. Skip any scenario about a \
-missing/invalid field or an error message; write tests only for this layer's own job.".to_string()
+        "This layer never validates input — that happens upstream (model factory or route\n\
+         boundary). NEVER write a test for a missing/invalid-field or error-message scenario at\n\
+         this layer, even though the BDD scenario list below includes one — skip it entirely and\n\
+         write tests only for this layer's own job.\n\
+           WRONG — re-testing the factory's own validation at this layer:\n\
+             it('throws an error when name is not provided', async () => {\n\
+               const invalid = createWidget(undefined as any, 'other-field-value')\n\
+               await expect(subject.saveWidget(invalid)).rejects.toThrow('name-value not provided...')\n\
+             })\n\
+           CORRECT: simply do not write a test for that scenario at this layer — it already has\n\
+           one at the model layer, and calling the factory with invalid input above throws\n\
+           immediately, before subject.saveWidget is ever reached, so the assertion never even\n\
+           executes what it claims to test.".to_string()
     } else {
         "One describe/it block per scenario below — cover every scenario, do not skip or merge any.".to_string()
     };
