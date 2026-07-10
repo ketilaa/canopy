@@ -36,6 +36,31 @@ fn report_broken_build(progress: Progress, idx: usize, step_id: &str, file: &str
     println!("  Fix the errors above, then re-run `canopy implement {story_id}` to continue.");
 }
 
+/// Every earlier "done" step's own file and (if it's a TDD candidate) its test file, in both
+/// project-root-relative and canonicalized-absolute form. A fix loop running during a LATER
+/// step's processing must never edit a step that's already been verified and marked done, in
+/// ANY phase — Red's compile check, Green's own compile check, or Green's test run all need this
+/// same protection. Each call site may still append its own additional entries (e.g. the CURRENT
+/// step's own test file, which Green phase must also protect once Red has generated it).
+fn done_steps_skip_list(plan: &StoryPlan) -> Vec<String> {
+    let mut skip = Vec::new();
+    for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
+        skip.push(s.file.clone());
+        if let Ok(abs) = std::fs::canonicalize(&s.file) {
+            skip.push(abs.to_string_lossy().to_string());
+        }
+        if is_tdd_candidate(&s.file) {
+            if let Some(prev_test) = derive_test_file_path(&s.file) {
+                skip.push(prev_test.clone());
+                if let Ok(abs) = std::fs::canonicalize(&prev_test) {
+                    skip.push(abs.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    skip
+}
+
 pub(crate) fn format_roots_context(packet: &roots_context::FeatureContextPacket) -> String {
     let mut parts = Vec::new();
     if !packet.symbols.is_empty() {
@@ -255,21 +280,7 @@ pub(crate) fn execute_steps(
                     // Red fix loop protects done-step impl files and test files from
                     // earlier TDD steps — but NOT the current step's test, which the
                     // fix loop is allowed to repair (e.g. wrong constructor pattern).
-                    let mut red_skip: Vec<String> = Vec::new();
-                    for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
-                        red_skip.push(s.file.clone());
-                        if let Ok(abs) = std::fs::canonicalize(&s.file) {
-                            red_skip.push(abs.to_string_lossy().to_string());
-                        }
-                        if is_tdd_candidate(&s.file) {
-                            if let Some(prev_test) = derive_test_file_path(&s.file) {
-                                red_skip.push(prev_test.clone());
-                                if let Ok(abs) = std::fs::canonicalize(&prev_test) {
-                                    red_skip.push(abs.to_string_lossy().to_string());
-                                }
-                            }
-                        }
-                    }
+                    let red_skip = done_steps_skip_list(&plan);
                     let red = run_fix_loop_logged(&client, svc, &step_service_dir, &compile_cmd,
                         &src_files, &red_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
                         Some(fix_log_dir), &format!("red-{}", step.file), &progress, i);
@@ -340,8 +351,18 @@ pub(crate) fn execute_steps(
                     let abs_test = std::fs::canonicalize(&test_file)
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or(test_file.clone());
+                    // Protect every earlier done step's file/test in ADDITION to this step's own
+                    // test — without this, a stack trace merely mentioning a done step's file
+                    // (e.g. a test that triggers that file's own legitimate validation) gets
+                    // misread as "this file is broken," and the fix loop can silently rewrite an
+                    // already-verified step. Confirmed: a repository test calling a factory with
+                    // deliberately-invalid input surfaced the factory's own file in the stack
+                    // trace, and this fix loop tried (and got lucky not) to "fix" it.
+                    let mut green_skip = done_steps_skip_list(&plan);
+                    green_skip.push(test_file.clone());
+                    green_skip.push(abs_test.clone());
                     let green = run_fix_loop_logged(&client, svc, &step_service_dir, &test_cmd,
-                        &src_files, &[test_file.clone(), abs_test.clone()], adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        &src_files, &green_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
                         Some(fix_log_dir), &format!("green-{}", step.file), &progress, i);
                     total_fix_iterations += green.iterations;
                     if !green.passed {
@@ -363,25 +384,8 @@ pub(crate) fn execute_steps(
                     // step.file itself.
                     let compile_cmd = compile_command_for_service(svc, &step_service_dir);
                     progress.phase(i, &format!("TDD 🟢 — compile check   $ {compile_cmd}"));
-                    let mut green_compile_skip: Vec<String> = Vec::new();
-                    for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
-                        green_compile_skip.push(s.file.clone());
-                        if let Ok(abs) = std::fs::canonicalize(&s.file) {
-                            green_compile_skip.push(abs.to_string_lossy().to_string());
-                        }
-                        if is_tdd_candidate(&s.file) {
-                            if let Some(prev_test) = derive_test_file_path(&s.file) {
-                                green_compile_skip.push(prev_test.clone());
-                                if let Ok(abs) = std::fs::canonicalize(&prev_test) {
-                                    green_compile_skip.push(abs.to_string_lossy().to_string());
-                                }
-                            }
-                        }
-                    }
-                    green_compile_skip.push(test_file.clone());
-                    green_compile_skip.push(abs_test.clone());
                     let compile_check = run_fix_loop_logged(&client, svc, &step_service_dir, &compile_cmd,
-                        &src_files, &green_compile_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
+                        &src_files, &green_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
                         Some(fix_log_dir), &format!("green-compile-{}", step.file), &progress, i);
                     total_fix_iterations += compile_check.iterations;
                     if !compile_check.passed {
@@ -436,13 +440,7 @@ pub(crate) fn execute_steps(
                     let compile_cmd = compile_command_for_service(svc, &step_service_dir);
                     progress.phase(i, &format!("compile   $ {compile_cmd}"));
                     let src_files = scan_service_source_files(&step_service_dir);
-                    let mut direct_skip: Vec<String> = Vec::new();
-                    for s in plan.steps.iter().filter(|s| s.status == StepStatus::Done) {
-                        direct_skip.push(s.file.clone());
-                        if let Ok(abs) = std::fs::canonicalize(&s.file) {
-                            direct_skip.push(abs.to_string_lossy().to_string());
-                        }
-                    }
+                    let direct_skip = done_steps_skip_list(&plan);
                     let direct = run_fix_loop_logged(&client, svc, &step_service_dir, &compile_cmd,
                         &src_files, &direct_skip, adrs, &arch_skills, MAX_FIX_ITERATIONS,
                         Some(fix_log_dir), &format!("direct-{}", step.file), &progress, i);
