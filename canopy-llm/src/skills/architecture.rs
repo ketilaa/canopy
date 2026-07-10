@@ -61,11 +61,11 @@ fn ddd_skill_for_tech(tech: &str) -> ArchitectureSkill {
                    Application service: calls the factory to construct, then the repository to persist."
                 .to_string(),
             anti_patterns:
-                "  No business logic in route handlers or repositories — route handlers translate HTTP;\n\
-                 repositories translate persistence.\n\
-                 No anemic domain model — a type that is only fields with all logic in services is not DDD;\n\
+                "  NEVER put business logic in route handlers or repositories — route handlers translate\n\
+                 HTTP; repositories translate persistence.\n\
+                 NEVER build an anemic domain model (a type that's only fields, all logic in services) —\n\
                  move invariants into the entity or service.\n\
-                 No findById that silently returns undefined without handling — throw a typed domain error\n\
+                 NEVER let findById silently return undefined unhandled — throw a typed domain error\n\
                  (e.g. WidgetNotFoundError) or return a discriminated union with explicit handling at the call site."
                 .to_string(),
         }
@@ -96,11 +96,11 @@ fn ddd_skill_for_tech(tech: &str) -> ArchitectureSkill {
                    Application service: calls the factory to construct, then the repository to persist."
                 .to_string(),
             anti_patterns:
-                "  No business logic in controllers or repositories — controllers translate HTTP;\n\
+                "  NEVER put business logic in controllers or repositories — controllers translate HTTP;\n\
                  repositories translate persistence.\n\
-                 No anemic domain model — an entity that is only getters/setters with all logic in\n\
-                 services is not DDD; move invariants into the entity.\n\
-                 No getById that silently returns null — throw a domain exception (WidgetNotFoundException)\n\
+                 NEVER build an anemic domain model (entity that's only getters/setters, all logic in\n\
+                 services) — move invariants into the entity.\n\
+                 NEVER let getById silently return null — throw a domain exception (WidgetNotFoundException)\n\
                  or return Optional with explicit handling at the call site."
                 .to_string(),
         }
@@ -193,13 +193,13 @@ fn microservices_skill() -> ArchitectureSkill {
              Service names are kebab-case and match the bounded context they represent."
             .to_string(),
         anti_patterns:
-            "  No shared database between services — even read-only access couples services to\n\
+            "  NEVER share a database between services — even read-only access couples services to\n\
              each other's schema evolution.\n\
-             No distributed transactions — use eventual consistency and compensating events.\n\
-             No shared domain model library — a common-domain JAR couples release cycles and\n\
+             NEVER use distributed transactions — use eventual consistency and compensating events.\n\
+             NEVER share a domain model library — a common-domain JAR couples release cycles and\n\
              violates bounded context autonomy.\n\
-             No direct method calls into another service's internal classes — only through its\n\
-             published OAS contract or domain events."
+             NEVER call another service's internal classes directly — only through its published\n\
+             OAS contract or domain events."
             .to_string(),
     }
 }

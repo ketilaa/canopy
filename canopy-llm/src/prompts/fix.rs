@@ -50,41 +50,38 @@ fn fix_prompt(
 
     let tdd_rules = if is_test_file {
         "\n## TDD — this is a test file\n\
-         - Do NOT change, weaken, or remove any assertions\n\
-         - Do NOT remove or rename test cases\n\
-         - Only fix: import paths, missing type annotations, syntax errors\n\
-         - If a test imports a symbol that does not exist yet, add a minimal import/mock — do NOT delete the test"
+         - NEVER change, weaken, or remove any assertions\n\
+         - NEVER remove or rename test cases\n\
+         - ALWAYS limit fixes to: import paths, missing type annotations, syntax errors\n\
+         - If a test imports a symbol that doesn't exist yet, add a minimal import/mock — NEVER delete the test"
     } else if is_stub {
         "\n## TDD — this is a Red-phase stub\n\
-         - Do NOT implement any business logic\n\
-         - Preserve all `throw new Error('not implemented')` or `return null;` bodies\n\
-         - Only fix: missing exports, import paths, type signatures, constructor declarations\n\
+         - NEVER implement any business logic\n\
+         - ALWAYS preserve `throw new Error('not implemented')` or `return null;` bodies\n\
+         - ALWAYS limit fixes to: missing exports, import paths, type signatures, constructor declarations\n\
          - The stub must compile and satisfy the test's type contract — nothing more"
     } else {
         ""
     };
 
     let extra_rules = if ext == "java" {
-        "\n- A Java source file contains exactly one top-level type declaration\n\
-         - Nothing may appear after the final closing brace of the top-level class/interface/enum/record\n\
-         - Remove any stray import statements, package declarations, or class bodies that appear after that brace\n\
-         - The file must begin with the package declaration\n\
-         - Constructor mismatch: look at the referenced file to find the available constructor(s).\n\
-           If only a no-args constructor is present, use: Foo f = new Foo(); f.setField(value); ...\n\
-           Do NOT call a multi-arg constructor that is not declared in the referenced file.\n\
-           Do NOT add a new constructor to a class that lives in a referenced file — only fix THIS file."
+        "\n- ALWAYS exactly one top-level type declaration per Java file, starting with the package declaration.\n\
+         - NEVER leave anything after the top-level class/interface/enum/record's final closing brace —\n\
+           remove stray imports, package declarations, or class bodies found there.\n\
+         - Constructor mismatch: ALWAYS check the referenced file for the available constructor(s) — if\n\
+           only no-args exists, use `Foo f = new Foo(); f.setField(value);`. NEVER call an undeclared\n\
+           multi-arg constructor, and NEVER add a constructor to a class in a referenced file — fix only THIS file."
     } else if file_path.ends_with("pom.xml") {
-        "\n- Only use dependencies from well-known Maven Central groupIds:\n\
+        "\n- ALWAYS use dependencies only from well-known Maven Central groupIds:\n\
            org.springframework.boot, com.h2database, org.projectlombok, com.fasterxml.jackson.*,\n\
            org.junit.*, org.assertj.*, org.mockito.*\n\
-         - Remove any dependency whose groupId is derived from this project — those are not published artifacts\n\
-         - Domain event classes (e.g. ProductCreated) are in the service's own domain/ package; they are NOT\n\
-           a separate JAR — remove any such dependency\n\
-         - ApplicationEventPublisher is in spring-context (via spring-boot-starter); no extra dep needed\n\
-         - For javax.validation use spring-boot-starter-validation\n\
-         - For javax.persistence use spring-boot-starter-data-jpa\n\
-         - Do not remove existing valid dependencies\n\
-         - Keep the XML well-formed and end with </project>"
+         - NEVER keep a dependency whose groupId is derived from this project — not a published artifact.\n\
+           Domain event classes (e.g. WidgetCreated) live in the service's own domain/ package, NOT a\n\
+           separate JAR.\n\
+         - ApplicationEventPublisher is in spring-context (via spring-boot-starter) — no extra dep needed.\n\
+         - javax.validation → spring-boot-starter-validation. javax.persistence → spring-boot-starter-data-jpa.\n\
+         - NEVER remove existing valid dependencies.\n\
+         - ALWAYS keep the XML well-formed, ending with </project>."
     } else {
         ""
     };
@@ -144,8 +141,8 @@ fn fix_prompt(
             .join("\n\n");
         format!(
             "\n## Previous attempts that did NOT fix the errors\n\
-             Do NOT repeat any of these — each one was tried and failed. If an attempt made NO\n\
-             changes, you MUST make a concrete, different code change this time:\n\n{entries}\n"
+             NEVER repeat any of these — each was tried and failed. ALWAYS make a concrete,\n\
+             different code change if the previous attempt made no changes:\n\n{entries}\n"
         )
     };
     format!(
@@ -165,10 +162,10 @@ fn fix_prompt(
          \n\
          {tdd_rules}\
          Rules:\n\
-         - Write ONLY the corrected file content first — no prose, no markdown fences, no explanations\
+         - ALWAYS write ONLY the corrected file content — no prose, no markdown fences, no explanations\
          {extra_rules}\n\
-         - Preserve all correct logic; only fix what the errors report\n\
-         - Only import from modules that exist in the project files listed above\n\
+         - ALWAYS preserve correct logic — fix only what the errors report.\n\
+         - ALWAYS import only from modules that exist in the project files listed above.\n\
          \n\
          {contract}",
         contract = canopy_summary_contract(),

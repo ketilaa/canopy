@@ -45,8 +45,8 @@ fn maven_skill() -> BuildSystemSkill {
              - <properties> with <java.version>17</java.version>\n\
              - <dependencies> with all required starters\n\
              - <build> with <plugins> containing spring-boot-maven-plugin\n\
-             When spring-boot-starter-parent is the <parent>, do NOT add <version> on\n\
-             managed starters — the BOM manages them."
+             NEVER add <version> on managed starters when spring-boot-starter-parent is the\n\
+             <parent> — the BOM manages them."
             .to_string(),
         dependency_rules:
             "  Only use groupIds that exist on Maven Central:\n\

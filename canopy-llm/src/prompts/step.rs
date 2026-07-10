@@ -82,9 +82,9 @@ fn step_prompt(
     let test_hint_section = match test_hint {
         Some((tf, tc, true)) if is_tsx => format!(
             "\nSTUB ONLY — return a renderable skeleton, no logic:\n\
-             - Export the component function with the correct name and props type.\n\
+             - ALWAYS export the component function with the correct name and props type.\n\
              - Render body: `return null;` — component must mount without errors.\n\
-             - Do NOT implement any UI, state, or handlers — the Green phase does that.\n\
+             - NEVER implement any UI, state, or handlers — the Green phase does that.\n\
              \n\
              Unit test this stub must compile and mount against:\n\
              --- {tf} ---\n\
@@ -92,10 +92,10 @@ fn step_prompt(
         ),
         Some((tf, tc, true)) if is_ts => format!(
             "\nSTUB ONLY — return a compilable skeleton, no logic:\n\
-             - Export every class/function/type the test below imports.\n\
+             - ALWAYS export every class/function/type the test below imports.\n\
              - Method bodies: `throw new Error('not implemented');` for all methods.\n\
              - Constructor bodies: empty (no field assignments needed yet).\n\
-             - Do NOT implement any logic — the Green phase replaces this stub.\n\
+             - NEVER implement any logic — the Green phase replaces this stub.\n\
              \n\
              Unit test this stub must compile against:\n\
              --- {tf} ---\n\
@@ -103,9 +103,9 @@ fn step_prompt(
         ),
         Some((tf, tc, true)) => format!(
             "\nSTUB ONLY — return a compilable skeleton, no business logic:\n\
-             - Declare every class, field, constructor, and method the unit test below references.\n\
+             - ALWAYS declare every class, field, constructor, and method the unit test below references.\n\
              - Method bodies: `return null;` for objects, `return 0;` for numbers, `return false;` for booleans, `return List.of();` for collections.\n\
-             - Do NOT implement any logic — the Green phase replaces this stub with the real implementation.\n\
+             - NEVER implement any logic — the Green phase replaces this stub with the real implementation.\n\
              \n\
              Unit test this stub must compile against:\n\
              --- {tf} ---\n\
@@ -114,8 +114,8 @@ fn step_prompt(
         Some((tf, tc, false)) => format!(
             "\nGREEN PHASE — implement to make all unit tests below pass.\n\
              Read the test file carefully: every assertion is a requirement.\n\
-             Use the EXACT method signatures shown in the sibling section — \
-do not add extra arguments or change parameter order relative to what is declared there.\n\
+             ALWAYS use the EXACT method signatures shown in the sibling section — NEVER add\n\
+             extra arguments or change parameter order relative to what is declared there.\n\
              \n\
              Unit tests that must pass:\n\
              --- {tf} ---\n\
@@ -455,20 +455,18 @@ missing/invalid field or an error message; write tests only for this layer's own
     };
 
     let route_rule = if layer == "route" {
-        "- Route tests: DO NOT import from 'app.ts' or '../src/app'. \
-Import the router from the implementation file — it is a Router INSTANCE, never a factory\n\
-  function (per the tech-stack rules above). Mount it on a local Express instance and inject\n\
-  the mocked service via app.locals BEFORE mounting, exactly as app.ts does with the real one:\n\
+        "- NEVER import from 'app.ts' or '../src/app' in a route test. ALWAYS import the router\n\
+  from the implementation file — it is a Router INSTANCE, never a factory. Mount it on a local\n\
+  Express instance and inject the mocked service via app.locals BEFORE mounting:\n\
     import router from '../src/routes/...'\n\
     const app = express()\n\
     app.use(express.json())\n\
-    app.locals.productService = mockProductService\n\
-    app.use('/products', router)\n\
-  Do NOT write `router(mockProductService)` — the route module has no factory to call.\n\
-- The mount path (e.g. '/products' above) MUST match the exact path in the OAS Contract\n\
-  below and the mount path used in app.ts — never invent a different prefix (e.g. '/api/...')\n\
-  unless the contract specifies one.\n\
-- Route tests: mock only the service layer (NOT repository or event publisher directly).\n"
+    app.locals.widgetService = mockWidgetService\n\
+    app.use('/widgets', router)\n\
+  NEVER write `router(mockWidgetService)` — the route module has no factory to call.\n\
+- ALWAYS match the mount path (e.g. '/widgets' above) to the OAS Contract and app.ts exactly —\n\
+  NEVER invent a different prefix (e.g. '/api/...') unless the contract specifies one.\n\
+- ALWAYS mock only the service layer in a route test — NEVER repository or event publisher directly.\n"
     } else {
         ""
     };
@@ -528,47 +526,40 @@ Import the router from the implementation file — it is a Router INSTANCE, neve
            (e.g. a constructor signature, a domain event's fields). If the implementation file\n\
            you are testing is covered by one of those rules, your test data and mocks MUST\n\
            match that exact shape — do not guess a plausible-looking alternative.\n\
-         - NEVER mock the subject under test — this applies to BOTH forms:\n\
-           (1) module-level: do NOT write `jest.mock('{import_path}', ...)`.\n\
-           (2) instance-level: do NOT write `jest.spyOn(subject, 'methodName').mockResolvedValue(...)` \
-or `.mockImplementation(...)` on a method of the real '{module_name}' instance you constructed —\n\
+         - NEVER mock the subject under test, in either form:\n\
+           (1) module-level: `jest.mock('{import_path}', ...)`.\n\
+           (2) instance-level: `jest.spyOn(subject, 'methodName').mockResolvedValue(...)` on the\n\
+               real '{module_name}' instance you constructed —\n\
              WRONG: jest.spyOn(subject, 'saveWidget').mockResolvedValue(fakeResult)\n\
                     const result = await subject.saveWidget(widget)\n\
                     expect(result).toEqual(fakeResult)  // proves nothing — you replaced the method\n\
-           Either form defeats the test's purpose: this file's job is to exercise the REAL\n\
-           '{module_name}' implementation and assert on what it ACTUALLY does — not on a value\n\
-           you told a mock to return. Call the real method directly and assert on its real result.\n\
-           Mocking or spying on '{module_name}' is only correct in tests for its CONSUMERS\n\
-           (e.g. a route or service test that depends on it) — never in '{module_name}''s own test file.\n\
+           ALWAYS call the real method and assert on what it ACTUALLY does. Mocking/spying on\n\
+           '{module_name}' is only correct in tests for its CONSUMERS — never its own test file.\n\
          - Write REAL assertions.\n\
          - {red_reason}\n\
-           Do NOT use expect.assertions(0) or skip assertions.\n\
-         - Mock dependencies with jest.fn().\n\
+           NEVER use expect.assertions(0) or skip assertions.\n\
+         - ALWAYS mock dependencies with jest.fn().\n\
          - jest is a global — NEVER import it.\n\
-         - Test data: use plain string literals for IDs (e.g. 'product-1'), never crypto or uuid imports.\n\
-         - Boundary conditions (max length, max items, etc.): construct REAL data that naturally\n\
-           satisfies the condition — NEVER mock a language built-in to fake it. Properties like\n\
-           String.prototype.length and Array.prototype.length are non-configurable; jest.spyOn(...,\n\
-           'length', 'get') throws \"Property 'length' is not declared configurable\" every time.\n\
+         - ALWAYS use plain string literals for test IDs (e.g. 'widget-1') — NEVER crypto or uuid imports.\n\
+         - Boundary conditions (max length, max items, etc.): ALWAYS construct REAL data that\n\
+           naturally satisfies the condition. NEVER mock a language built-in to fake it —\n\
+           String.prototype.length / Array.prototype.length are non-configurable; jest.spyOn(...,\n\
+           'length', 'get') always throws \"Property 'length' is not declared configurable\":\n\
              WRONG: jest.spyOn(String.prototype, 'length', 'get').mockReturnValue(201)\n\
              CORRECT: const name = 'x'.repeat(201)   // an actual 201-character string\n\
              CORRECT: const categories = Array.from({{ length: 6 }}, (_, i) => `cat-${{i}}`)   // actually 6 items\n\
-           An array-typed field (e.g. `type: '[string]'`) can carry TWO independent validations —\n\
-           `max_length` bounds EACH element's string length, `max_items` bounds the ARRAY's item\n\
-           count. These are different conditions with different error messages: write a separate\n\
-           test for each one that is actually declared, and make each test's boundary data match\n\
-           the condition it exercises (an over-count array for max_items, an over-length string\n\
-           inside the array for max_length) — never borrow the other constraint's number or\n\
-           message text.\n\
+           An array field (e.g. `type: '[string]'`) can carry TWO independent validations —\n\
+           `max_length` (each element's string length) and `max_items` (the array's item count).\n\
+           ALWAYS write a separate test per declared condition, with boundary data matching that\n\
+           condition — NEVER borrow the other constraint's number or message text.\n\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
          - Optional fields in test data (declared `field?: Type`, per the rules above):\n\
            {optional_fields_note}\n\
-         - EXCEPTION — testing a \"missing mandatory field\" scenario: you cannot omit a \
-required property from a typed object literal, or pass `undefined` for a required positional \
-parameter; TypeScript rejects both at COMPILE time, before the test ever runs, even though the \
-point is to test a RUNTIME validation error. Cast `as any` at the narrowest possible point so \
-the compiler allows constructing the deliberately-invalid call — check the subject's ACTUAL \
-signature first, then match ONE of these two shapes (never mix them):\n\
+         - EXCEPTION — testing a \"missing mandatory field\" scenario: TypeScript rejects an\n\
+omitted required property or `undefined` positional argument at COMPILE time, before the test\n\
+can even run the RUNTIME check it's meant to test. ALWAYS cast `as any` at the narrowest point\n\
+to allow the deliberately-invalid call — check the subject's ACTUAL signature first, then match\n\
+ONE of these two shapes (never mix them):\n\
              Single options-object subject (e.g. a service method taking one payload param):\n\
                const invalidPayload = {{ manufacturer: 'Acme', model: 'X1' }} as any\n\
                await expect(subject.createWidget(invalidPayload)).rejects.toThrow('name-value not provided...')\n\

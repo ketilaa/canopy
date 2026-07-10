@@ -142,13 +142,12 @@ fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> TechStack
              (Maven structure and dependency validity rules are in the Maven build skill below.)\n\
              Integration tests: import DTOs from {p}.dto — never define local classes that shadow them.\n\
              Include all java.util.* and annotation imports. Test only OAS-declared endpoints.\n\
-             Validation annotation type-safety rules (violations cause UnexpectedTypeException at runtime):\n\
-             - @Positive / @Min / @Max / @DecimalMin / @DecimalMax — ONLY on numeric types\n\
-               (int, Integer, long, Long, BigDecimal, Double, etc.)\n\
-               NEVER on String, List, Set, Collection, or any other non-numeric type.\n\
-             - For a non-null, non-empty collection:  @NotNull + @NotEmpty  (NOT @Positive)\n\
-             - For a non-blank string:               @NotBlank  (NOT @NotNull alone)\n\
-             - For a non-null object reference:      @NotNull",
+             Validation annotation type safety:\n\
+             - @Positive / @Min / @Max / @DecimalMin / @DecimalMax: ALWAYS numeric types\n\
+               (int, Integer, long, Long, BigDecimal, Double). NEVER String, List, Set, Collection.\n\
+             - Non-null, non-empty collection: ALWAYS @NotNull + @NotEmpty. NEVER @Positive.\n\
+             - Non-blank string: ALWAYS @NotBlank. NEVER @NotNull alone.\n\
+             - Non-null object reference: ALWAYS @NotNull.",
             p = pkg
         )),
     }
@@ -187,7 +186,7 @@ fn react_vite_skill() -> TechStackSkill {
              HTTP: use fetch() only — no axios, ky, or any other HTTP library.\n\
              Do not import a file that does not exist yet.\n\
              A file MUST NOT import from its own path — no self-imports.\n\
-             NEVER write 'import React from \"react\"' — the project uses the automatic JSX transform (React 17+); React is in scope without importing it.",
+             NEVER import React explicitly (\"import React from 'react'\") — the automatic JSX transform puts it in scope already.",
             crate::skills::EXACT_OPTIONAL_PROPERTY_RULE),
         common_rules: String::new(),
         layer_rules: std::collections::HashMap::new(),
@@ -209,11 +208,9 @@ fn react_vite_skill() -> TechStackSkill {
                return <div><WidgetForm formData={...} onSubmit={...} /></div>  ✗  form owns its state\n\
              The FIRST LINE of every file MUST be valid TypeScript/TSX code.\n\
              NEVER write a language label ('tsx', 'typescript', 'ts') as the first line.\n\
-             Fix-loop — TS2322 on a JSX element means this file passes props the component does not accept.\n\
-             Check the referenced files for the component's actual Props type.\n\
-             React.FC or React.FC<{}> with no type parameter accepts NO props.\n\
-             Remove the offending props from the JSX call in THIS file — do NOT modify the component.\n\
-             Also remove state variables and handlers that only existed to feed those removed props."
+             TS2322 on a JSX element: ALWAYS remove the offending props (and any state/handlers\n\
+             that only fed them) from the caller in THIS file. NEVER modify the component to\n\
+             accept them — React.FC / React.FC<{}> with no type parameter accepts NO props."
             .to_string()
         ),
     }
@@ -292,8 +289,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              Correct import:  import { Widget } from '../models/Widget'     ✓  relative from repositories/ to models/\n\
              WRONG:           import { Widget } from '@services/<name>/src/models/Widget'  ✗  path alias — invalid\n\
              WRONG:           import { Widget } from 'services/<name>/src/models/Widget'   ✗  not a node module\n\
-             Rule: strip the service prefix (e.g. services/<name>/) from both paths, then compute\n\
-             the relative path between the two src/ locations.\n\
+             ALWAYS strip the service prefix (e.g. services/<name>/) from both paths first, then\n\
+             compute the relative path between the two src/ locations.\n\
              \n\
              #### Import depth within src/\n\
              All src/ subdirectories are siblings — one dot-dot only:\n\
@@ -335,12 +332,10 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                export function createWidget(name: string, ...): Widget {\n\
                  return { id: randomUUID(), createdAt: new Date(), name, ... }\n\
                }\n\
-             Only include fields this entity's schema actually lists — do not add a field (e.g.\n\
-             modifiedAt) the skill did not ask for. When the schema DOES list a system-generated\n\
-             field beyond id/createdAt, set its initial value from the story's own acceptance\n\
-             criteria or BDD scenarios (e.g. \"the system sets modifiedAt to the current timestamp\"\n\
-             means `new Date()` at construction, not `null`) — never assume a default for it here.\n\
-             No imports from npm packages — use only built-in Node.js APIs ('crypto', 'path', etc.).\n\
+             ALWAYS include only fields the entity schema lists. NEVER default a system-generated\n\
+             field (e.g. modifiedAt) to null — derive it from the story's acceptance criteria\n\
+             (e.g. \"system sets modifiedAt to the current timestamp\" means `new Date()` at\n\
+             construction). NEVER import npm packages here — built-in Node APIs only ('crypto', 'path').\n\
              \n\
              #### Optional fields — CRITICAL TypeScript rule\n\
              Declare optional fields with `?: Type` — NEVER with `field: Type | undefined`:\n\
@@ -355,9 +350,9 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              crate::skills::EXACT_OPTIONAL_PROPERTY_RULE)),
             ("event",
              "  ### Domain events\n\
-             A domain event is a thin, immutable record that something happened — NEVER a copy of\n\
-             the aggregate's schema. Ignore the Entity schema's mandatory/optional field list when\n\
-             writing an event file; it describes the aggregate, not the event payload.\n\
+             ALWAYS treat an event as a thin, immutable record that something happened. NEVER\n\
+             copy the aggregate's schema into it — ignore the Entity schema's field list here;\n\
+             it describes the aggregate, not the event payload.\n\
                import { randomUUID } from 'crypto'\n\
                export interface WidgetCreated {\n\
                  eventId: string;\n\
@@ -382,12 +377,12 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                async findWidgetById(id: string): Promise<Widget | null>   // read by id\n\
                async findWidgets(): Promise<Widget[]>                     // list\n\
                async deleteWidget(id: string): Promise<void>              // delete\n\
-             Only generate the methods the story actually needs — never add methods speculatively.\n\
+             ALWAYS generate only the methods the story needs — NEVER add methods speculatively.\n\
              Method naming: save<Entity>, find<Entity>ById, find<Entity>s, delete<Entity>.\n\
-             Persistence MUST be real, using the 'pg' package against PostgreSQL — NEVER an\n\
-             in-memory array/object/Map, and NEVER a comment like \"// Simulate database save\"\n\
-             standing in for an actual query. Accept a pg.Pool via the constructor — app.ts owns\n\
-             the Pool and injects it, exactly the way it injects EventPublisher:\n\
+             ALWAYS use real 'pg' persistence against PostgreSQL. NEVER use an in-memory\n\
+             array/object/Map or a stub comment (\"// Simulate database save\") in its place.\n\
+             ALWAYS accept a pg.Pool via the constructor — app.ts owns and injects it, the same\n\
+             way it injects EventPublisher:\n\
                import { Pool } from 'pg'\n\
                export class WidgetRepository {\n\
                  constructor(private pool: Pool) {}\n\
@@ -411,7 +406,7 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              .to_string()),
             ("infrastructure",
              "  ### EventPublisher\n\
-             The publisher wraps kafkajs. Exact class shape — copy this structure:\n\
+             ALWAYS use this exact class shape — it wraps kafkajs:\n\
              import { Kafka, Producer } from 'kafkajs';\n\
              export class EventPublisher {\n\
                private producer: Producer;\n\
@@ -434,23 +429,20 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
             ("service",
              "  ### Service\n\
              RESPONSIBILITY: business logic — orchestrates the factory, repository, and event\n\
-             publisher for one use case. A method that creates a new aggregate accepts ONLY the\n\
-             fields the caller actually supplies — NEVER the full entity type, which also\n\
-             includes system-generated fields (id, createdAt, modifiedAt) that only the factory\n\
-             assigns:\n\
+             publisher for one use case. ALWAYS accept ONLY the fields the caller supplies —\n\
+             NEVER the full entity type (it also carries factory-assigned fields: id, createdAt,\n\
+             modifiedAt):\n\
                WRONG:   async createWidget(widgetData: Widget): Promise<Widget> { ... }  ✗\n\
                CORRECT: async createWidget(\n\
                           widgetData: Omit<Widget, 'id' | 'createdAt' | 'modifiedAt'>\n\
                         ): Promise<Widget> { ... }\n\
-             The parameter type matches exactly what the model's factory function takes as\n\
-             arguments — check the factory's signature (via the sibling context above) before\n\
-             declaring the service method's parameter type; do not guess a different shape.\n\
+             ALWAYS match the parameter type to the factory's actual signature (check the\n\
+             sibling context above) — NEVER guess a different shape.\n\
              \n\
-             Calling the factory: it takes POSITIONAL arguments (see the Model rule above),\n\
-             NEVER a single object — destructure the method's own parameter into the factory call.\n\
-             The factory generates id/createdAt/modifiedAt internally; do NOT generate or pass\n\
-             them yourself, and do NOT import randomUUID/crypto/uuid into the service AT ALL —\n\
-             the service has no reason to touch id generation, only the factory does:\n\
+             ALWAYS call the factory with POSITIONAL arguments (see the Model rule above),\n\
+             destructuring the method's own parameter — NEVER a single object. NEVER generate or\n\
+             pass id/createdAt/modifiedAt yourself, and NEVER import randomUUID/crypto/uuid into\n\
+             the service — only the factory touches id generation:\n\
                WRONG:\n\
                  import { v4 as randomUUID } from 'crypto';  ✗ crypto has no v4 export\n\
                  const widget = createWidget({ ...widgetData, id: randomUUID(), createdAt: new Date() });  ✗ wrong call shape AND wrong responsibility\n\
@@ -467,47 +459,38 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              format!(
              "{}\n{}",
              "  ### Route handlers\n\
-             This file MUST export a Router instance as the default export — NEVER a\n\
-             factory function. app.ts imports it as a default import and mounts it directly:\n\
+             ALWAYS export a Router instance as the default export — NEVER a factory function.\n\
+             app.ts imports it as a default import and mounts it directly:\n\
                const router = Router()       ✓\n\
                export default router         ✓\n\
                export const registerRoutes = (router: Router) => { ... }   ✗ app.ts and\n\
                  tests both do `import router from './widgets'` — a factory breaks that import\n\
-             Every handler MUST declare next in the signature:\n\
+             ALWAYS declare next in the handler signature:\n\
                router.post('/', async (req: Request, res: Response, next: NextFunction) => {\n\
-             CRITICAL — the path inside THIS file is relative to wherever app.ts mounts this\n\
-             router (e.g. app.use('/widgets', router)) — it is NEVER the resource name again.\n\
-             Repeating it here creates a double-mounted path (/widgets/widgets, not /widgets),\n\
-             which 404s on every real request:\n\
+             NEVER repeat the resource name in this file's own route path — it's relative to\n\
+             wherever app.ts mounts this router, not the resource name again:\n\
                WRONG:   router.post('/widgets', ...)   ✗ mounted at /widgets → accessible at /widgets/widgets\n\
                CORRECT: router.post('/', ...)          ✓ mounted at /widgets → accessible at /widgets\n\
-             A sub-resource still starts from that same root, not the mount prefix:\n\
-               router.get('/:id', ...)   ✓ mounted at /widgets → accessible at /widgets/:id\n\
-             Pass all errors to next(err) — never catch-and-respond in the route body.\n\
-             Validate input at the route boundary with zod:\n\
-             - define a zod schema in the route file\n\
-             - zod schema field names MUST match the domain interface field names exactly\n\
-               (e.g., `categories` not `categoryIds` if the domain interface uses `categories`)\n\
-             - use .optional() for optional fields — NEVER .nullable() or .nullable().optional()\n\
-               (.nullable() changes the type to include null, causing TS assignment errors downstream)\n\
-             - CRITICAL — .optional() placement: .optional() returns ZodOptional which has NO .max()/.min().\n\
-               .optional() MUST be the LAST call in the chain, after all constraints:\n\
-               z.string().max(1000).optional()                    ✓  optional string, max 1000 chars\n\
-               z.string().min(1).max(200).optional()              ✓  optional string, 1-200 chars\n\
-               z.string().optional().max(1000)                    ✗  RUNTIME ERROR: ZodOptional has no .max()\n\
-               z.string().optional().min(1)                       ✗  RUNTIME ERROR: ZodOptional has no .min()\n\
-             - for array fields with element constraints: z.array(z.string().max(100)).max(5)\n\
-               .maxLength() does NOT exist on zod arrays — always use .max() on both array and element\n\
-             - call schema.parse(req.body); pass errors to next(err)\n\
-             async/await everywhere — no raw .then() chains.\n\
-             Route handlers do NOT instantiate EventPublisher or any infrastructure class.\n\
-             The service (obtained from req.app.locals) handles all business logic including event publishing.\n\
+               router.get('/:id', ...)                 ✓ sub-resource — mounted at /widgets → /widgets/:id\n\
+             ALWAYS pass errors to next(err) — NEVER catch-and-respond in the route body.\n\
+             ALWAYS validate input at the route boundary with zod:\n\
+             - Define a zod schema in the route file; field names MUST match the domain\n\
+               interface exactly (e.g. `categories`, not `categoryIds`, if the domain uses `categories`).\n\
+             - ALWAYS use .optional() for optional fields. NEVER .nullable() or .nullable().optional().\n\
+             - ALWAYS call .optional() LAST in the chain, after all constraints (ZodOptional has\n\
+               no .max()/.min()):\n\
+               z.string().max(1000).optional()                    ✓\n\
+               z.string().optional().max(1000)                    ✗  RUNTIME ERROR: no .max() on ZodOptional\n\
+             - For array fields: z.array(z.string().max(100)).max(5) — zod arrays have no\n\
+               .maxLength(); ALWAYS use .max() on both the array and its elements.\n\
+             - Call schema.parse(req.body); pass errors to next(err).\n\
+             ALWAYS use async/await — NEVER raw .then() chains.\n\
+             NEVER instantiate EventPublisher or any infrastructure class in a route handler —\n\
+             the service (from req.app.locals) owns all business logic, including publishing.\n\
              Route responsibility: validate input → call service → return HTTP response. Nothing else.\n\
              \n\
-             CRITICAL — never pass the parsed zod object straight to the service. A field\n\
-             declared `z.string().optional()` infers as `field?: T | undefined` — the SAME\n\
-             exactOptionalPropertyTypes rule as the Models section applies here too, just\n\
-             triggered by a validator's output instead of a hand-written literal:",
+             NEVER pass the parsed zod object straight to the service — `z.string().optional()`\n\
+             infers `field?: T | undefined`, the same exactOptionalPropertyTypes rule as Models:",
              crate::skills::EXACT_OPTIONAL_PROPERTY_RULE)),
             ("middleware",
              "  ### Error handling\n\
@@ -518,19 +501,14 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              NEVER use default export for errorHandler — app.ts must destructure it by name.\n\
              import { ZodError } from 'zod' — use instanceof ZodError,\n\
              NOT z.ZodError (z is not imported in middleware; ZodError is a named export from 'zod').\n\
-             Infrastructure lifecycle (connect/disconnect) belongs in the caller, not as a private field\n\
-             the route accesses — create EventPublisher as a local variable in the route handler."
+             NEVER store EventPublisher as a private field the route accesses. ALWAYS construct\n\
+             it as a local variable in the route handler — connect/disconnect belong to the caller."
              .to_string()),
             ("config",
              "  ### tsconfig.json\n\
-             Use EXACTLY this structure — do not add, remove, or \"improve\" any compilerOption,\n\
-             even a stricter one that sounds like good practice. Every extra strict flag\n\
-             (exactOptionalPropertyTypes, noUncheckedIndexedAccess, etc.) has to be satisfied by\n\
-             every later generation call for this service, across files that never see each\n\
-             other's output — one call adding a flag on its own initiative is how a\n\
-             self-inflicted, project-wide type error gets created with no corresponding rule\n\
-             anywhere to satisfy it. Test files are co-located under src/ (never a separate\n\
-             tests/ directory), so a single include entry covers everything:\n\
+             ALWAYS use EXACTLY this structure. NEVER add, remove, or \"improve\" any\n\
+             compilerOption, even a stricter one. Test files are co-located under src/, so one\n\
+             include entry covers everything:\n\
              {\n\
                \"compilerOptions\": {\n\
                  \"target\": \"ES2020\",\n\
@@ -550,32 +528,27 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              .to_string()),
             ("app",
              "  ### App structure\n\
-             src/app.ts is the composition root — it MUST import and register every router and\n\
-             middleware module created by this plan. A module created but not wired into app.ts\n\
-             is dead code.\n\
-             app.ts MUST export the Express app instance directly — NEVER wrap it in a factory\n\
-             function or class. Supertest and index.ts both import the instance:\n\
+             ALWAYS import and register every router/middleware module created by this plan —\n\
+             an unwired module is dead code.\n\
+             ALWAYS export the Express app instance directly — NEVER wrap it in a factory\n\
+             function or class:\n\
                const app = express()         ✓\n\
                export default app            ✓\n\
                export default function createApp() { ... }   ✗  callers get a function, not an app\n\
-             Body parsing: app.use(express.json()) — NEVER import or use 'body-parser'.\n\
-             body-parser is NOT in package.json — importing it causes MODULE_NOT_FOUND at runtime.\n\
+             ALWAYS use express.json() for body parsing. NEVER import 'body-parser' (not in\n\
+             package.json — MODULE_NOT_FOUND at runtime):\n\
                app.use(express.json())      ✓  built into Express\n\
                import bodyParser from 'body-parser'  ✗  not in package.json\n\
-               app.use(bodyParser.json())   ✗  not in package.json\n\
-             Every router is a default export (see the Route handlers rule) — import it as\n\
-             `import widgetRouter from './routes/widgets'`, never as a named import.\n\
-             app.ts creates service/repository instances (via new) and registers them on app.locals;\n\
-             routers access them via req.app.locals — no constructor arguments needed.\n\
-             Import middleware using its actual export style — named exports need braces:\n\
+             Every router is a default export (see Route handlers) — import it as\n\
+             `import widgetRouter from './routes/widgets'`, NEVER as a named import.\n\
+             ALWAYS import middleware using its actual export style:\n\
                import { errorHandler } from './middleware/errorHandler'   ✓  (named export)\n\
                import errorHandler from './middleware/errorHandler'        ✗  default import of named export → undefined\n\
-             Middleware order matters: routers first, error-handling middleware last.\n\
-             src/app.ts builds and exports the Express app WITHOUT calling app.listen().\n\
-             src/index.ts is the ONLY file that calls app.listen().\n\
-             This separation lets Supertest import app without starting a real server.\n\
-             app.ts creates repository instances and assigns them to app.locals so routes\n\
-             can access them via req.app.locals without constructing them on every request.\n\
+             Middleware order: routers first, error-handling middleware last.\n\
+             ALWAYS build/export the app in app.ts WITHOUT calling app.listen() — ONLY index.ts\n\
+             calls it, so Supertest can import app without starting a server.\n\
+             ALWAYS create service/repository instances (via new) in app.ts and register them on\n\
+             app.locals — routers access them via req.app.locals, no constructor arguments needed.\n\
              A repository backed by PostgreSQL needs the shared Pool passed in — app.ts creates\n\
              ONE Pool from the connection string and injects it into every repository:\n\
                import { Pool } from 'pg'\n\
@@ -584,7 +557,7 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                app.locals.widgetRepository = new WidgetRepository(pool)\n\
              \n\
              ### Router mount paths\n\
-             app.ts MUST mount every router with its resource path — NEVER without a path:\n\
+             ALWAYS mount every router with its resource path — NEVER without one:\n\
                app.use('/widgets', widgetRouter)    ✓  POST /widgets → router.post('/', ...)\n\
                app.use(widgetRouter)                ✗  router.post('/') responds to POST /, not POST /widgets → 404\n\
              Router handler paths are relative to the mount point:\n\

@@ -83,10 +83,10 @@ Standard imports:
   import userEvent from '@testing-library/user-event'
 
 Component test pattern:
-  describe('ProductForm', () => {
+  describe('WidgetForm', () => {
     it('should submit form data when all required fields are filled', async () => {
       const onSubmit = vi.fn()
-      render(<ProductForm onSubmit={onSubmit} />)
+      render(<WidgetForm onSubmit={onSubmit} />)
       await userEvent.type(screen.getByLabelText(/name/i), 'Widget')
       await userEvent.click(screen.getByRole('button', { name: /submit/i }))
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'Widget' }))
@@ -97,7 +97,7 @@ API function test pattern (mock fetch globally):
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true, status: 201,
-      headers: { get: (h: string) => h === 'Location' ? '/api/products/uuid' : null },
+      headers: { get: (h: string) => h === 'Location' ? '/api/widgets/uuid' : null },
       json: async () => ({ id: 'uuid', name: 'Widget' })
     }))
   })
@@ -123,10 +123,10 @@ Standard imports:
   import userEvent from '@testing-library/user-event'
 
 Component test pattern:
-  describe('ProductForm', () => {
+  describe('WidgetForm', () => {
     it('should submit form data when all required fields are filled', async () => {
       const onSubmit = jest.fn()
-      render(<ProductForm onSubmit={onSubmit} />)
+      render(<WidgetForm onSubmit={onSubmit} />)
       await userEvent.type(screen.getByLabelText(/name/i), 'Widget')
       await userEvent.click(screen.getByRole('button', { name: /submit/i }))
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'Widget' }))
@@ -137,7 +137,7 @@ API function test pattern (mock fetch globally):
   beforeEach(() => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true, status: 201,
-      headers: { get: (h: string) => h === 'Location' ? '/api/products/uuid' : null },
+      headers: { get: (h: string) => h === 'Location' ? '/api/widgets/uuid' : null },
       json: async () => ({ id: 'uuid', name: 'Widget' })
     } as Response)
   })
@@ -152,20 +152,20 @@ const ANGULAR_UNIT_TEST_SKILL: &str = "\
 
 Component tests via TestBed:
   beforeEach(() => TestBed.configureTestingModule({
-    declarations: [ProductFormComponent],
+    declarations: [WidgetFormComponent],
     imports: [ReactiveFormsModule, HttpClientTestingModule],
-    providers: [{ provide: ProductService, useValue: mockProductService }]
+    providers: [{ provide: WidgetService, useValue: mockWidgetService }]
   }).compileComponents())
-  const fixture = TestBed.createComponent(ProductFormComponent)
+  const fixture = TestBed.createComponent(WidgetFormComponent)
   fixture.detectChanges()
   const el: HTMLElement = fixture.nativeElement
 
 Service tests:
   beforeEach(() => TestBed.configureTestingModule({
     imports: [HttpClientTestingModule],
-    providers: [ProductService]
+    providers: [WidgetService]
   }))
-  service = TestBed.inject(ProductService)
+  service = TestBed.inject(WidgetService)
   httpMock = TestBed.inject(HttpTestingController)
   afterEach(() => httpMock.verify())
 
@@ -186,24 +186,24 @@ Route / integration test pattern:
   import { app } from '../app'
   import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-  describe('POST /api/products', () => {
+  describe('POST /api/widgets', () => {
     it('returns 201 with Location header when payload is valid', async () => {
-      const res = await request(app).post('/api/products')
+      const res = await request(app).post('/api/widgets')
         .send({ name: 'Widget', price: 29.99 })
         .set('Content-Type', 'application/json')
       expect(res.status).toBe(201)
-      expect(res.headers.location).toMatch(/\\/api\\/products\\//)
+      expect(res.headers.location).toMatch(/\\/api\\/widgets\\//)
     })
     it('returns 400 when mandatory field is missing', async () => {
-      const res = await request(app).post('/api/products').send({})
+      const res = await request(app).post('/api/widgets').send({})
       expect(res.status).toBe(400)
     })
   })
 
 Service unit test pattern (mock repository):
-  vi.mock('../repository/ProductRepository')
-  import { ProductRepository } from '../repository/ProductRepository'
-  const mockRepo = vi.mocked(ProductRepository)
+  vi.mock('../repository/WidgetRepository')
+  import { WidgetRepository } from '../repository/WidgetRepository'
+  const mockRepo = vi.mocked(WidgetRepository)
   mockRepo.save.mockResolvedValue({ id: 'uuid', ...payload })";
 
 const NODE_EXPRESS_UNIT_TEST_COMMON: &str = "\
@@ -219,20 +219,19 @@ const NODE_EXPRESS_UNIT_TEST_COMMON: &str = "\
       repositories/
       infrastructure/
       models/
-  Test files live NEXT TO the file they test, in the SAME directory — never a separate
-  tests/ directory. This is the standard JS/TS convention (not Java's mirrored-tree one).
+  ALWAYS put test files NEXT TO the file they test, in the SAME directory — NEVER a separate
+  tests/ directory (JS/TS convention, not Java's mirrored tree).
 
-### Import and jest.mock paths — co-located, so imports follow the SAME depth rule as
-### production code (see the tech-stack rules' Import depth within src/ section): the
-### file being tested is same-directory; everything else is one dot-dot to a sibling folder.
+### Import and jest.mock paths — same depth rule as production code: same-directory for the
+### file under test, one dot-dot for a sibling folder.
   import request from 'supertest'                                          ✓
-  import { ProductService } from './ProductService'                       ✓  (same directory — the file under test)
-  import { ProductRepository } from '../repositories/ProductRepository'   ✓  (sibling directory)
+  import { WidgetService } from './WidgetService'                         ✓  (same directory — the file under test)
+  import { WidgetRepository } from '../repositories/WidgetRepository'     ✓  (sibling directory)
   import { EventPublisher } from '../infrastructure/EventPublisher'       ✓  (sibling directory)
-  jest.mock('../repositories/ProductRepository')                          ✓
+  jest.mock('../repositories/WidgetRepository')                           ✓
   jest.mock('../infrastructure/EventPublisher', () => ({ ... }))         ✓
-  Route tests do NOT import app.ts at all — see the Route test example below, which mounts
-  the router on a local Express instance instead.
+  NEVER import app.ts in a route test — mount the router on a local Express instance instead
+  (see the Route example below).
 
 ### Forbidden paths (imports AND jest.mock)
 These will cause module-not-found errors at runtime:
@@ -243,15 +242,13 @@ These will cause module-not-found errors at runtime:
   uuid(), faker()                                ✗  not in devDependencies — use plain strings
 
 ### jest is a global — NEVER import it
-ts-jest with CommonJS injects jest as a global — no import is needed or allowed:
+ts-jest injects jest as a global automatically:
   jest.fn()                                      ✓  jest is already in scope
   jest.Mocked<T>                                 ✓  type reference, no import
   import { jest } from '@jest/globals'           ✗  causes TS2305: Module has no exported member 'jest'
   import jest from '@jest/globals'               ✗  same — ts-jest globals mode does not export jest
-Do NOT add any import statement for jest. Use jest.fn(), jest.mock(), jest.Mocked<T> directly.
 
-### Test IDs and test data — use plain string literals
-Tests do NOT need real UUIDs. Use plain string literals:
+### Test IDs and test data — ALWAYS plain string literals, NEVER real UUIDs:
   const id = 'test-id-123'                       ✓  simple, readable, predictable
   import { v4 as uuid } from 'uuid'              ✗  uuid not in devDependencies
   import { v4 as uuid } from 'crypto'            ✗  crypto has no v4 export — RUNTIME ERROR
@@ -259,11 +256,10 @@ Tests do NOT need real UUIDs. Use plain string literals:
 Use literal dates too: new Date('2024-01-01') instead of new Date().
 
 ### Variable scope: mocks used across it() blocks
-Any mock, subject, or fixture referenced in more than one it() block MUST be declared with
-`let` at the describe()-level — OUTSIDE beforeEach — and only ASSIGNED inside beforeEach.
-Declaring it with `const`/`let` INSIDE the beforeEach callback scopes it to that callback;
-every it() block below then fails with TS2304 \"Cannot find name '<var>'\" because the variable
-never existed outside beforeEach's own function body.
+ALWAYS declare a mock/subject/fixture used in more than one it() block with `let` at
+describe()-level, assigning it only inside beforeEach. NEVER declare it with `const`/`let`
+INSIDE beforeEach — that scopes it to the callback, and every it() below fails with TS2304
+\"Cannot find name '<var>'\":
   WRONG — mockConnection only exists inside beforeEach's closure:
     describe('WidgetGateway', () => {
       let gateway: WidgetGateway
@@ -291,15 +287,14 @@ never existed outside beforeEach's own function body.
     })
 
 ### Jest assertion rules
-  Use .toThrow() not .toThrowError() — toThrowError was removed in Jest 30.
-  mockResolvedValue always requires an argument — use mockResolvedValue(undefined) for void.
-  NEVER use expect.any(X) where X is a TypeScript interface — interfaces have no runtime
-  representation and this causes TS2693. Use expect.objectContaining({field: value}) instead.
+  ALWAYS .toThrow() — NEVER .toThrowError() (removed in Jest 30).
+  ALWAYS pass an argument to mockResolvedValue() — use mockResolvedValue(undefined) for void.
+  NEVER expect.any(X) for a TypeScript interface (TS2693 — no runtime representation).
+  ALWAYS expect.objectContaining({field: value}) instead.
 
 ### Imports in test files
-Every class or function used in a test MUST be explicitly imported — even when mocked.
-jest.mock() replaces the module at runtime but does NOT create the binding; without the
-import, `new EventPublisher(...)` throws ReferenceError at parse time.
+ALWAYS explicitly import every class/function used in a test, even when mocked — jest.mock()
+replaces the module but does NOT create the binding:
   import { EventPublisher } from '../infrastructure/EventPublisher'   ✓ (after jest.mock; sibling directory)
   new EventPublisher('', '')  without importing EventPublisher            ✗ ReferenceError";
 
@@ -347,24 +342,20 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
     })\n\
   })\n\
 \n\
-  CRITICAL — mocking a CLASS is a different pattern from mocking an interface (the Repository\n\
-  and EventPublisher examples elsewhere use a plain `{ method: jest.fn() } as any` object because\n\
-  those are constructed by the service via a plain object, not `new`'d directly by the test).\n\
-  A class the test itself constructs with `new` needs `jest.mock('../services/WidgetService')`\n\
-  (auto-mocks every prototype method) PLUS a cast on the constructed instance, because\n\
-  TypeScript's static type of `new WidgetService(...)` is still the REAL class, which has no\n\
-  `.mockResolvedValue`:\n\
+  Mocking a CLASS constructed with `new` differs from mocking a plain-object interface\n\
+  (Repository/EventPublisher examples use `{ method: jest.fn() } as any` since the service\n\
+  builds those as plain objects). ALWAYS pair `jest.mock('../services/WidgetService')` with a\n\
+  cast on the constructed instance — its static type is still the real class:\n\
     WRONG:   let mockWidgetService: WidgetService = new WidgetService(a, b)\n\
              mockWidgetService.createWidget.mockResolvedValue(...)   ✗ TS2339: no .mockResolvedValue\n\
     CORRECT: let mockWidgetService: jest.Mocked<WidgetService>\n\
              mockWidgetService = new WidgetService(a, b) as jest.Mocked<WidgetService>\n\
-  The constructor arguments passed to `new WidgetService(...)` are never used — jest.mock replaces\n\
-  the real constructor body with a no-op — so pass `{} as any` for each one, matching however many\n\
-  the real constructor declares.\n\
+  jest.mock() no-ops the real constructor — ALWAYS pass `{} as any` for each constructor\n\
+  argument, matching however many the real constructor declares.\n\
 \n\
 ### Scope discipline\n\
-  Only write tests for the HTTP methods and service operations described in the story.\n\
-  Do NOT generate GET/DELETE/PUT route tests unless the story's acceptance criteria require them."
+  ALWAYS write tests only for the HTTP methods/operations the story describes. NEVER add\n\
+  GET/DELETE/PUT route tests the acceptance criteria don't require."
          .to_string()),
         ("model",
          "  ### Model unit test example\n\
@@ -388,7 +379,7 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
   RULES for model tests:\n\
   - NEVER write `new Widget(...)` — the model is an interface, not a class; `new` will not compile\n\
   - NEVER call `widget.save()` or any persistence method — models have no such methods\n\
-  - Use `import { createWidget }` for the factory call; use `import type { Widget }` for type annotations only"
+  - ALWAYS `import { createWidget }` for the factory call, `import type { Widget }` for types only"
          .to_string()),
         ("service",
          "  ### Service unit test example\n\
@@ -432,44 +423,35 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
     expect(mockRepo.saveWidget).toHaveBeenCalledWith(expect.objectContaining({ name: 'name-value' }))\n\
     expect(mockPublisher.publish).toHaveBeenCalledWith(expect.objectContaining({ widgetId: result.id }))\n\
   })\n\
-  RULE — this is the ONLY correct pattern, do not deviate from it: every assertion above\n\
-  matches specific fields via objectContaining/toMatchObject. NEVER build a second, separate\n\
-  object (by calling the aggregate factory or the event factory a second time) and compare it\n\
-  by deep equality — every randomUUID()/new Date() call produces a DIFFERENT value, so two\n\
-  independently-built objects never match, even when the code is completely correct.\n\
-  This includes id/createdAt/modifiedAt inside a toMatchObject(...) literal — the factory\n\
-  assigns these BEFORE any repository mock is even called, so setting a fake id/date on the\n\
-  mock's resolved value and putting that SAME fake value inside toMatchObject(...) does not\n\
-  make them match either:\n\
+  ALWAYS assert via objectContaining/toMatchObject on specific fields, exactly as above. NEVER\n\
+  build a second object (factory or event factory called again) and deep-equal it — every\n\
+  randomUUID()/new Date() call produces a different value, even when the code is correct. This\n\
+  includes id/createdAt/modifiedAt inside a toMatchObject(...) literal — a matching fake value\n\
+  in the mock does not make them equal either:\n\
     WRONG: mockRepo.saveWidget.mockResolvedValue({ ...widget, id: 'fake-id' })\n\
            expect(result).toMatchObject({ id: 'fake-id', name: 'name-value' })   ✗ id differs\n\
-  CORRECT: never put id/createdAt/modifiedAt inside the toMatchObject(...) literal at all —\n\
-  check them separately with expect.any(String) / toBeInstanceOf(Date), exactly as shown above.\n\
-  The same mistake also appears as a STANDALONE assertion, not just inside toMatchObject(...) —\n\
-  same root cause (the mock invents a value never asked for), different shape:\n\
+  CORRECT: never put id/createdAt/modifiedAt inside toMatchObject(...) — check them separately\n\
+  with expect.any(String) / toBeInstanceOf(Date), exactly as shown above.\n\
+  Same mistake, standalone assertion form (the mock invents an unrequested value):\n\
     WRONG: const widgetId = 'test-id-123'\n\
            mockRepo.saveWidget.mockImplementation(async (widget) => ({ ...widget, id: widgetId }))\n\
            const result = await service.createWidget({ name: 'name-value' })\n\
            expect(result.id).toEqual(widgetId)   ✗ the service returns the FACTORY's product,\n\
-           never whatever the repository mock resolved to — reassigning id/createdAt/modifiedAt\n\
-           in the mock's return value cannot make the service's real return value match it.\n\
-  CORRECT: mock the repository to resolve with the SAME object it was called with (as in the\n\
-  worked example above), then assert result.id with expect.any(String) — never against a\n\
-  literal the mock invented."
+           never whatever the repository mock resolved to.\n\
+  CORRECT: mock the repository to resolve with the SAME object passed in; assert result.id with\n\
+  expect.any(String), never a mock-invented literal."
          .to_string()),
         ("repository",
          "  ### Repository unit test example (real method, mocked Pool — never mock the method itself)\n\
-  The repository's OWN test must call its REAL methods and assert on their REAL behavior. Mock\n\
-  the injected pg.Pool (an external dependency) — never jest.spyOn the repository's own method:\n\
+  ALWAYS call the repository's REAL methods and assert real behavior — mock only the injected\n\
+  pg.Pool. NEVER jest.spyOn the repository's own method:\n\
     import { Pool } from 'pg'\n\
     import { WidgetRepository } from './WidgetRepository'\n\
     import { createWidget } from '../models/Widget'\n\
 \n\
-    NEVER declare the mock as `jest.Mocked<Pool>` — pg.Pool.query is a heavily overloaded\n\
-    generic method, and TypeScript's Mocked<> utility collapses its parameter type to `never`\n\
-    for overloaded signatures it can't resolve, causing TS2345 on every mockResolvedValue() call\n\
-    even though the code is correct. Declare a minimal plain shape instead and cast only at the\n\
-    point you hand it to the constructor:\n\
+    NEVER declare the mock as `jest.Mocked<Pool>` — pg.Pool.query's overloads collapse to\n\
+    `never` under Mocked<>, causing TS2345 on every mockResolvedValue() call. ALWAYS declare a\n\
+    minimal plain shape instead, cast only at construction:\n\
     let mockPool: { query: jest.Mock }\n\
     let subject: WidgetRepository\n\
 \n\
@@ -494,10 +476,9 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
          .to_string()),
         ("infrastructure",
          "  ### Wrapper unit test example (SUT obtains its real collaborator via a factory method)\n\
-  When the constructor calls a factory/getter method on an injected dependency to obtain the\n\
-  REAL object it uses internally (e.g. `this.client = connection.getClient()`), the mocked\n\
-  factory method MUST return the SAME mock object the test asserts against — never two\n\
-  disconnected mocks for the same collaborator:\n\
+  When the constructor obtains its real collaborator via a factory/getter (e.g.\n\
+  `this.client = connection.getClient()`), ALWAYS make the mocked factory return the SAME mock\n\
+  object the test asserts against — NEVER two disconnected mocks:\n\
     WRONG — the SUT never touches mockClient, so every assertion on it sees 0 calls:\n\
       const mockConnection = { getClient: jest.fn().mockReturnValue({ open: jest.fn(), ... }) } as any  ✗\n\
       const mockClient = { open: jest.fn(), ... } as any                                                ✗ never wired in\n\
@@ -510,17 +491,14 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
       const gateway = new WidgetGateway(mockConnection)\n\
       await gateway.open()\n\
       expect(mockClient.open).toHaveBeenCalled()   // passes — same object\n\
-  Rule: whenever a factory method (getClient(), getConnection(), createClient(), etc.) is stubbed\n\
-  with mockReturnValue({...}), that argument must BE the mock instance asserted against later —\n\
-  build it as its own variable first, then pass it into mockReturnValue(...).\n\
+  ALWAYS build the mock instance as its own variable first, then pass it into a stubbed factory\n\
+  method (getClient(), getConnection(), createClient(), ...) via mockReturnValue(...) — it must\n\
+  BE the object asserted against later.\n\
 \n\
-  When these mocks are ALSO hoisted to describe-level scope (per the variable-scope rule above,\n\
-  needed as soon as more than one it() block uses them), do NOT declare them with the real\n\
-  external-library type (its SDK's Client/Connection type) — a partial mock only implementing\n\
-  the methods this test needs will NOT satisfy that type's full member list (most SDK client\n\
-  interfaces require far more members than any one class ever calls), causing TS2322\n\
-  \"Property '<member>' is missing\". Declare hoisted mocks as `any` instead, and cast only the\n\
-  outer object at construction time:\n\
+  When hoisted to describe-level (per the variable-scope rule above), NEVER declare these mocks\n\
+  with the real SDK type (Client/Connection) — a partial mock won't satisfy its full member list\n\
+  (TS2322 \"Property '<member>' is missing\"). ALWAYS declare hoisted mocks as `any`, cast only\n\
+  at construction:\n\
     WRONG — partial object can't satisfy the full interface:\n\
       let mockClient: ExternalClient          ✗\n\
       let mockConnection: ExternalConnection  ✗\n\
@@ -534,12 +512,10 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
         mockConnection = { getClient: jest.fn().mockReturnValue(mockClient) } as unknown as ExternalConnection\n\
       })\n\
 \n\
-  ### kafkajs Producer — concrete worked example (this is the SAME factory pattern as above:\n\
-  `this.producer = kafka.producer()` is `this.client = connection.getClient()` with kafkajs's\n\
-  real names — build mockProducer with jest.fn() methods FIRST, exactly per the CORRECT/hoisted\n\
-  rules above; do NOT declare `mockProducer = {} as Producer` and then jest.spyOn() it — spyOn\n\
-  wraps an EXISTING method, and an empty object has none, so every spyOn call throws\n\
-  \"Property '<method>' does not exist in the provided object\" before the test body even runs:\n\
+  ### kafkajs Producer (same factory pattern as above — kafka.producer() is getClient()).\n\
+  ALWAYS build mockProducer with jest.fn() methods FIRST. NEVER declare\n\
+  `mockProducer = {} as Producer` and then jest.spyOn() it — spyOn requires an EXISTING method,\n\
+  and an empty object has none:\n\
     WRONG:\n\
       mockProducer = {} as Producer                                    ✗ no methods to spy on\n\
       mockKafka.producer = jest.fn().mockReturnValue(mockProducer)\n\
@@ -560,10 +536,9 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
         await eventPublisher.connect()\n\
         expect(mockProducer.connect).toHaveBeenCalled()                 ✓ already a jest.fn()\n\
       })\n\
-  `Producer.send(record: ProducerRecord): Promise<RecordMetadata[]>` — the record passed IN\n\
-  (`{ topic, messages }`) and the value it resolves TO are different shapes. `RecordMetadata`\n\
-  has `topicName`/`partition`/`errorCode` (plus optional `offset`/`timestamp`/`baseOffset`/\n\
-  `logAppendTime`/`logStartOffset`) — it has NO `topic` and NO `messages` field:\n\
+  `Producer.send()` resolves to `RecordMetadata[]` (`topicName`/`partition`/`errorCode`, plus\n\
+  optional `offset`/`timestamp`/`baseOffset`/`logAppendTime`/`logStartOffset`) — NEVER the\n\
+  `{ topic, messages }` shape you passed IN:\n\
     WRONG — mirrors send()'s own ARGUMENT shape, not its RETURN type:\n\
       send: jest.fn().mockResolvedValue([{ topic: 'widget-events', messages: [] }])   ✗ TS2353\n\
     CORRECT: send: jest.fn().mockResolvedValue([{ topicName: 'widget-events', partition: 0, errorCode: 0 }])\n\

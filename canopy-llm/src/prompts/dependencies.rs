@@ -36,7 +36,7 @@ pub fn propose_dependencies(
         String::new()
     } else {
         format!(
-            "\n## Previously rejected dependencies (do NOT propose these again)\n{}\n",
+            "\n## Previously rejected dependencies (NEVER propose these again)\n{}\n",
             previously_rejected.iter().map(|p| format!("- {}", p)).collect::<Vec<_>>().join("\n")
         )
     };
@@ -47,7 +47,7 @@ pub fn propose_dependencies(
             "npm package name (e.g. \"zod\", \"kafkajs\")",
             "dev: true for devDependencies (build tools, @types/* stubs, test libraries); dev: false for runtime dependencies",
             "package.json",
-            "Built-in Node.js APIs (crypto, fs, path, etc.) are always available — do NOT propose them.",
+            "Built-in Node.js APIs (crypto, fs, path, etc.) are always available — NEVER propose them.",
         ),
         canopy_core::TechFamily::JvmGradle => (
             "Java / Gradle",

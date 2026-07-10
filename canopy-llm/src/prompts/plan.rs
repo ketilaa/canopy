@@ -119,38 +119,38 @@ fn plan_prompt_for_service(
         let it_skill = integration_testing_skill(tech);
         format!(
             "\n## Testing plan\n\
-             - Unit test files (*Test.java) are auto-generated per class by the TDD loop.\n\
-               DO NOT include unit test files in this plan.\n\
-             - Integration test files (*IT.java) test the full stack end-to-end.\n\
-               Include them as the LAST step(s) in the plan.\n\
+             - Unit test files (*Test.java) are auto-generated per class by the TDD loop —\n\
+               NEVER include them in this plan.\n\
+             - Integration test files (*IT.java) test the full stack end-to-end. ALWAYS include\n\
+               them as the LAST step(s) in the plan.\n\
              {it_skill}\n"
         )
     } else if is_node {
         format!(
             "\n## Testing plan\n\
              - jest.config.js and test devDependencies (jest, ts-jest, supertest, etc.) are \
-               installed by `canopy scaffold` — do NOT include jest.config.js or package.json in the plan.\n\
-             - Test files live NEXT TO the file they test, in the SAME directory under src/ — \
-               never a separate tests/ directory (standard JS/TS convention, not Java's).\n\
+               installed by `canopy scaffold` — NEVER include jest.config.js or package.json in the plan.\n\
+             - ALWAYS put test files NEXT TO the file they test, in the SAME directory under src/ — \
+               NEVER a separate tests/ directory (JS/TS convention, not Java's).\n\
              - TDD cycle (automatic): EVERY file under src/models/, src/events/, src/repositories/, \
                src/infrastructure/, src/middleware/, src/services/, and src/routes/ gets a co-located \
-               test file written automatically by the TDD cycle — NEVER add test steps for any of them.\n\
-               ✗ DO NOT write: src/models/Product.test.ts  src/events/ProductCreated.test.ts\n\
-               ✗ DO NOT write: src/repositories/ProductRepository.test.ts  src/infrastructure/EventPublisher.test.ts\n\
-               ✗ DO NOT write: src/services/ProductService.test.ts  src/routes/products.test.ts\n\
-             - Test steps MUST list the implementation file they test in depends_on.\n\
-             - Test files MUST be the last steps in the plan.\n\
-             - Do NOT include a test file for src/app.ts or src/index.ts.\n"
+               test file written automatically — NEVER add a test step for any of them.\n\
+               ✗ NEVER write: src/models/Widget.test.ts  src/events/WidgetCreated.test.ts\n\
+               ✗ NEVER write: src/repositories/WidgetRepository.test.ts  src/infrastructure/EventPublisher.test.ts\n\
+               ✗ NEVER write: src/services/WidgetService.test.ts  src/routes/widgets.test.ts\n\
+             - ALWAYS list the implementation file a test step tests in depends_on.\n\
+             - Test steps MUST be the last steps in the plan.\n\
+             - NEVER include a test file for src/app.ts or src/index.ts.\n"
         )
     } else if is_react {
         format!(
             "\n## Testing plan\n\
-             - Test files live NEXT TO the file they test, in the SAME directory under src/ — \
-               never a separate tests/ directory (standard JS/TS convention, not Java's).\n\
+             - ALWAYS put test files NEXT TO the file they test, in the SAME directory under src/ — \
+               NEVER a separate tests/ directory (JS/TS convention, not Java's).\n\
              - TDD cycle (automatic): EVERY file under src/api/ and EVERY file under src/components/ \
-               gets a co-located test file written automatically — NEVER add test steps for them.\n\
-               ✗ DO NOT write: src/api/ProductApi.test.ts  src/components/ProductForm.test.tsx\n\
-             - Only libraries from the testing strategy ADR; no msw, Playwright, or Cypress.\n\
+               gets a co-located test file written automatically — NEVER add a test step for them.\n\
+               ✗ NEVER write: src/api/WidgetApi.test.ts  src/components/WidgetForm.test.tsx\n\
+             - ALWAYS use only libraries from the testing strategy ADR — NEVER msw, Playwright, or Cypress.\n\
              - Test steps MUST be the last steps in the list.\n"
         )
     } else {
@@ -246,9 +246,8 @@ fn plan_prompt_for_service(
          - depends_on MUST only list implementation source files — NEVER list test files or package.json.\n\
          - Test steps MUST list the source file they test in depends_on — never empty for a test step.\n\
          \n\
-         CRITICAL — output rules:\n\
-         Your entire response is the YAML. Begin with `steps:` and end with the last list item.\n\
-         Do NOT write ``` anywhere. Do NOT add explanations, summaries, or any text before or after the YAML.\n",
+         Your entire response is the YAML — begin with `steps:`, end with the last list item.\n\
+         NEVER write ``` anywhere. NEVER add explanations, summaries, or any text before or after the YAML.\n",
         sname = service.name,
         story_id = story.id,
         as_a = story.as_a,
