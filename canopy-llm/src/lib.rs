@@ -1,6 +1,9 @@
 mod client;
 pub use client::{LlmClient, LlmError};
 
+mod tools;
+pub use tools::{ChatMessage, ToolCall, ToolSpec, ToolTurn};
+
 mod repair;
 
 mod tech;

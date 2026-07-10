@@ -1,3 +1,5 @@
+use crate::tools::{message_to_json, parse_openai_message, tool_to_json};
+use crate::{ChatMessage, ToolSpec, ToolTurn};
 use canopy_core::*;
 use thiserror::Error;
 
@@ -195,6 +197,56 @@ impl LlmClient {
             ))?
             .to_string();
         Ok((text, json))
+    }
+
+    /// Tool-calling variant of `complete`, for the experimental tool-use command. Deliberately
+    /// scoped to the OpenAI-compatible (Ollama/llama-server) provider only — that's the one
+    /// actually being dogfooded with a local model; Anthropic tool-use support is a separate
+    /// addition once this is proven worth building further on, not assumed to work the same way.
+    pub fn complete_with_tools(&self, messages: &[ChatMessage], tools: &[ToolSpec]) -> Result<ToolTurn, LlmError> {
+        match self.provider {
+            LlmProvider::Ollama => self.call_openai_compatible_with_tools(messages, tools),
+            LlmProvider::Anthropic => Err(LlmError::UnexpectedShape(
+                "complete_with_tools is not yet implemented for the Anthropic provider".to_string()
+            )),
+        }
+    }
+
+    fn call_openai_compatible_with_tools(&self, messages: &[ChatMessage], tools: &[ToolSpec]) -> Result<ToolTurn, LlmError> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": messages.iter().map(message_to_json).collect::<Vec<_>>(),
+            "tools": tools.iter().map(tool_to_json).collect::<Vec<_>>(),
+        });
+
+        if self.debug {
+            eprintln!("\n╔══ LLM TOOL-CALL INPUT ═════════════════════════════════╗");
+            eprintln!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+            eprintln!("╚════════════════════════════════════════════════════════╝\n");
+        }
+
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        let response = ureq::post(&url)
+            .set("content-type", "application/json")
+            .send_json(body)
+            .map_err(|e| LlmError::Http(e.to_string()))?;
+        let json: serde_json::Value = response
+            .into_json()
+            .map_err(|e| LlmError::JsonParse(e.to_string()))?;
+
+        let input_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+        let output_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+        self.total_input_tokens.fetch_add(input_tokens, std::sync::atomic::Ordering::Relaxed);
+        self.total_output_tokens.fetch_add(output_tokens, std::sync::atomic::Ordering::Relaxed);
+
+        let message = json["choices"][0]["message"].clone();
+        if self.debug {
+            eprintln!("╔══ LLM TOOL-CALL RESPONSE ══════════════════════════════╗");
+            eprintln!("{}", serde_json::to_string_pretty(&message).unwrap_or_default());
+            eprintln!("╚════════════════════════════════════════════════════════╝\n");
+        }
+
+        parse_openai_message(&message).map_err(LlmError::UnexpectedShape)
     }
 }
 

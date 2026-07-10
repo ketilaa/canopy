@@ -6,6 +6,7 @@ use crate::commands::intent::cmd_intent;
 use crate::commands::scaffold::cmd_scaffold;
 use crate::commands::spec::cmd_spec;
 use crate::commands::stories::cmd_stories;
+use crate::commands::try_tools::cmd_try_tools;
 use crate::roots;
 use crate::util::{iso_now, uuid_v4};
 use anyhow::Result;
@@ -70,6 +71,9 @@ enum Commands {
     },
     /// Show the global dependency decision log
     Dependencies,
+    /// EXPERIMENTAL — checks whether the configured model can reliably call a tool at all,
+    /// using a tiny self-contained scenario. Not part of any real pipeline.
+    TryTools,
 }
 
 pub(crate) fn run_repl(debug: bool) -> Result<()> {
@@ -135,6 +139,7 @@ pub(crate) fn run_repl(debug: bool) -> Result<()> {
                         Commands::Intent { statement }         => cmd_intent(statement, debug),
                         Commands::Spec { story_id }            => cmd_spec(&story_id, debug),
                         Commands::Dependencies                 => cmd_dependencies(),
+                        Commands::TryTools                     => cmd_try_tools(debug),
                     };
                     if let Err(e) = result {
                         eprintln!("  error: {e:#}");
