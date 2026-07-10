@@ -246,7 +246,7 @@ impl LlmClient {
             eprintln!("╚════════════════════════════════════════════════════════╝\n");
         }
 
-        parse_openai_message(&message).map_err(LlmError::UnexpectedShape)
+        parse_openai_message(&message, tools).map_err(LlmError::UnexpectedShape)
     }
 }
 
