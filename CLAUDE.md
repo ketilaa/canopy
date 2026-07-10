@@ -426,3 +426,18 @@ must tell the story of this project, not just list touched files.
 This authorization is scoped to routine checkpoint commits. It does not extend to force-push,
 amending published commits, or anything else the general git safety rules already gate —
 those still require an explicit ask.
+
+**Backing safety net, not a substitute for judgment.** `.claude/hooks/checkpoint-reminder.sh`
+(wired into `.claude/settings.json` — the shared, project-wide, checked-in config, not the
+personal and gitignored `.claude/settings.local.json`) fires on session Stop if source changed
+and nothing is staged. It is purely informational: no git command, no install, no nested agent
+call — it only surfaces a reminder, hash-gated so it fires once per distinct diff and can never
+block a session from ending. If it appears, a checkpoint was probably missed; commit before
+continuing.
+
+An earlier version of this automated the commit itself (auto-stage, invoke a nested `claude -p`
+to draft/gate the message, commit, reinstall) — Claude Code's own safety classifier rejected it
+as a self-modification risk: unsupervised commit-and-deploy at session end, decided by a
+background agent nobody was watching. Don't reintroduce that shape. The reminder-only design
+above is the deliberate replacement — supervised judgment stays with whichever session is
+active; the hook only makes sure that judgment gets exercised instead of silently skipped.
