@@ -93,9 +93,21 @@ fn step_prompt(
         Some((tf, tc, true)) if is_ts => format!(
             "\nSTUB ONLY — return a compilable skeleton, no logic:\n\
              - ALWAYS export every class/function/type the test below imports.\n\
-             - Method bodies: `throw new Error('not implemented');` for all methods.\n\
+             - Every function/method body: ONLY `throw new Error('not implemented');` — no\n\
+               validation, no field assignment, no constructed return value. This applies to\n\
+               a standalone factory function exactly the same as a class method.\n\
+               WRONG — this is a full implementation, not a stub:\n\
+                 export function createWidget(name: string, otherField: string): Widget {{\n\
+                   if (!name) throw new Error('name-value not provided...')\n\
+                   return {{ id: randomUUID(), createdAt: new Date(), name, otherField }}\n\
+                 }}\n\
+               CORRECT:\n\
+                 export function createWidget(name: string, otherField: string): Widget {{\n\
+                   throw new Error('not implemented');\n\
+                 }}\n\
              - Constructor bodies: empty (no field assignments needed yet).\n\
-             - NEVER implement any logic — the Green phase replaces this stub.\n\
+             - NEVER implement any logic, even logic you already know is correct — the Green\n\
+               phase replaces this stub in a separate step.\n\
              \n\
              Unit test this stub must compile against:\n\
              --- {tf} ---\n\
