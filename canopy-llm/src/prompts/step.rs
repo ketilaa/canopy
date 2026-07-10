@@ -108,6 +108,12 @@ fn step_prompt(
              - Constructor bodies: empty (no field assignments needed yet).\n\
              - NEVER implement any logic, even logic you already know is correct — the Green\n\
                phase replaces this stub in a separate step.\n\
+             - ALWAYS count the arguments in each call the test below makes to your export and\n\
+               declare EXACTLY that many parameters, in that same shape — NEVER guess a\n\
+               different arity from a sibling file's convention.\n\
+               WRONG: test calls `subject.registerWidget(widgetData)` — one argument — but the\n\
+                 stub declares `registerWidget(name, otherField, optionalField)` — three params  ✗\n\
+               CORRECT: `registerWidget(widgetData: Widget)` — one parameter, matching the call\n\
              \n\
              Unit test this stub must compile against:\n\
              --- {tf} ---\n\
