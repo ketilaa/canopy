@@ -75,34 +75,62 @@ pub(crate) fn parse_openai_message(message: &serde_json::Value, known_tools: &[T
     }
 }
 
-/// Tag pairs a tool call might be wrapped in, tried in order. `<tool_call>` is what this
-/// project's actual local setup (Qwen2.5-Coder via llama-server, --jinja on by default) tells
-/// the model to use for its own response. `<tools>` is confirmed, over 5 real runs against that
-/// exact setup, to be what the model actually emits instead every time — it consistently echoes
-/// the tag used to PRESENT the available tools to it rather than the different tag it's told to
-/// respond with. This is a narrow, understood model formatting slip, not a capability gap (the
-/// tool name and arguments were correct in all 5 runs) — worth normalizing here rather than
-/// chasing with more prompt text aimed at a local model that isn't reading its own system
-/// prompt's chat template instructions carefully enough to reproduce one exact tag name.
-const TOOL_CALL_WRAPPERS: [(&str, &str); 2] = [
-    ("<tool_call>", "</tool_call>"),
-    ("<tools>", "</tools>"),
-];
+/// Extracts every balanced top-level `{...}` substring from `content`, string-literal-aware so
+/// a brace inside a JSON string value doesn't miscount depth. This project's actual local setup
+/// (Qwen2.5-Coder via llama-server) has been observed, over real runs, emitting a tool call as:
+/// the correct `<tool_call>` tag, the wrong `<tools>` tag (echoing the tag used to PRESENT tools
+/// to it), no wrapper at all, or — the shape that first slipped past a single-candidate parse —
+/// the tool's own spec echoed inside `<tools>` followed by the real call as a second, unwrapped
+/// object later in the same response. Scanning for every top-level object rather than assuming
+/// one wrapper or the whole trimmed string is one JSON value handles all of these uniformly.
+fn extract_json_objects(content: &str) -> Vec<&str> {
+    let mut objects = Vec::new();
+    let mut depth = 0i32;
+    let mut start = None;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (i, c) in content.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(s) = start {
+                        objects.push(&content[s..=i]);
+                    }
+                    start = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    objects
+}
 
 /// Tries to recognize a tool call in plain-text `content` when the model didn't use the
-/// structured `tool_calls` response field — wrapped in a recognized tag pair, or as a bare JSON
-/// object (also observed). Only returns `Some` when the parsed object names one of `known_tools`
-/// with an `arguments` value present, so ordinary prose that happens to contain `{...}` isn't
-/// misread as a tool call.
+/// structured `tool_calls` response field — tagged, bare, or buried among other JSON objects in
+/// the same response (also observed). Only returns `Some` for the first candidate object that
+/// names one of `known_tools` with an `arguments` value present, so ordinary prose or an echoed
+/// tool spec that happens to contain `{...}` isn't misread as a tool call.
 fn fallback_parse_tool_call(content: &str, known_tools: &[ToolSpec]) -> Option<ToolCall> {
-    let trimmed = content.trim();
-    let wrapped = TOOL_CALL_WRAPPERS.iter().find_map(|(open, close)| {
-        let start = trimmed.find(open)? + open.len();
-        let end = trimmed[start..].find(close)? + start;
-        Some(trimmed[start..end].trim())
-    });
-
-    for candidate in wrapped.into_iter().chain(std::iter::once(trimmed)) {
+    for candidate in extract_json_objects(content) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) else { continue };
         let Some(name) = value.get("name").and_then(|n| n.as_str()) else { continue };
         if !known_tools.iter().any(|t| t.name == name) {
@@ -250,6 +278,24 @@ mod tests {
         });
         match parse_openai_message(&msg, &[read_file_tool()]).unwrap() {
             ToolTurn::ToolCalls(calls) => assert_eq!(calls[0].name, "read_file"),
+            ToolTurn::FinalText(t) => panic!("expected ToolCalls, got FinalText: {t}"),
+        }
+    }
+
+    #[test]
+    fn fallback_parses_real_call_after_an_echoed_tool_spec() {
+        // Observed live: the model echoes the tool's own spec (no "arguments" key, so it's
+        // correctly skipped) inside <tools>, then appends the real call as a second, unwrapped
+        // JSON object later in the same response.
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"reads a file\", \"parameters\": {\"type\": \"object\"}}}\n</tools>\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"shipping.ts\"}}"
+        });
+        match parse_openai_message(&msg, &[read_file_tool()]).unwrap() {
+            ToolTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].name, "read_file");
+                assert_eq!(calls[0].arguments["path"], "shipping.ts");
+            }
             ToolTurn::FinalText(t) => panic!("expected ToolCalls, got FinalText: {t}"),
         }
     }
