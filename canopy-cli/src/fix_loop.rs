@@ -241,7 +241,7 @@ fn run_fix_loop_inner(
             // burning iterations on it rather than asking a third time for the same result.
             if let Some(history) = attempt_history.get(file_path) {
                 if history.len() >= 2 && history[history.len() - 1].is_noop && history[history.len() - 2].is_noop {
-                    progress.println(format!("  {file_path} made no changes on two consecutive attempts — giving up on it for now."));
+                    progress.annotate_matching_child(step_idx, file_path, "made no changes on two consecutive attempts — giving up on it for now.");
                     continue;
                 }
             }
@@ -309,6 +309,7 @@ fn run_fix_loop_inner(
                 step_idx,
                 format!("fixing  {short_name} (attempt {}/{max_iterations}){same_error_note} — {error_summary}", iteration + 1),
                 client,
+                Some(file_path.as_str()),
                 || fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts),
             );
             match fix_result {
@@ -401,6 +402,7 @@ pub(crate) fn run_red_test_sanity_check(
             step_idx,
             format!("sanity — fixing {short_name} (attempt {}/{max_iterations}) — test fails for an unexpected reason", iteration + 1),
             client,
+            Some(test_file),
             || fix_file(client, test_file, &content, &errors, service_source_files, &[], &test_skill, arch_skills, &prior_attempts),
         );
         match fix_result {

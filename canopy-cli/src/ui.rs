@@ -212,6 +212,9 @@ enum Row {
 ///
 /// Falls back to plain `println!` lines (no bars, no strikethrough) when stdout isn't a
 /// terminal, matching `with_spinner`'s fallback for the same reason.
+/// A finished `timed` sub-bar plus the file it was about, if any — see the `children` field doc.
+type TaggedChild = (Option<String>, indicatif::ProgressBar);
+
 pub(crate) struct Progress {
     multi: Option<indicatif::MultiProgress>,
     /// One slot per ROW (headers included), not per step — see `Row`. `Mutex<Option<_>>`, not
@@ -228,8 +231,12 @@ pub(crate) struct Progress {
     /// Finished (but not yet dropped) `timed` sub-bars for each STEP index (not row index —
     /// only steps have sub-operations, headers never do). Kept alive — unlike `bars`, not
     /// taken/dropped as soon as they finish — so they stay visible as a nested "done" history
-    /// until `collapse` drains and drops the whole group at once.
-    children: Vec<std::sync::Mutex<Vec<indicatif::ProgressBar>>>,
+    /// until `collapse` drains and drops the whole group at once. Each entry carries an optional
+    /// tag (e.g. the file path a fix attempt targeted) alongside its bar, so a later event about
+    /// that specific file — not just "whatever ran most recently" — can find the right one via
+    /// `annotate_matching_child` instead of misattributing to an unrelated file's bar when
+    /// several files are mid-fix in the same round.
+    children: Vec<std::sync::Mutex<Vec<TaggedChild>>>,
     /// A per-step "… N earlier attempt(s) folded" line, created lazily the first time that
     /// step's `children` grows past `MAX_VISIBLE_CHILDREN` — older child bars are dropped
     /// (finish_and_clear'd) rather than left to accumulate forever. A step needing several
@@ -534,7 +541,7 @@ impl Progress {
         if let Some(m) = self.children.get(idx) {
             let mut children = m.lock().unwrap();
             if clear_children {
-                for pb in children.iter() {
+                for (_, pb) in children.iter() {
                     pb.finish_and_clear();
                 }
             }
@@ -608,8 +615,12 @@ impl Progress {
 
     /// Runs `f`, showing a spinner nested directly under step `idx`'s line while it runs
     /// (or a plain line when non-interactive) — the step-checklist equivalent of the
-    /// free-standing `with_spinner` above.
-    pub(crate) fn timed<F, T>(&self, idx: usize, label: impl Into<String>, client: &LlmClient, f: F) -> T
+    /// free-standing `with_spinner` above. `file_tag` identifies which file this attempt is
+    /// about (e.g. the fix loop's `file_path`) — pass `None` when the call isn't about a
+    /// specific candidate file among several (test/stub/impl generation, compile checks).
+    /// `annotate_matching_child` uses the tag to find the right bar later even if other
+    /// files' attempts were anchored after it in the meantime.
+    pub(crate) fn timed<F, T>(&self, idx: usize, label: impl Into<String>, client: &LlmClient, file_tag: Option<&str>, f: F) -> T
     where
         F: FnOnce() -> T,
     {
@@ -626,7 +637,7 @@ impl Progress {
         // of appending after them.
         let children_lock = self.children.get(idx);
         let anchor = match children_lock.and_then(|m| m.lock().unwrap().last().cloned()) {
-            Some(last_child) => Some(last_child),
+            Some((_, last_child)) => Some(last_child),
             None => self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()),
         };
         // "      ↳ " — deliberately NOT just more leading spaces than the parent bar's "  ": a
@@ -669,12 +680,12 @@ impl Progress {
             pb.finish_with_message(dim_strike(&label));
             if let Some(m) = children_lock {
                 let mut children = m.lock().unwrap();
-                children.push(pb);
+                children.push((file_tag.map(String::from), pb));
                 // Fold the oldest attempts away once there are more than MAX_VISIBLE_CHILDREN —
                 // see the `fold_bar` field doc for why unbounded growth here is worth avoiding.
                 let mut newly_folded = 0usize;
                 while children.len() > MAX_VISIBLE_CHILDREN {
-                    children.remove(0).finish_and_clear();
+                    children.remove(0).1.finish_and_clear();
                     newly_folded += 1;
                 }
                 drop(children);
@@ -721,13 +732,33 @@ impl Progress {
     /// and cleared/kept together with the rest of the step's history on collapse.
     pub(crate) fn annotate_last_child(&self, idx: usize, note: &str) {
         if let Some(m) = self.children.get(idx) {
-            if let Some(pb) = m.lock().unwrap().last() {
+            if let Some((_, pb)) = m.lock().unwrap().last() {
                 let current = pb.message();
                 pb.set_message(format!("{current}\n        {note}"));
                 return;
             }
         }
         self.println(format!("      {note}"));
+    }
+
+    /// Like `annotate_last_child`, but for events about a specific file (e.g. "giving up on
+    /// this file after two no-op attempts") rather than "whatever ran most recently" — several
+    /// files can be mid-fix in the same round, so the step's actual last child may belong to a
+    /// DIFFERENT file than the one this note is about. Searches from the most recent child
+    /// backward for one tagged with `file_path` (exact match — callers pass the same string
+    /// used to tag the attempt via `timed`'s `file_tag`) and annotates that one instead. Falls
+    /// back to `annotate_last_child`'s behavior (still safe, just less precisely attributed) if
+    /// no tagged match is found — e.g. the matching child already folded away.
+    pub(crate) fn annotate_matching_child(&self, idx: usize, file_path: &str, note: &str) {
+        if let Some(m) = self.children.get(idx) {
+            let children = m.lock().unwrap();
+            if let Some((_, pb)) = children.iter().rev().find(|(tag, _)| tag.as_deref() == Some(file_path)) {
+                let current = pb.message();
+                pb.set_message(format!("{current}\n        {note}"));
+                return;
+            }
+        }
+        self.annotate_last_child(idx, note);
     }
 }
 

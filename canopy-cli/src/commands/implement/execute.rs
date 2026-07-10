@@ -199,6 +199,7 @@ pub(crate) fn execute_steps(
                 i,
                 format!("generating test    {test_file}"),
                 &client,
+                Some(&test_file),
                 || generate_unit_test_stub(
                     &client, story, spec, contract_yaml, step, &test_file,
                     service_packages, services, adrs, &stub_siblings,
@@ -218,6 +219,7 @@ pub(crate) fn execute_steps(
                 i,
                 format!("generating stub    {}", step.file),
                 &client,
+                Some(&step.file),
                 || execute_implementation_stub(
                     &client, story, spec, contract_yaml,
                     step, None, None,
@@ -307,6 +309,7 @@ pub(crate) fn execute_steps(
                 i,
                 format!("implementing      {}", step.file),
                 &client,
+                Some(&step.file),
                 || execute_implementation_with_test(
                     &client, story, spec, contract_yaml,
                     step, None, roots_context.as_deref(),
@@ -359,6 +362,7 @@ pub(crate) fn execute_steps(
                 i,
                 format!("generating  {}", step.file),
                 &client,
+                Some(&step.file),
                 || execute_implementation_step(
                     &client, story, spec, contract_yaml,
                     step, current_content.as_deref(), roots_context.as_deref(),
