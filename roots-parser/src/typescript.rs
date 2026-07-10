@@ -341,6 +341,111 @@ fn ts_enclosing_fqn(source: &str, node: Node, relative_path: &str) -> String {
     relative_path.to_string()
 }
 
+/// One call site found on the variable constructed via `new <class_name>(...)` in a test file
+/// — e.g. `service.registerProduct(productData)`. Used to ground stub generation in what the
+/// already-written test ACTUALLY calls, instead of asking the model to re-derive the same fact
+/// by reading the test under time pressure — the exact self-check that's already been observed,
+/// on a real dogfooding run, to be wrong about half the time even when correctly worded.
+pub struct ObservedCall {
+    pub method_name: String,
+    /// Raw source text of each argument expression, in call order.
+    pub argument_texts: Vec<String>,
+    pub line: u32,
+}
+
+/// Parses `source` as TypeScript and finds every call site on the variable assigned from
+/// `new <class_name>(...)`. Returns one `ObservedCall` per call site found, in source order.
+/// Returns an empty Vec if no such `new` expression is found, or its target isn't a plain
+/// identifier (destructuring targets etc. aren't handled) — callers should treat an empty
+/// result as "couldn't determine this deterministically," not as "no calls exist."
+pub fn find_subject_calls(source: &str, class_name: &str) -> Vec<ObservedCall> {
+    let ts_language = TsLanguage::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT);
+    let mut parser = Parser::new();
+    if parser.set_language(&ts_language).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(source, None) else { return Vec::new() };
+
+    let Some(subject_var) = find_new_expression_target(tree.root_node(), source, class_name) else {
+        return Vec::new();
+    };
+
+    let mut calls = Vec::new();
+    collect_calls_on(tree.root_node(), source, &subject_var, &mut calls);
+    calls
+}
+
+/// Walks the tree looking for `<var> = new <class_name>(...)`, as either a `variable_declarator`
+/// initializer (`let subject = new Foo()`) or a plain assignment (`subject = new Foo()`), and
+/// returns the variable's identifier text.
+fn find_new_expression_target(node: Node, source: &str, class_name: &str) -> Option<String> {
+    if node.kind() == "variable_declarator" {
+        if let (Some(name_node), Some(value_node)) =
+            (node.child_by_field_name("name"), node.child_by_field_name("value"))
+        {
+            if name_node.kind() == "identifier" && is_new_expression_for(value_node, source, class_name) {
+                return Some(source[name_node.byte_range()].to_string());
+            }
+        }
+    }
+    if node.kind() == "assignment_expression" {
+        if let (Some(left), Some(right)) =
+            (node.child_by_field_name("left"), node.child_by_field_name("right"))
+        {
+            if left.kind() == "identifier" && is_new_expression_for(right, source, class_name) {
+                return Some(source[left.byte_range()].to_string());
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(found) = find_new_expression_target(child, source, class_name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn is_new_expression_for(node: Node, source: &str, class_name: &str) -> bool {
+    node.kind() == "new_expression"
+        && node.child_by_field_name("constructor")
+            .map(|c| &source[c.byte_range()] == class_name)
+            .unwrap_or(false)
+}
+
+/// Walks the tree collecting every `<subject_var>.<method>(...)` call expression.
+fn collect_calls_on(node: Node, source: &str, subject_var: &str, out: &mut Vec<ObservedCall>) {
+    if node.kind() == "call_expression" {
+        if let Some(function_node) = node.child_by_field_name("function") {
+            if function_node.kind() == "member_expression" {
+                let object = function_node.child_by_field_name("object");
+                let property = function_node.child_by_field_name("property");
+                if let (Some(object), Some(property)) = (object, property) {
+                    if object.kind() == "identifier" && &source[object.byte_range()] == subject_var {
+                        if let Some(args_node) = node.child_by_field_name("arguments") {
+                            if args_node.kind() == "arguments" {
+                                let mut arg_cursor = args_node.walk();
+                                let argument_texts = args_node.named_children(&mut arg_cursor)
+                                    .map(|a| source[a.byte_range()].to_string())
+                                    .collect();
+                                out.push(ObservedCall {
+                                    method_name: source[property.byte_range()].to_string(),
+                                    argument_texts,
+                                    line: node.start_position().row as u32 + 1,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_calls_on(child, source, subject_var, out);
+    }
+}
+
 pub struct TypeScriptExtractor {
     ts: TsExtractorInner,
     tsx: TsExtractorInner,
@@ -425,5 +530,77 @@ interface ProductFormProps {
         assert!(names.contains(&"ProductFormProps"), "should extract interface: got {names:?}");
         let sym = out.symbols.iter().find(|s| s.name == "ProductFormProps").unwrap();
         assert_eq!(sym.kind, SymbolKind::Interface);
+    }
+
+    #[test]
+    fn finds_single_object_call_on_subject() {
+        // Mirrors the actual ProductService.test.ts observed on a real dogfooding run: the
+        // test correctly calls with a single object argument, but the stub kept declaring
+        // 5 positional parameters instead — this is the fact that should have stopped it.
+        let source = r#"
+let service: ProductService
+
+beforeEach(() => {
+  service = new ProductService(mockRepo, mockPublisher)
+})
+
+it('registers a product', async () => {
+  const result = await service.registerProduct(productData)
+  expect(result.id).toEqual(expect.any(String))
+})
+"#;
+        let calls = find_subject_calls(source, "ProductService");
+        assert_eq!(calls.len(), 1, "should find exactly one call site: got {:?}",
+            calls.iter().map(|c| &c.method_name).collect::<Vec<_>>());
+        assert_eq!(calls[0].method_name, "registerProduct");
+        assert_eq!(calls[0].argument_texts, vec!["productData".to_string()]);
+    }
+
+    #[test]
+    fn finds_multiple_consistent_call_sites() {
+        let source = r#"
+let subject: ProductRepository
+
+beforeEach(() => {
+  subject = new ProductRepository(mockPool)
+})
+
+it('saves', async () => {
+  await subject.saveProduct(product)
+})
+
+it('saves with description', async () => {
+  await subject.saveProduct(productWithDescription)
+})
+"#;
+        let calls = find_subject_calls(source, "ProductRepository");
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|c| c.method_name == "saveProduct" && c.argument_texts.len() == 1));
+    }
+
+    #[test]
+    fn returns_empty_when_class_not_constructed() {
+        let source = r#"
+it('does something unrelated', () => {
+  const x = someOtherThing()
+})
+"#;
+        let calls = find_subject_calls(source, "ProductService");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn ignores_calls_on_other_variables() {
+        let source = r#"
+let service = new ProductService(mockRepo, mockPublisher)
+let logger = new Logger()
+
+it('logs', () => {
+  logger.info('hello', 'world', 'extra')
+})
+"#;
+        let calls = find_subject_calls(source, "ProductService");
+        assert!(calls.is_empty(), "should not pick up calls on unrelated variables: {:?}",
+            calls.iter().map(|c| &c.method_name).collect::<Vec<_>>());
     }
 }

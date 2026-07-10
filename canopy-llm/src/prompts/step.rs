@@ -15,6 +15,7 @@ fn step_prompt(
     arch_skills: &str,
     test_hint: Option<(&str, &str, bool)>,
     package_constraints: Option<&str>,
+    observed_call: Option<&str>,
 ) -> String {
     // The plan LLM sometimes prefixes service names with their directory (e.g. "frontend/admin-portal").
     // Strip any leading path component before looking up in the registry.
@@ -79,6 +80,22 @@ fn step_prompt(
 
     let is_ts = step.file.ends_with(".ts") || step.file.ends_with(".tsx");
     let is_tsx = step.file.ends_with(".tsx");
+    // When Some, this was deterministically parsed from the test file already written (see
+    // roots_parser::find_subject_calls) — not a guess. Replaces asking the model to count
+    // arguments itself, which has been observed, on a real dogfooding run, to disagree with
+    // this exact same test roughly half the time even with an explicit self-check instruction
+    // already in place. Falls back to that self-check instruction when extraction couldn't
+    // determine a single consistent call shape (None).
+    let arity_check_lead = match observed_call {
+        Some(shape) => format!(
+            "             - ALWAYS declare a signature matching this exact call: `{shape}` —\n\
+               same argument count and shape (never split an object into positional\n\
+               parameters; never add or drop a parameter).\n"
+        ),
+        None => "             - ALWAYS count the arguments in each call the test below makes to your export and\n\
+               declare EXACTLY that many parameters, in that same shape — NEVER guess a\n\
+               different arity from a sibling file's convention.\n".to_string(),
+    };
     let test_hint_section = match test_hint {
         Some((tf, tc, true)) if is_tsx => format!(
             "\nSTUB ONLY — return a renderable skeleton, no logic:\n\
@@ -108,9 +125,7 @@ fn step_prompt(
              - Constructor bodies: empty (no field assignments needed yet).\n\
              - NEVER implement any logic, even logic you already know is correct — the Green\n\
                phase replaces this stub in a separate step.\n\
-             - ALWAYS count the arguments in each call the test below makes to your export and\n\
-               declare EXACTLY that many parameters, in that same shape — NEVER guess a\n\
-               different arity from a sibling file's convention.\n\
+             {arity_check_lead}\
                WRONG: test calls `subject.registerWidget(widgetData)` — one argument — but the\n\
                  stub declares `registerWidget(name, otherField, optionalField)` — three params  ✗\n\
                CORRECT: `registerWidget(widgetData: Widget)` — one parameter, matching the call\n\
@@ -212,6 +227,7 @@ pub fn execute_implementation_step(
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills, None, package_constraints,
+        None,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
@@ -649,11 +665,13 @@ pub fn execute_implementation_stub(
     test_file: &str,
     test_content: &str,
     package_constraints: Option<&str>,
+    observed_call: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, true)), package_constraints,
+        observed_call,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
@@ -678,6 +696,7 @@ pub fn execute_implementation_with_test(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, false)), package_constraints,
+        None,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }

@@ -157,6 +157,32 @@ pub fn get_ts_module_surface(rel_paths: &[String], service_dir: &str) -> Option<
     if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
 }
 
+/// Finds how a just-generated test file actually calls the subject under test — e.g.
+/// `service.registerProduct(productData)` — and returns it as a ready-to-inject call-shape
+/// snippet (`"registerProduct(productData)"`), or `None` if it can't be determined
+/// deterministically (no `new <class_name>(...)` found, or the calls found disagree with each
+/// other on method name or argument count).
+///
+/// This doesn't touch the Roots index at all — it's a one-off parse of in-memory source that
+/// doesn't exist on disk yet (or was just written but not yet reindexed), not a query against
+/// previously-indexed symbols. That's deliberate: waiting for a reindex here would race against
+/// the very call site this is meant to inform (stub generation, which runs before the file is
+/// ever indexed).
+///
+/// Disagreement across call sites (rather than picking one arbitrarily) is itself useful
+/// information withheld here on purpose — silently trusting an inconsistent test would be worse
+/// than falling back to the existing self-check instruction in the stub prompt.
+pub fn find_test_call_shape(test_content: &str, class_name: &str) -> Option<String> {
+    let calls = roots_parser::find_subject_calls(test_content, class_name);
+    let first = calls.first()?;
+    let consistent = calls.iter()
+        .all(|c| c.method_name == first.method_name && c.argument_texts.len() == first.argument_texts.len());
+    if !consistent {
+        return None;
+    }
+    Some(format!("{}({})", first.method_name, first.argument_texts.join(", ")))
+}
+
 /// Re-runs `roots index` if an index already exists. No-ops when Roots is not set up.
 /// Call after writing new source files to keep the index current.
 pub fn reindex() {

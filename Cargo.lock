@@ -104,6 +104,7 @@ dependencies = [
  "dialoguer",
  "indicatif",
  "roots-context",
+ "roots-parser",
  "roots-storage",
  "rustyline",
  "serde",

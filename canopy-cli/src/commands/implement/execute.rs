@@ -247,6 +247,13 @@ pub(crate) fn execute_steps(
             progress.annotate_last_child(i, &format!("→ {test_file}"));
             print_step_notes(&progress, i, &test_summary, &test_deviations);
             let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
+            // Deterministically parsed from the test just written, not asked of the model —
+            // see roots::find_test_call_shape's doc for why this exists (a self-check asking
+            // the model to count the test's own call-site arguments has been observed, on a
+            // real run, to disagree with this exact fact roughly half the time).
+            let class_name = std::path::Path::new(&step.file)
+                .file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let observed_call = roots::find_test_call_shape(&test_content, class_name);
             let StepResult { content: stub_content, summary: stub_summary, deviations: stub_deviations } = progress.timed(
                 i,
                 format!("generating stub    {}", step.file),
@@ -257,6 +264,7 @@ pub(crate) fn execute_steps(
                     step, None, None,
                     service_packages, services, &stub_siblings, &arch_skills,
                     &test_file, &test_content, pkg_constraints,
+                    observed_call.as_deref(),
                 ),
             ).with_context(|| format!("LLM call failed generating stub for step {}", step.id))?;
 
