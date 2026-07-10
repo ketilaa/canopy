@@ -326,13 +326,13 @@ fn run_fix_loop_inner(
                         // the line above it. "model made no changes" is the trustworthy, byte-
                         // verified status; the self-report adds nothing but confusion when it's
                         // already known to be wrong.
-                        progress.println(format!("    model made no changes to {file_path}"));
+                        progress.annotate_last_child(step_idx, "model made no changes");
                     } else {
                         let _ = std::fs::write(file_path, &result.content);
                         print_step_notes(progress, step_idx, &result.summary, &result.deviations);
                     }
                 }
-                Err(e) => progress.println(format!("    LLM fix failed for {file_path}: {e}")),
+                Err(e) => progress.annotate_last_child(step_idx, &format!("LLM fix failed: {e}")),
             }
         }
     }
@@ -412,19 +412,19 @@ pub(crate) fn run_red_test_sanity_check(
                     is_noop,
                 });
                 if is_noop {
-                    progress.println(format!("    model made no changes to {test_file}"));
+                    progress.annotate_last_child(step_idx, "model made no changes");
                 } else {
                     let _ = std::fs::write(test_file, &result.content);
                     print_step_notes(progress, step_idx, &result.summary, &result.deviations);
                 }
             }
             Err(e) => {
-                progress.println(format!("    LLM fix failed for {test_file}: {e}"));
+                progress.annotate_last_child(step_idx, &format!("LLM fix failed: {e}"));
                 return false;
             }
         }
     }
-    progress.println("  Red-phase test still fails for an unexpected reason after max attempts — manual fix needed.");
+    progress.annotate_last_child(step_idx, "Red-phase test still fails for an unexpected reason after max attempts — manual fix needed.");
     false
 }
 

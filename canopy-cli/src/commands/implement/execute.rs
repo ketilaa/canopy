@@ -211,7 +211,7 @@ pub(crate) fn execute_steps(
             }
             std::fs::write(test_dest, &test_content)
                 .with_context(|| format!("failed to write {}", test_file))?;
-            progress.println(format!("  → {}", test_file));
+            progress.annotate_last_child(i, &format!("→ {test_file}"));
             print_step_notes(&progress, i, &test_summary, &test_deviations);
             let pkg_constraints = pkg_constraints_by_service.get(&step_service_name).map(|s| s.as_str());
             let StepResult { content: stub_content, summary: stub_summary, deviations: stub_deviations } = progress.timed(
@@ -232,7 +232,7 @@ pub(crate) fn execute_steps(
             }
             std::fs::write(dest, &stub_content)
                 .with_context(|| format!("failed to write {}", step.file))?;
-            progress.println(format!("  → {}", step.file));
+            progress.annotate_last_child(i, &format!("→ {}", step.file));
             print_step_notes(&progress, i, &stub_summary, &stub_deviations);
             written += 1;
             session_written.insert(step.file.clone(), stub_content);
@@ -317,7 +317,7 @@ pub(crate) fn execute_steps(
 
             std::fs::write(dest, &impl_content)
                 .with_context(|| format!("failed to write {}", step.file))?;
-            progress.println(format!("  → {}", step.file));
+            progress.annotate_last_child(i, &format!("→ {}", step.file));
             print_step_notes(&progress, i, &impl_summary, &impl_deviations);
             session_written.insert(step.file.clone(), impl_content);
 
@@ -372,7 +372,7 @@ pub(crate) fn execute_steps(
             }
             std::fs::write(dest, &content)
                 .with_context(|| format!("failed to write {}", step.file))?;
-            progress.println(format!("  → {}", step.file));
+            progress.annotate_last_child(i, &format!("→ {}", step.file));
             print_step_notes(&progress, i, &summary, &deviations);
             written += 1;
             session_written.insert(step.file.clone(), content);
