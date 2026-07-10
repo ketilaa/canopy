@@ -532,7 +532,21 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
                        close: jest.fn().mockResolvedValue(undefined),\n\
                        send: jest.fn().mockResolvedValue(undefined) }\n\
         mockConnection = { getClient: jest.fn().mockReturnValue(mockClient) } as unknown as ExternalConnection\n\
-      })"
+      })\n\
+\n\
+  ### kafkajs Producer — mocking send()'s RESOLVED VALUE\n\
+  `Producer.send(record: ProducerRecord): Promise<RecordMetadata[]>` — the record you pass IN\n\
+  (`{ topic, messages }`) and the value it resolves TO are two different shapes. A\n\
+  `RecordMetadata` has `topicName`/`partition`/`errorCode` (plus optional `offset`/`timestamp`/\n\
+  `baseOffset`/`logAppendTime`/`logStartOffset`) — it has NO `topic` and NO `messages` field.\n\
+  A publisher that only calls `await producer.send(...)` and ignores the result needs nothing\n\
+  more than a minimal valid array — do not invent extra fields:\n\
+    WRONG — mirrors send()'s own ARGUMENT shape, not its RETURN type:\n\
+      jest.spyOn(producer, 'send').mockResolvedValue([{ topic: 'widget-events', messages: [] }])  ✗ TS2353\n\
+    CORRECT:\n\
+      jest.spyOn(producer, 'send').mockResolvedValue([{ topicName: 'widget-events', partition: 0, errorCode: 0 }])\n\
+  The assertion on what was SENT still uses the argument shape (this part is correct and unrelated):\n\
+    expect(producer.send).toHaveBeenCalledWith({ topic: 'widget-events', messages: [{ value: expect.any(String) }] })"
          .to_string()),
     ])
 }
