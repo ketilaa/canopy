@@ -143,6 +143,14 @@ canopy-cli/        CLI commands (clap), interactive prompts (dialoguer)
 
 When adding a new capability: type in core → storage helpers → llm prompt/function → cli command.
 
+**Test file placement is language-specific, by design.** TypeScript/JavaScript tests are
+co-located next to their source (`src/services/Widget.ts` ↔ `src/services/Widget.test.ts`) —
+the JS/TS ecosystem convention. Java tests use the Maven-style mirrored tree
+(`src/main/java/...` ↔ `src/test/java/...`). These are deliberately NOT unified: each stack
+follows its own ecosystem's convention, not the other's. `detect_layer()`, `is_test_file()`,
+and `derive_test_file_path()` all branch on this split — don't "simplify" one language's
+file-placement logic to match the other's.
+
 ### Roots (repository intelligence engine)
 
 Roots indexes a repository into a structured graph and answers queries about it.
@@ -244,15 +252,21 @@ Tail it: `tail -f <project>/.canopy/logs/llm-debug.log`
 technology. A skill is a concise, authoritative rules block that tells the LLM the exact
 conventions for that tech stack — package layout, file paths, naming, forbidden patterns.
 
-Skills are defined in `canopy-llm/src/lib.rs` as `TechStackSkill` structs with four fields:
-`file_layout`, `namespace_rules`, `layer_order`, `notes`.
+Skills are defined in `canopy-llm/src/skills/tech_stack.rs` as `TechStackSkill` structs.
+`file_layout`, `layer_order`, and `notes` apply regardless of layer; import/naming rules use
+one of two shapes — legacy `namespace_rules` (shown in full regardless of layer) or the
+layer-partitioned `common_rules` (every layer) + `layer_rules` (keyed by `detect_layer()`'s
+output, e.g. `"model"`, `"route"`, `"infrastructure"` — only the file's own layer's entry is
+injected). New skills should use the partitioned shape; it's what makes per-layer scoping
+(see Prompt House Style below) possible.
 
-Each skill has two render modes:
+Each skill has three render modes:
 
 | Method | Used by | Contains |
 |---|---|---|
 | `render_for_planning()` | `plan_skill_for_technology()` → plan prompt | `file_layout` + `layer_order` only |
-| `render()` | `skill_for_technology()` → step prompt | all four fields |
+| `render_for_layer(layer)` | `skill_for_technology()` → step/fix prompts | `file_layout` + `layer_order` + only that layer's rules |
+| `render_all_layers()` | contexts not tied to one file (e.g. dependency proposals) | every layer's rules concatenated |
 
 The split keeps planning prompts lean (~300 tokens vs ~1,500) so the planner model focuses on
 file enumeration and dependency graph — not import syntax or zod chain rules.
@@ -300,6 +314,40 @@ and cause the model to mirror those names back incorrectly on other projects.
 
 ---
 
+## Prompt House Style
+
+Every string sent to the model — skills and prompts alike, across `canopy-llm/src/prompts/*.rs`
+and `canopy-llm/src/skills/*.rs` — follows the same rules:
+
+- **ALWAYS/NEVER, not paragraphs.** State a rule as `ALWAYS <imperative>.` / `NEVER <imperative>.`,
+  not a multi-sentence explanation mixing the rule with its rationale. Short example fragments
+  (1-4 lines of code) are encouraged — this is a "no restated rationale" rule, not a
+  "no examples" rule.
+- **No duplicate injection.** The same rule must not reach the model twice in one call, even
+  worded differently — e.g. a rule stated once via a tech-stack skill's layer section and again
+  in a separate IMPORTANT-list bullet in the same prompt. Trace every section a changed string
+  feeds into before assuming it's the only copy.
+- **Proximity.** A rule sits next to the content it governs. An instruction far from the thing
+  it constrains is a known failure mode for the local reference model ("lost in the middle") —
+  even a correct, well-worded rule gets ignored if it's positioned far from its subject.
+- **Layer-scoping correctness.** A `layer_rules` entry must be keyed to the layer that actually
+  needs it. A rule filed under the wrong layer key (e.g. a *route*-file rule accidentally placed
+  under `"app"`) is correctly worded but never reaches the file it's meant to constrain — this
+  bug produces no error, just silent non-compliance, since layer-scoped rendering only sends the
+  matching layer's rules.
+- **When a model ignores a correct instruction, fix the prompt, not the code.** Verify with
+  `llm-debug.log` that the instruction actually reached the prompt as intended before concluding
+  it's a compliance problem rather than a missing-instruction problem. If it's genuinely a
+  compliance problem, the fix is to shorten and reposition the instruction — never a Rust-side
+  filter, override, or post-processing step to compensate, and not by default adding more prose
+  either. A longer WRONG/CORRECT example is a last resort after a short instruction has been
+  tried and shown (with real evidence) to still fail — not the first move.
+
+Use the `canopy-prompt-reviewer` subagent (`.claude/agents/canopy-prompt-reviewer.md`) to check
+prompt/skill changes against these rules before installing.
+
+---
+
 ## Principles
 
 **Intent before coding.** No implementation without an accepted story and a resolved spec.
@@ -335,3 +383,15 @@ clearer. Do not add Rust safety nets (path injectors, output filters, post-gener
 The prompt is the design; the model should get it right because the context is good, not because
 Rust patches the output. Only reach for code enforcement when the problem is structurally
 impossible to express in a prompt (e.g. numbering step IDs after a merge across services).
+See Prompt House Style above for how to fix a prompt the model isn't complying with.
+
+**TDD Red phase checks compilation, not runtime — that gap is structural, not an oversight.**
+`tsc --noEmit` (or `javac`) can't catch a test that compiles fine but crashes at Jest/JUnit
+*runtime* for a non-domain reason (e.g. `jest.spyOn` on an empty mock object). Green phase
+deliberately protects the test file from further edits, so a runtime-only test bug that survives
+Red becomes unfixable once Green begins — the test is right there, but nothing is allowed to
+touch it. This is why Red phase also runs the test once and checks the failure is the stub's own
+expected rejection (e.g. `'not implemented'`); anything else routes to a bounded fix attempt on
+the test file while it's still editable (`run_red_test_sanity_check` in `canopy-cli/src/fix_loop.rs`).
+Don't remove this check thinking the compile check alone is redundant with it — they catch
+different failure classes.
