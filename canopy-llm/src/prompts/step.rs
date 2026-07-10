@@ -448,14 +448,10 @@ fn unit_test_stub_prompt_ts(
     // that only the route layer should ever enforce) — the implementation then correctly does
     // NOT throw, and the test fails for a reason that has nothing to do with a real defect.
     let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" {
-        "- This layer never receives invalid/unvalidated input — validation happens upstream, \
-at the route or model layer, before anything reaches here. Do NOT write a test asserting this \
-file throws or rejects for a missing/invalid field; skip any BDD scenario whose ONLY \
-distinguishing behavior is input validation. Write one test per scenario that actually \
-exercises THIS layer's own responsibility (e.g. correctly publishing/persisting a valid \
-aggregate) — merge scenarios that only differ by a field this layer never inspects.".to_string()
+        "This layer never validates input — that happens upstream. Skip any scenario about a \
+missing/invalid field or an error message; write tests only for this layer's own job.".to_string()
     } else {
-        "- Write one test per BDD scenario listed above — cover every scenario, do not skip or merge any.".to_string()
+        "One describe/it block per scenario below — cover every scenario, do not skip or merge any.".to_string()
     };
 
     let route_rule = if layer == "route" {
@@ -515,7 +511,8 @@ Import the router from the implementation file — it is a Router INSTANCE, neve
          \n\
          {entity_schema_label}\n\
          {schema_yaml}\n\
-         BDD scenarios — one describe/it block per scenario:\n\
+         BDD scenarios:\n\
+         {scenario_coverage_note}\n\
          {scenarios_yaml}\n\
          \n\
          {contract_section}\
@@ -526,7 +523,6 @@ Import the router from the implementation file — it is a Router INSTANCE, neve
          {test_structure}\n\
          \n\
          IMPORTANT:\n\
-         {scenario_coverage_note}\n\
          - Import the subject from '{import_path}'.\n\
          - The tech-stack rules above describe the EXACT shape of any file this skill governs\n\
            (e.g. a constructor signature, a domain event's fields). If the implementation file\n\
