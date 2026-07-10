@@ -20,13 +20,20 @@ use std::collections::HashMap;
 /// the build green. Stopping here — rather than marking the step done and moving on — matters
 /// because every later step's compile/test check assumes everything before it already works;
 /// continuing on a broken foundation only compounds errors and burns more LLM calls chasing them.
-fn report_broken_build(progress: &Progress, idx: usize, step_id: &str, file: &str, story_id: &str) {
+///
+/// Takes `progress` BY VALUE (not `&Progress`) so it can be dropped before printing the closing
+/// notice. indicatif's `MultiProgress::println` always renders above every bar it still tracks,
+/// no matter when during the run it's called — the only way to make this notice appear genuinely
+/// BELOW the finished tree is to let indicatif release the terminal region first (by dropping the
+/// whole `Progress`) and then use a plain `println!`, not `Progress::println`.
+fn report_broken_build(progress: Progress, idx: usize, step_id: &str, file: &str, story_id: &str) {
     progress.failed(idx);
-    // Freeze whatever's still pending/previewed/headered before returning — otherwise every
+    // Freeze whatever's still pending/previewed/headered before dropping — otherwise every
     // step that hadn't been reached yet vanishes with no trace the moment `progress` drops.
     progress.freeze();
-    progress.println(format!("\n  ✗ Build is broken after step {step_id} ({file}) — stopping so errors don't compound."));
-    progress.println(format!("  Fix the errors above, then re-run `canopy implement {story_id}` to continue."));
+    drop(progress);
+    println!("\n  ✗ Build is broken after step {step_id} ({file}) — stopping so errors don't compound.");
+    println!("  Fix the errors above, then re-run `canopy implement {story_id}` to continue.");
 }
 
 pub(crate) fn format_roots_context(packet: &roots_context::FeatureContextPacket) -> String {
@@ -183,7 +190,7 @@ pub(crate) fn execute_steps(
             let test_file = match derive_test_file_path(&step.file) {
                 Some(p) => p,
                 None => {
-                    progress.println(format!("  cannot derive test path for {} — skipping TDD", step.file));
+                    progress.note(i, format!("cannot derive test path for {} — skipping TDD", step.file));
                     continue;
                 }
             };
@@ -268,7 +275,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("red-{}", step.file), &progress, i);
                     total_fix_iterations += red.iterations;
                     if !red.passed {
-                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
+                        report_broken_build(progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
 
@@ -286,7 +293,7 @@ pub(crate) fn execute_steps(
                             &progress, i,
                         );
                         if !sane {
-                            report_broken_build(&progress, i, &step.id, &test_file, story_id);
+                            report_broken_build(progress, i, &step.id, &test_file, story_id);
                             return Ok(());
                         }
                     }
@@ -338,7 +345,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("green-{}", step.file), &progress, i);
                     total_fix_iterations += green.iterations;
                     if !green.passed {
-                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
+                        report_broken_build(progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
 
@@ -378,7 +385,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("green-compile-{}", step.file), &progress, i);
                     total_fix_iterations += compile_check.iterations;
                     if !compile_check.passed {
-                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
+                        report_broken_build(progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
                 }
@@ -441,7 +448,7 @@ pub(crate) fn execute_steps(
                         Some(fix_log_dir), &format!("direct-{}", step.file), &progress, i);
                     total_fix_iterations += direct.iterations;
                     if !direct.passed {
-                        report_broken_build(&progress, i, &step.id, &step.file, story_id);
+                        report_broken_build(progress, i, &step.id, &step.file, story_id);
                         return Ok(());
                     }
                 }
@@ -455,10 +462,14 @@ pub(crate) fn execute_steps(
         save_story_plan(story_id, &plan).context("failed to save plan progress")?;
     }
 
-    progress.println(format!(
+    // Drop `progress` before printing the closing summary — see report_broken_build's doc for
+    // why this is the only way to make the message land below the tree instead of above it.
+    progress.freeze();
+    drop(progress);
+    println!(
         "\n{written} file(s) written, {total_fix_iterations} fix-loop iteration(s), {} total.",
         format_elapsed(run_start.elapsed())
-    ));
+    );
 
     // Final integration test pass — catches e2e tests and cross-service interaction issues.
     let implementable: Vec<_> = services.services.iter()

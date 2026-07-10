@@ -760,6 +760,49 @@ impl Progress {
         }
         self.annotate_last_child(idx, note);
     }
+
+    /// Inserts a static (non-spinner) line nested under step `idx`'s tree entry — for one-shot
+    /// diagnostic events (a fix-loop round summary, an unreadable file, a stub that turned out
+    /// to be a full implementation) that aren't a `timed()` attempt in their own right but still
+    /// belong to this step's history, not floating disconnected above the whole tree the way a
+    /// bare `println` would (see `annotate_last_child`'s doc: indicatif always renders a plain
+    /// `println` above every tracked bar, regardless of call order). Participates in the same
+    /// MAX_VISIBLE_CHILDREN folding and collapse-on-finish behavior as a real `timed()` attempt.
+    /// Untagged (no file identity) — use `annotate_matching_child` instead for a note about one
+    /// specific file among several mid-fix in the same round.
+    pub(crate) fn note(&self, idx: usize, text: impl Into<String>) {
+        let text = text.into();
+        let Some(multi) = &self.multi else { self.println(format!("      {text}")); return };
+        let children_lock = self.children.get(idx);
+        let anchor = match children_lock.and_then(|m| m.lock().unwrap().last().map(|(_, pb)| pb.clone())) {
+            Some(last_child) => Some(last_child),
+            None => self.bar_slot(idx).and_then(|m| m.lock().unwrap().clone()),
+        };
+        let Some(anchor) = anchor else { self.println(format!("      {text}")); return };
+        use indicatif::{ProgressBar, ProgressStyle};
+        let pb = multi.insert_after(&anchor, ProgressBar::new_spinner());
+        pb.set_style(ProgressStyle::with_template("      {msg}").unwrap_or_else(|_| ProgressStyle::default_spinner()));
+        pb.set_message(text);
+        pb.finish();
+        let Some(m) = children_lock else { return };
+        let mut children = m.lock().unwrap();
+        children.push((None, pb));
+        let mut newly_folded = 0usize;
+        while children.len() > MAX_VISIBLE_CHILDREN {
+            children.remove(0).1.finish_and_clear();
+            newly_folded += 1;
+        }
+        drop(children);
+        if newly_folded > 0 {
+            if let Some(fc) = self.folded_count.get(idx) {
+                let mut count = fc.lock().unwrap();
+                *count += newly_folded;
+                let n = *count;
+                drop(count);
+                self.ensure_fold_bar(idx, n);
+            }
+        }
+    }
 }
 
 /// Attaches the model's self-reported summary, and anything it flagged as not fully

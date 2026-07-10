@@ -89,7 +89,7 @@ fn run_fix_loop_inner(
 
         let output = match output {
             Ok(o) => o,
-            Err(e) => { progress.println(format!("  failed to run command: {e}")); return false; }
+            Err(e) => { progress.note(step_idx, format!("failed to run command: {e}")); return false; }
         };
 
         let combined = strip_ansi(format!(
@@ -112,7 +112,7 @@ fn run_fix_loop_inner(
         if missing_pkgs.iter().any(|p| p.starts_with("javax.")) {
             let n = migrate_javax_to_jakarta(service_dir);
             if n > 0 {
-                progress.println(format!("  migrated javax.* → jakarta.* in {n} file(s)"));
+                progress.note(step_idx, format!("migrated javax.* → jakarta.* in {n} file(s)"));
                 fixed_any = true;
             }
         }
@@ -145,7 +145,7 @@ fn run_fix_loop_inner(
                         ));
                     }
                     let errors = error_lines.join("\n\n");
-                    progress.println(format!("  fixing pom.xml ({} pom, {} unresolvable, {} missing)",
+                    progress.note(step_idx, format!("fixing pom.xml ({} pom, {} unresolvable, {} missing)",
                         pom_validation.len(), unresolvable.len(), non_javax.len()));
                     let pom_skill = skill_for_build_system(&build_file);
                     match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills, &[]) {
@@ -154,7 +154,7 @@ fn run_fix_loop_inner(
                             print_step_notes(progress, step_idx, &result.summary, &result.deviations);
                             fixed_any = true;
                         }
-                        Err(e) => progress.println(format!("    LLM fix failed for pom.xml: {e}")),
+                        Err(e) => progress.note(step_idx, format!("LLM fix failed for pom.xml: {e}")),
                     }
                 }
             }
@@ -189,8 +189,8 @@ fn run_fix_loop_inner(
         }
 
         if broken_files.is_empty() && !fixed_any {
-            progress.println("  No fixable errors found — manual fix needed.");
-            progress.println(&combined);
+            progress.note(step_idx, "No fixable errors found — manual fix needed.");
+            progress.note(step_idx, combined.clone());
             return false;
         }
 
@@ -199,18 +199,18 @@ fn run_fix_loop_inner(
                 .map(|f| std::path::Path::new(f).file_name()
                     .and_then(|n| n.to_str()).unwrap_or(f.as_str()))
                 .collect();
-            progress.println(format!("  fix [{}/{}]  {} error(s) in {}",
+            progress.note(step_idx, format!("fix [{}/{}]  {} error(s) in {}",
                 iteration + 1, max_iterations, broken_files.len(), short.join(", ")));
         }
 
         for file_path in &broken_files {
             let content = match std::fs::read_to_string(file_path) {
                 Ok(c) => c,
-                Err(e) => { progress.println(format!("  cannot read {file_path}: {e}")); continue; }
+                Err(e) => { progress.note(step_idx, format!("cannot read {file_path}: {e}")); continue; }
             };
             let errors = errors_for_file(&combined, file_path);
             if errors.trim().is_empty() {
-                progress.println(format!("  skipping {} — no matching error lines", file_path));
+                progress.note(step_idx, format!("skipping {} — no matching error lines", file_path));
                 continue;
             }
             let short_name = std::path::Path::new(file_path).file_name()
@@ -368,7 +368,7 @@ pub(crate) fn run_red_test_sanity_check(
     for iteration in 0..max_iterations {
         let output = match crate::shell::run_capture_in_dir("bash", test_cmd, service_dir) {
             Ok(o) => o,
-            Err(e) => { progress.println(format!("  failed to run command: {e}")); return false; }
+            Err(e) => { progress.note(step_idx, format!("failed to run command: {e}")); return false; }
         };
         let combined = strip_ansi(format!(
             "{}\n{}",
@@ -386,14 +386,14 @@ pub(crate) fn run_red_test_sanity_check(
         // drifted the test into an unrelated schema after a few rounds). Accept it and move
         // on; Green phase regenerates the implementation file from scratch regardless.
         if test_file_passed_cleanly(&combined, test_file) {
-            progress.println(format!(
-                "  {test_file}'s stub was already a full implementation (test passed immediately) — accepting, continuing to Green phase"
+            progress.note(step_idx, format!(
+                "{test_file}'s stub was already a full implementation (test passed immediately) — accepting, continuing to Green phase"
             ));
             return true;
         }
         let content = match std::fs::read_to_string(test_file) {
             Ok(c) => c,
-            Err(e) => { progress.println(format!("  cannot read {test_file}: {e}")); return false; }
+            Err(e) => { progress.note(step_idx, format!("cannot read {test_file}: {e}")); return false; }
         };
         let errors = errors_for_file(&combined, test_file);
         let test_skill = testing_skill_for_file_with_adrs(test_file, tech, adrs, service_source_files);
