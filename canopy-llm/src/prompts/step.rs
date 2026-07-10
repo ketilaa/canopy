@@ -440,14 +440,19 @@ fn unit_test_stub_prompt_ts(
         format!("Dependency types (use these exact field names in test data):\n{sibling_section}\n\n")
     };
 
-    // Infrastructure/repository files never receive invalid input in practice — by the time
-    // an aggregate reaches EventPublisher.publish() or a repository's save(), it has already
-    // been validated at the route (zod) or model (factory) layer. Blindly telling the model to
-    // "cover every BDD scenario" causes it to write a validation test against a layer that has
-    // no validation responsibility at all (e.g. EventPublisher asserting a missing-name reject
-    // that only the route layer should ever enforce) — the implementation then correctly does
-    // NOT throw, and the test fails for a reason that has nothing to do with a real defect.
-    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" {
+    // Infrastructure/repository/event files never receive invalid input in practice — by the
+    // time an aggregate reaches EventPublisher.publish(), a repository's save(), or an event
+    // factory, it has already been validated at the route (zod) or model (factory) layer.
+    // Blindly telling the model to "cover every BDD scenario" causes it to write a validation
+    // test against a layer that has no validation responsibility at all — for an event
+    // specifically, it forces a "missing name" test that can only pass if the event's factory
+    // accepts and re-validates the whole aggregate's fields, directly violating the thin-event
+    // rule (eventId + <entity>Id + occurredAt only) and leaving no implementation that can ever
+    // satisfy both the test and the skill at once (confirmed: this produced an unwinnable Red
+    // fix loop with a real dogfooding project's ProductCreated.ts — see CLAUDE.md's Diagnosing
+    // Dogfooding Runs section). The implementation otherwise correctly does NOT throw, and the
+    // test fails for a reason that has nothing to do with a real defect.
+    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" {
         "This layer never validates input — that happens upstream. Skip any scenario about a \
 missing/invalid field or an error message; write tests only for this layer's own job.".to_string()
     } else {
@@ -491,7 +496,8 @@ missing/invalid field or an error message; write tests only for this layer's own
 
     let entity_schema_label = if layer == "event" {
         "Entity schema (describes the AGGREGATE only — this event's test data must NOT mirror\n\
-         these fields; see the THIN factory rule above — eventId, the aggregate's id, occurredAt ONLY):"
+         these fields; see the \"### Domain events\" section for the payload shape — eventId,\n\
+         the aggregate's id, occurredAt ONLY):"
     } else {
         "Entity schema:"
     };
