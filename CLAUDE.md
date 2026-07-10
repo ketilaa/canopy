@@ -395,3 +395,34 @@ expected rejection (e.g. `'not implemented'`); anything else routes to a bounded
 the test file while it's still editable (`run_red_test_sanity_check` in `canopy-cli/src/fix_loop.rs`).
 Don't remove this check thinking the compile check alone is redundant with it — they catch
 different failure classes.
+
+---
+
+## Commit Discipline
+
+This project overrides the general default of never committing without being asked. On this
+repo specifically: **commit at natural checkpoints without waiting to be asked**, as long as
+every condition below holds.
+
+ALWAYS commit, unprompted, when ALL of these are true:
+- `cargo build --workspace` and `cargo test --workspace` are both green.
+- A distinct unit of work just finished — a bug fixed and verified, one file's pass in a
+  multi-file task, a feature landed — not a mid-thought pause.
+- The change isn't still under active discussion (e.g. the user is weighing whether the
+  approach is even right).
+
+NEVER commit when:
+- The build is red, or tests haven't been run since the last edit.
+- Work is deliberately left mid-file/incomplete (e.g. a multi-step plan not yet finished).
+- The user is actively iterating on the same change within the current exchange.
+
+When doing multi-step work (auditing N files, fixing a chain of bugs), track "commit <unit>"
+as its own task alongside the work items — via TaskCreate/TaskUpdate if a task list is already
+in use — so finishing the list surfaces the commit instead of silently skipping it.
+
+Write real messages: a short imperative subject line, then 1-3 sentences on *why* — the git log
+must tell the story of this project, not just list touched files.
+
+This authorization is scoped to routine checkpoint commits. It does not extend to force-push,
+amending published commits, or anything else the general git safety rules already gate —
+those still require an explicit ask.
