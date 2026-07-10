@@ -471,7 +471,19 @@ impl Progress {
             children.clear();
         }
         match self.bar_slot(idx).and_then(|m| m.lock().unwrap().take()) {
-            Some(pb) => pb.finish_with_message(line),
+            Some(pb) => {
+                // An activated step's bar was switched (in `phase`) to a template ending in
+                // `({elapsed_precise})` so it ticks live. `line` here already embeds its own
+                // elapsed text via `step_summary` — finishing without resetting the style would
+                // render the bar's OWN elapsed suffix a second time after it, e.g.
+                // "✗ [4/9] foo.ts (2m39s · 11.7k in / 668 out) (00:02:39)". Reset to a bare
+                // `{msg}` template first so `line` is the only thing shown.
+                use indicatif::ProgressStyle;
+                pb.set_style(
+                    ProgressStyle::with_template("  {msg}").unwrap_or_else(|_| ProgressStyle::default_spinner()),
+                );
+                pb.finish_with_message(line);
+            }
             None => self.println(line),
         }
     }

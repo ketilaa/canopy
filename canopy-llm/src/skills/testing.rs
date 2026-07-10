@@ -534,19 +534,41 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
         mockConnection = { getClient: jest.fn().mockReturnValue(mockClient) } as unknown as ExternalConnection\n\
       })\n\
 \n\
-  ### kafkajs Producer — mocking send()'s RESOLVED VALUE\n\
-  `Producer.send(record: ProducerRecord): Promise<RecordMetadata[]>` — the record you pass IN\n\
-  (`{ topic, messages }`) and the value it resolves TO are two different shapes. A\n\
-  `RecordMetadata` has `topicName`/`partition`/`errorCode` (plus optional `offset`/`timestamp`/\n\
-  `baseOffset`/`logAppendTime`/`logStartOffset`) — it has NO `topic` and NO `messages` field.\n\
-  A publisher that only calls `await producer.send(...)` and ignores the result needs nothing\n\
-  more than a minimal valid array — do not invent extra fields:\n\
+  ### kafkajs Producer — concrete worked example (this is the SAME factory pattern as above:\n\
+  `this.producer = kafka.producer()` is `this.client = connection.getClient()` with kafkajs's\n\
+  real names — build mockProducer with jest.fn() methods FIRST, exactly per the CORRECT/hoisted\n\
+  rules above; do NOT declare `mockProducer = {} as Producer` and then jest.spyOn() it — spyOn\n\
+  wraps an EXISTING method, and an empty object has none, so every spyOn call throws\n\
+  \"Property '<method>' does not exist in the provided object\" before the test body even runs:\n\
+    WRONG:\n\
+      mockProducer = {} as Producer                                    ✗ no methods to spy on\n\
+      mockKafka.producer = jest.fn().mockReturnValue(mockProducer)\n\
+      const connectSpy = jest.spyOn(mockProducer, 'connect')            ✗ throws immediately\n\
+    CORRECT — mockProducer's methods ARE jest.fn()s already; assert on them directly, no spyOn:\n\
+      let mockKafka: any\n\
+      let mockProducer: any\n\
+      beforeEach(() => {\n\
+        mockProducer = {\n\
+          connect: jest.fn().mockResolvedValue(undefined),\n\
+          disconnect: jest.fn().mockResolvedValue(undefined),\n\
+          send: jest.fn().mockResolvedValue([{ topicName: 'widget-events', partition: 0, errorCode: 0 }]),\n\
+        }\n\
+        mockKafka = { producer: jest.fn().mockReturnValue(mockProducer) } as unknown as Kafka\n\
+        eventPublisher = new EventPublisher(mockKafka, 'widget-events')\n\
+      })\n\
+      it('connects to the producer', async () => {\n\
+        await eventPublisher.connect()\n\
+        expect(mockProducer.connect).toHaveBeenCalled()                 ✓ already a jest.fn()\n\
+      })\n\
+  `Producer.send(record: ProducerRecord): Promise<RecordMetadata[]>` — the record passed IN\n\
+  (`{ topic, messages }`) and the value it resolves TO are different shapes. `RecordMetadata`\n\
+  has `topicName`/`partition`/`errorCode` (plus optional `offset`/`timestamp`/`baseOffset`/\n\
+  `logAppendTime`/`logStartOffset`) — it has NO `topic` and NO `messages` field:\n\
     WRONG — mirrors send()'s own ARGUMENT shape, not its RETURN type:\n\
-      jest.spyOn(producer, 'send').mockResolvedValue([{ topic: 'widget-events', messages: [] }])  ✗ TS2353\n\
-    CORRECT:\n\
-      jest.spyOn(producer, 'send').mockResolvedValue([{ topicName: 'widget-events', partition: 0, errorCode: 0 }])\n\
-  The assertion on what was SENT still uses the argument shape (this part is correct and unrelated):\n\
-    expect(producer.send).toHaveBeenCalledWith({ topic: 'widget-events', messages: [{ value: expect.any(String) }] })"
+      send: jest.fn().mockResolvedValue([{ topic: 'widget-events', messages: [] }])   ✗ TS2353\n\
+    CORRECT: send: jest.fn().mockResolvedValue([{ topicName: 'widget-events', partition: 0, errorCode: 0 }])\n\
+  The assertion on what was SENT still uses the argument shape (this part is unrelated and correct):\n\
+    expect(mockProducer.send).toHaveBeenCalledWith({ topic: 'widget-events', messages: [{ value: expect.any(String) }] })"
          .to_string()),
     ])
 }
