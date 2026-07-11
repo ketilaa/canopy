@@ -6,4 +6,3 @@ pub mod intent;
 pub mod scaffold;
 pub mod spec;
 pub mod stories;
-pub mod try_tools;

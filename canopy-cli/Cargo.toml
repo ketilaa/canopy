@@ -11,8 +11,6 @@ path = "src/main.rs"
 canopy-core    = { path = "../canopy-core" }
 canopy-llm     = { path = "../canopy-llm" }
 canopy-storage = { path = "../canopy-storage" }
-roots-context  = { path = "../roots-context" }
-roots-storage  = { path = "../roots-storage" }
 roots-parser   = { path = "../roots-parser" }
 clap           = { version = "4", features = ["derive"] }
 dialoguer      = "0.11"

@@ -173,15 +173,14 @@ pub(crate) fn message_to_json(msg: &ChatMessage) -> serde_json::Value {
     }
 }
 
-/// The `find_symbol` tool spec, shared by every caller that offers a Roots-backed symbol
-/// lookup — the `try-tools` experiment and the real fix loop both build the exact same tool
-/// from here, so a result validated in one is evidence about the other, not just a lookalike.
-/// The actual lookup logic lives in canopy-cli (canopy-llm has no Roots dependency); this is
-/// only the wire-format description of the capability.
+/// The `find_symbol` tool spec, offered to the fix loop by `canopy-cli` — a Roots-backed
+/// symbol lookup so the model can resolve a missing import by looking it up instead of
+/// guessing. The actual lookup logic lives in canopy-cli (canopy-llm has no Roots dependency);
+/// this is only the wire-format description of the capability.
 pub fn find_symbol_tool_spec() -> ToolSpec {
     ToolSpec {
         name: "find_symbol".to_string(),
-        description: "Look up where a symbol (function, class, interface) is defined in this project by its exact name. Returns its kind, defining file, and line — or reports that it wasn't found.".to_string(),
+        description: "Look up where a symbol (function, class, interface) is defined in this project by its exact name. Returns its kind, defining file and line, the exact relative import specifier to use, and whether it needs `import type` — or reports that it wasn't found.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {

@@ -2,9 +2,9 @@ use crate::client::{LlmClient, LlmError};
 use crate::tools::{ChatMessage, ToolCall, ToolSpec, ToolTurn};
 use super::summary::{canopy_summary_contract, split_step_response, StepResult};
 
-/// Bounded the same way as `try-tools`' own loop — a handful of real runs never needed more
-/// than 2 (one call, one final answer); this just guards against a model that keeps calling
-/// tools indefinitely instead of ever producing a final answer.
+/// A handful of real runs never needed more than 2 (one tool call, one final answer); this just
+/// guards against a model that keeps calling tools indefinitely instead of ever producing a
+/// final answer.
 const MAX_TOOL_ITERATIONS: usize = 4;
 
 /// A record of one prior fix attempt on a file — what the model reported doing, and what
@@ -22,6 +22,7 @@ pub struct FixAttempt {
     pub is_noop: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fix_prompt(
     file_path: &str,
     content: &str,
@@ -31,6 +32,7 @@ fn fix_prompt(
     skill: &str,
     arch_skills: &str,
     prior_attempts: &[FixAttempt],
+    available_packages: &[String],
 ) -> String {
     let ext = std::path::Path::new(file_path)
         .extension()
@@ -99,6 +101,17 @@ fn fix_prompt(
     } else {
         String::new()
     };
+    // The real, authoritative dependency list — replaces a static "don't import X/Y/Z" blocklist,
+    // which can never enumerate every package that ISN'T installed. Node built-ins (crypto, path,
+    // etc.) are always available regardless of this list and aren't repeated here.
+    let packages_section = if !available_packages.is_empty() {
+        format!(
+            "\nAvailable packages (package.json) — ONLY these may be imported, besides Node.js built-ins:\n{}\n",
+            available_packages.iter().map(|p| format!("  {p}")).collect::<Vec<_>>().join("\n")
+        )
+    } else {
+        String::new()
+    };
     // For TypeScript errors: include the content of related files so the model can fix
     // cross-file type mismatches (e.g. a missing props interface in an imported component).
     let referenced_section = if !referenced_files.is_empty() {
@@ -156,6 +169,7 @@ fn fix_prompt(
          \n\
          File: {file_path}\n\
          {files_section}\
+         {packages_section}\
          {referenced_section}\
          {skill_section}\
          {arch_section}\
@@ -178,6 +192,7 @@ fn fix_prompt(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn fix_file(
     client: &LlmClient,
     file_path: &str,
@@ -188,8 +203,9 @@ pub fn fix_file(
     skill: &str,
     arch_skills: &str,
     prior_attempts: &[FixAttempt],
+    available_packages: &[String],
 ) -> Result<StepResult, LlmError> {
-    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts))?;
+    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts, available_packages))?;
     Ok(split_step_response(&raw))
 }
 
@@ -209,10 +225,11 @@ pub fn fix_file_with_tools(
     skill: &str,
     arch_skills: &str,
     prior_attempts: &[FixAttempt],
+    available_packages: &[String],
     tools: &[ToolSpec],
     mut dispatch: impl FnMut(&ToolCall) -> String,
 ) -> Result<StepResult, LlmError> {
-    let prompt = fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts);
+    let prompt = fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts, available_packages);
     let mut messages = vec![ChatMessage::User(prompt)];
 
     for _ in 0..MAX_TOOL_ITERATIONS {

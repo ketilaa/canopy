@@ -61,7 +61,7 @@ fn done_steps_skip_list(plan: &StoryPlan) -> Vec<String> {
     skip
 }
 
-pub(crate) fn format_roots_context(packet: &roots_context::FeatureContextPacket) -> String {
+pub(crate) fn format_roots_context(packet: &crate::roots::FeatureContextPacket) -> String {
     let mut parts = Vec::new();
     if !packet.symbols.is_empty() {
         let syms: Vec<String> = packet.symbols.iter()

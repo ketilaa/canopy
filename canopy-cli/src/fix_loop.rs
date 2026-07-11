@@ -1,7 +1,7 @@
 use crate::build_output::{
     errors_for_file, extract_error_files, extract_missing_packages, extract_missing_symbol_names,
-    extract_pom_validation_errors, extract_unresolvable_dependencies, parse_ts_imports, strip_ansi,
-    test_file_passed_cleanly,
+    extract_pom_validation_errors, extract_unresolvable_dependencies, parse_ts_imports,
+    read_available_packages, strip_ansi, test_file_passed_cleanly,
 };
 use crate::project_scan::collect_files;
 use crate::roots;
@@ -148,7 +148,7 @@ fn run_fix_loop_inner(
                     progress.note(step_idx, format!("fixing pom.xml ({} pom, {} unresolvable, {} missing)",
                         pom_validation.len(), unresolvable.len(), non_javax.len()));
                     let pom_skill = skill_for_build_system(&build_file);
-                    match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills, &[]) {
+                    match fix_file(client, &build_file, &content, &errors, service_source_files, &[], &pom_skill, arch_skills, &[], &[]) {
                         Ok(result) => {
                             let _ = std::fs::write(&build_file, &result.content);
                             print_step_notes(progress, step_idx, &result.summary, &result.deviations);
@@ -309,11 +309,12 @@ fn run_fix_loop_inner(
             // import, not something it needs to reason its way to — offer the Roots-backed
             // find_symbol tool so it can look the answer up instead of guessing another wrong
             // path. Every other error class keeps using the plain prompt unchanged.
-            let missing_symbols = if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
-                extract_missing_symbol_names(&errors)
-            } else {
-                Vec::new()
-            };
+            let is_ts_family = file_path.ends_with(".ts") || file_path.ends_with(".tsx");
+            let missing_symbols = if is_ts_family { extract_missing_symbol_names(&errors) } else { Vec::new() };
+            // The real, authoritative package.json dependency list — replaces a static "don't
+            // import moment/uuid/nanoid" blocklist in the skill, which can never enumerate every
+            // package that ISN'T installed.
+            let available_packages = if is_ts_family { read_available_packages(service_dir) } else { Vec::new() };
             let fix_result = progress.timed(
                 step_idx,
                 format!("fixing  {short_name} (attempt {}/{max_iterations}){same_error_note} — {error_summary}", iteration + 1),
@@ -321,11 +322,11 @@ fn run_fix_loop_inner(
                 Some(file_path.as_str()),
                 || {
                     if missing_symbols.is_empty() {
-                        fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts)
+                        fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts, &available_packages)
                     } else {
                         let tool = find_symbol_tool_spec();
                         fix_file_with_tools(
-                            client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts,
+                            client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts, &available_packages,
                             std::slice::from_ref(&tool),
                             |call| {
                                 let name = call.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
@@ -334,7 +335,7 @@ fn run_fix_loop_inner(
                                     format!("tool: find_symbol({name})"),
                                     client,
                                     Some(file_path.as_str()),
-                                    || roots::dispatch_find_symbol(call),
+                                    || roots::dispatch_find_symbol(call, file_path),
                                 );
                                 let summary = result.lines().next().unwrap_or(&result);
                                 let more = result.lines().count().saturating_sub(1);
@@ -451,12 +452,17 @@ pub(crate) fn run_red_test_sanity_check(
         let errors = errors_for_file(&combined, test_file);
         let test_skill = testing_skill_for_file_with_adrs(test_file, tech, adrs, service_source_files);
         let short_name = std::path::Path::new(test_file).file_name().and_then(|n| n.to_str()).unwrap_or(test_file);
+        let available_packages = if test_file.ends_with(".ts") || test_file.ends_with(".tsx") {
+            read_available_packages(service_dir)
+        } else {
+            Vec::new()
+        };
         let fix_result = progress.timed(
             step_idx,
             format!("sanity — fixing {short_name} (attempt {}/{max_iterations}) — test fails for an unexpected reason", iteration + 1),
             client,
             Some(test_file),
-            || fix_file(client, test_file, &content, &errors, service_source_files, &[], &test_skill, arch_skills, &prior_attempts),
+            || fix_file(client, test_file, &content, &errors, service_source_files, &[], &test_skill, arch_skills, &prior_attempts, &available_packages),
         );
         match fix_result {
             Ok(result) => {

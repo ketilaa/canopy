@@ -167,8 +167,24 @@ roots-cli/         `roots` CLI: index, query, discover, impact
 The graph hierarchy: Workspace → Project → Module → File → Symbol.
 
 Roots is the authoritative source of truth in repository mode.
-`canopy-cli` calls into `roots-context` to get context packets rather than reading files directly.
-When Roots is available, prefer `roots-context` over `canopy-storage` for symbol and relationship queries.
+When Roots is available, prefer it over `canopy-storage` for symbol and relationship queries.
+
+**Canopy only calls Roots as an external command — never as a linked library.** `canopy-cli`
+must not depend on `roots-storage` or `roots-context` in `Cargo.toml`, and must not call
+`Store::open`/`query_exact`/`feature_context` or any other roots-storage/roots-context API
+in-process. Every query goes through `std::process::Command::new("roots")` (init, index, symbol,
+dump, context, ...), capturing stdout and parsing its JSON — the same pattern `ensure_indexed`/
+`reindex` already used for init/index before this rule was written down. Reason: canopy linking
+Roots' internal storage crate directly coupled canopy to Roots' SQLite schema and query API —
+a schema change inside Roots could silently break canopy with no interface boundary to catch it.
+The `roots` CLI's stable JSON output *is* that boundary; treat it the same as any other external
+tool canopy shells out to, not as an internal module. One narrow exception: `find_test_call_shape`
+(in `canopy-cli/src/roots.rs`) uses `roots_parser::find_subject_calls` directly — this parses a
+test file's in-memory content that hasn't been written to disk or indexed yet (it runs *before*
+the stub file exists), so there's no live Roots index or CLI command to shell out to in the first
+place; it's a plain tree-sitter parsing utility, not a query against Roots' running state. That's
+still a direct `roots-parser` dependency, but it's parsing, not talking to Roots-the-system —
+don't read this exception as license to add other direct roots-storage/roots-context calls.
 
 **How Roots integrates with `canopy implement`:**
 - `build_sibling_section` calls `get_ts_module_surface` (compact export surfaces) for each step's `depends_on` files
@@ -377,13 +393,38 @@ A plan step description should name its layer responsibility using the verb that
 `Handles` (route), `Translates` (middleware). An ambiguous verb ("implements", "manages") is a
 signal the step is conflating responsibilities.
 
-**Fix LLM output through prompts, not code.** When the LLM produces wrong paths, missing files,
-bad structure, or incorrect patterns — fix the discovery or skill prompt to make the requirement
-clearer. Do not add Rust safety nets (path injectors, output filters, post-generation reordering).
-The prompt is the design; the model should get it right because the context is good, not because
-Rust patches the output. Only reach for code enforcement when the problem is structurally
-impossible to express in a prompt (e.g. numbering step IDs after a merge across services).
-See Prompt House Style above for how to fix a prompt the model isn't complying with.
+**Escalation order when the model fails at something: tool, then prompt, then gated code —
+never skip a rung.** Every fix this project makes to a recurring model mistake falls into one of
+three tiers, tried in this order:
+
+1. **Is this a tool call, or a stated fact?** If the answer is mechanically computable and the
+   model needs to *decide when to ask* (the space of things it might need is too large to
+   pre-inject everything — "where is symbol X" for any X), offer a tool: `find_symbol`
+   (`canopy-cli/src/roots.rs`, `canopy-llm::find_symbol_tool_spec`) resolves a missing import by
+   looking it up instead of guessing, and the fix loop shows each call live in the console,
+   collapsing to the looked-up result. If the value is always needed and cheap to compute ahead
+   of time instead, inject it as a stated fact rather than a tool — `find_test_call_shape`'s
+   `observed_call` fact (Roots-parsed test call shape) and the `available_packages` fact
+   (`read_available_packages`, replacing a static "don't import moment/uuid" blocklist with the
+   project's real `package.json` dependencies) are both this shape: always relevant, no judgment
+   call about *whether* to look them up. Prefer this tier whenever the failure is "the model
+   doesn't know a fact," not "the model doesn't know the convention."
+2. **If it's not a lookup — it's a judgment or convention the model needs to be taught — fix the
+   prompt.** Fix the discovery or skill prompt to make the requirement clearer; do not add Rust
+   safety nets (path injectors, output filters, post-generation reordering). The prompt is the
+   design; the model should get it right because the context is good, not because Rust patches
+   the output. See Prompt House Style above for how to fix a prompt the model isn't complying
+   with.
+3. **Only once tiers 1 and 2 are genuinely exhausted — a real compliance limitation, not a
+   missing-lookup or missing-instruction problem — propose gated code.** Reach for code
+   enforcement only when the problem is structurally impossible to express as a tool or a prompt
+   (e.g. numbering step IDs after a merge across services), and even then, propose it and stop
+   for human approval before implementing — see "Diagnosing Dogfooding Runs" below.
+
+Don't jump straight to tier 3 because a code fix is easier to write than a good prompt, and don't
+reach for tier 2 when the actual gap is tier 1 (a prompt teaching path arithmetic or an import-
+type rule is noise once a tool can just answer the question directly — see the `find_symbol`
+tool's evolution in `canopy-llm/src/skills/tech_stack.rs` for a concrete before/after).
 
 **TDD Red phase checks compilation, not runtime — that gap is structural, not an oversight.**
 `tsc --noEmit` (or `javac`) can't catch a test that compiles fine but crashes at Jest/JUnit

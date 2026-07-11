@@ -16,6 +16,60 @@ pub(crate) fn strip_ansi(s: impl AsRef<str>) -> String {
     out
 }
 
+/// Reads `package.json`'s `dependencies` and `devDependencies` keys (name only) — the actual,
+/// authoritative set of npm packages available to import from. Used to replace a static
+/// "don't import moment/uuid/nanoid" blocklist in the skill with the project's real dependency
+/// list: a blocklist can never enumerate every package that ISN'T installed, but this can state
+/// exactly which ones ARE. Returns an empty Vec when package.json is missing or malformed —
+/// the caller falls back to skipping the fact section rather than erroring.
+pub(crate) fn read_available_packages(service_dir: &str) -> Vec<String> {
+    let path = format!("{service_dir}/package.json");
+    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else { return Vec::new() };
+    let mut packages = Vec::new();
+    for key in ["dependencies", "devDependencies"] {
+        if let Some(obj) = json.get(key).and_then(|v| v.as_object()) {
+            for name in obj.keys() {
+                if !packages.contains(name) {
+                    packages.push(name.clone());
+                }
+            }
+        }
+    }
+    packages.sort();
+    packages
+}
+
+#[cfg(test)]
+mod read_available_packages_tests {
+    use super::read_available_packages;
+
+    fn scratch_dir(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("canopy-test-available-packages-{label}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn reads_dependencies_and_dev_dependencies_sorted_and_deduped() {
+        let dir = scratch_dir("basic");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"dependencies": {"kafkajs": "^2.0.0", "pg": "^8.0.0"}, "devDependencies": {"jest": "^29.0.0", "pg": "^8.0.0"}}"#,
+        ).unwrap();
+        assert_eq!(
+            read_available_packages(dir.to_str().unwrap()),
+            vec!["jest", "kafkajs", "pg"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_package_json_yields_empty() {
+        let dir = scratch_dir("missing");
+        assert!(read_available_packages(dir.to_str().unwrap()).is_empty());
+    }
+}
+
 pub(crate) fn extract_error_files(output: &str, service_dir: &str) -> Vec<String> {
     let mut files: Vec<String> = Vec::new();
     let svc_path = std::path::Path::new(service_dir);

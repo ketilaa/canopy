@@ -1,29 +1,51 @@
 use canopy_llm::ToolCall;
-use roots_context::{feature_context, FeatureContextPacket};
-use roots_storage::{Store, SymbolRow};
+use serde::Deserialize;
 
 const INDEX_PATH: &str = ".roots/index.db";
 
-fn workspace_id() -> String {
-    std::fs::read_to_string(".roots/config.toml")
-        .ok()
-        .and_then(|content| {
-            content.lines()
-                .find(|l| l.trim_start().starts_with("active_workspace"))
-                .and_then(|l| l.splitn(2, '=').nth(1))
-                .map(|v| v.trim().trim_matches('"').to_string())
-        })
-        .unwrap_or_else(|| "default".to_string())
+/// One indexed symbol, as returned by the `roots` CLI's JSON output (`symbol`, `dump`,
+/// `context`). Mirrors `roots_storage::SymbolRow`'s shape but is deserialized from the CLI's
+/// stdout rather than a linked `roots-storage` type — canopy only talks to Roots as an external
+/// command (see CLAUDE.md's Roots section), never by linking its storage/context crates.
+#[derive(Deserialize, Clone)]
+pub struct SymbolInfo {
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: u32,
+    #[serde(default)]
+    pub fqn: String,
+    #[serde(default)]
+    pub signature: Option<String>,
 }
 
-fn open_store() -> Option<Store> {
-    let path = std::path::Path::new(INDEX_PATH);
-    if !path.exists() {
+/// Mirrors `roots_context::FeatureContextPacket`'s fields actually consumed by canopy —
+/// `goal`/`keywords`/`relationships` aren't used here, so they're simply not deserialized
+/// (serde ignores unrecognized-by-us JSON fields by default).
+#[derive(Deserialize, Default)]
+pub struct FeatureContextPacket {
+    #[serde(default)]
+    pub symbols: Vec<SymbolInfo>,
+    #[serde(default)]
+    pub facts: Vec<String>,
+}
+
+/// Runs `roots <args>` and parses stdout as JSON. Returns None on any failure — binary missing,
+/// no index yet, non-zero exit, or malformed JSON — since every caller already treats "no Roots"
+/// as a legitimate fallback-to-raw-files case, not an error to propagate.
+fn run_roots_json<T: serde::de::DeserializeOwned>(args: &[&str]) -> Option<T> {
+    if !std::path::Path::new(INDEX_PATH).exists() || !binary_available() {
         return None;
     }
-    let store = Store::open(path).ok()?;
-    store.init_schema().ok()?;
-    Some(store)
+    let output = std::process::Command::new("roots").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn dump_symbols() -> Option<Vec<SymbolInfo>> {
+    run_roots_json(&["dump"])
 }
 
 /// Ensures `.roots/` is initialized and the index is current.
@@ -49,9 +71,7 @@ pub fn ensure_indexed() {
 
 /// Returns a feature context packet for the given goal, or None when no index exists.
 pub fn get_feature_context(goal: &str) -> Option<FeatureContextPacket> {
-    let store = open_store()?;
-    let ws = workspace_id();
-    feature_context(&store, &ws, goal).ok()
+    run_roots_json(&["context", "--feature", goal])
 }
 
 /// Returns a compact type surface for the given class names, scoped to `service_dir`.
@@ -67,18 +87,17 @@ pub fn get_feature_context(goal: &str) -> Option<FeatureContextPacket> {
 /// Returns None when the index is unavailable, the class is not found, or no
 /// signatures have been stored yet (pre-V4 index — caller falls back to raw files).
 pub fn get_class_surface(class_names: &[&str], service_dir: &str) -> Option<String> {
-    let store = open_store()?;
-    let ws = workspace_id();
+    let all = dump_symbols()?;
     let mut surfaces: Vec<String> = Vec::new();
 
     for &class_name in class_names {
-        let candidates = store.query_exact(&ws, class_name).ok()?;
+        let candidates: Vec<&SymbolInfo> = all.iter().filter(|s| s.name == class_name).collect();
         // Prefer symbols whose file lives under this service.
-        let class_sym = candidates.iter()
+        let class_sym = candidates.iter().copied()
             .find(|s| s.file.starts_with(service_dir) && matches!(s.kind.as_str(), "class" | "interface"))
-            .or_else(|| candidates.iter().find(|s| matches!(s.kind.as_str(), "class" | "interface")))?;
+            .or_else(|| candidates.iter().copied().find(|s| matches!(s.kind.as_str(), "class" | "interface")))?;
 
-        let file_syms = store.query_file_symbols(&ws, &class_sym.file).ok()?;
+        let file_syms: Vec<&SymbolInfo> = all.iter().filter(|s| s.file == class_sym.file).collect();
         let members: Vec<String> = file_syms.iter()
             .filter(|s| s.kind == "method")
             .filter_map(|s| s.signature.as_deref().map(|sig| format!("  {}{}", s.name, sig)))
@@ -112,13 +131,12 @@ pub fn get_class_surface(class_names: &[&str], service_dir: &str) -> Option<Stri
 /// (caller should fall back to reading the files directly).
 pub fn get_ts_module_surface(rel_paths: &[String], service_dir: &str) -> Option<String> {
     if rel_paths.is_empty() { return None; }
-    let store = open_store()?;
-    let ws = workspace_id();
+    let all = dump_symbols()?;
     let mut parts: Vec<String> = Vec::new();
 
     for rel in rel_paths {
         let ws_path = format!("{}/{}", service_dir, rel);
-        let syms = store.query_file_symbols(&ws, &ws_path).unwrap_or_default();
+        let syms: Vec<&SymbolInfo> = all.iter().filter(|s| s.file == ws_path).collect();
         if syms.is_empty() { continue; }
 
         let mut lines = vec![format!("// {}", rel)];
@@ -161,27 +179,102 @@ pub fn get_ts_module_surface(rel_paths: &[String], service_dir: &str) -> Option<
 /// Looks up every indexed symbol with this exact name across the whole project — e.g.
 /// resolving which file exports `createProduct` before writing an import for it. Returns None
 /// when the index is unavailable or nothing matches. Backs the `find_symbol` tool exposed to
-/// the fix loop (see `dispatch_find_symbol`) — the same tool validated experimentally by
-/// `canopy try-tools`' symbol-lookup scenario, here querying the real project index instead of
-/// a scratch one.
-pub fn find_symbol(name: &str) -> Option<Vec<SymbolRow>> {
-    let store = open_store()?;
-    let ws = workspace_id();
-    let rows = store.query_exact(&ws, name).ok()?;
+/// the fix loop (see `dispatch_find_symbol`).
+pub fn find_symbol(name: &str) -> Option<Vec<SymbolInfo>> {
+    let rows: Vec<SymbolInfo> = run_roots_json(&["symbol", name])?;
     if rows.is_empty() { None } else { Some(rows) }
 }
 
-/// Executes one `find_symbol` tool call against the real project's Roots index.
-pub fn dispatch_find_symbol(call: &ToolCall) -> String {
+/// Executes one `find_symbol` tool call against the real project's Roots index. `from_file` is
+/// the project-relative path of the file making the lookup (known to canopy-cli already — the
+/// model never has to supply it) — used to compute the exact relative import specifier the
+/// answer is formatted with.
+pub fn dispatch_find_symbol(call: &ToolCall, from_file: &str) -> String {
     let Some(name) = call.arguments.get("name").and_then(|v| v.as_str()) else {
         return "error: missing required \"name\" argument".to_string();
     };
     match find_symbol(name) {
         Some(rows) => rows.iter()
-            .map(|r| format!("{} {} — defined in {} (line {})", r.kind, r.name, r.file, r.line))
+            .map(|r| format_symbol_match(r, from_file))
             .collect::<Vec<_>>()
             .join("\n"),
         None => format!("no symbol named \"{name}\" found in the index"),
+    }
+}
+
+/// Formats one matched symbol as a self-contained answer: kind, defining file and line, the
+/// exact relative import specifier `from_file` should use, and — since a TS/TSX caller needs to
+/// know — whether it's a type-only construct (`import type`) or a value (`import`). Computing
+/// this here means the model never has to count `../` levels or reason about `isolatedModules`
+/// itself; the tool's answer already states the form to use.
+pub fn format_symbol_match(row: &SymbolInfo, from_file: &str) -> String {
+    let specifier = relative_import_specifier(from_file, &row.file);
+    let import_form = if row.kind == "interface" {
+        "type-only — use `import type`"
+    } else {
+        "value — use a regular `import`"
+    };
+    format!(
+        "{} {} — defined in {} (line {}); import via '{specifier}' ({import_form})",
+        row.kind, row.name, row.file, row.line
+    )
+}
+
+/// Computes the relative import specifier a file at `from_file` would use to import from
+/// `to_file` — e.g. `("services/product/src/services/ProductService.ts",
+/// "services/product/src/models/Product.ts")` → `"../models/Product"`. Both paths are project-
+/// relative, the same coordinate system the Roots index already stores `file` in. Strips the
+/// extension since TS/JS import specifiers never include one.
+fn relative_import_specifier(from_file: &str, to_file: &str) -> String {
+    let from_dir = std::path::Path::new(from_file).parent().unwrap_or_else(|| std::path::Path::new(""));
+    let to_no_ext = std::path::Path::new(to_file).with_extension("");
+
+    let from_parts: Vec<&std::ffi::OsStr> = from_dir.iter().collect();
+    let to_parts: Vec<&std::ffi::OsStr> = to_no_ext.iter().collect();
+    let common = from_parts.iter().zip(to_parts.iter()).take_while(|(a, b)| a == b).count();
+
+    let mut parts: Vec<String> = (common..from_parts.len()).map(|_| "..".to_string()).collect();
+    parts.extend(to_parts[common..].iter().map(|p| p.to_string_lossy().to_string()));
+
+    let joined = parts.join("/");
+    if joined.starts_with('.') { joined } else { format!("./{joined}") }
+}
+
+#[cfg(test)]
+mod relative_import_specifier_tests {
+    use super::relative_import_specifier;
+
+    #[test]
+    fn sibling_directories_under_src() {
+        assert_eq!(
+            relative_import_specifier(
+                "services/product/src/services/ProductService.ts",
+                "services/product/src/models/Product.ts",
+            ),
+            "../models/Product"
+        );
+    }
+
+    #[test]
+    fn same_directory() {
+        assert_eq!(
+            relative_import_specifier(
+                "services/product/src/models/Product.ts",
+                "services/product/src/models/helpers.ts",
+            ),
+            "./helpers"
+        );
+    }
+
+    #[test]
+    fn nested_deeper_target() {
+        assert_eq!(
+            relative_import_specifier(
+                "services/product/src/routes/products.ts",
+                "services/product/src/services/product/ProductService.ts",
+            ),
+            "../services/product/ProductService"
+        );
     }
 }
 
@@ -195,7 +288,10 @@ pub fn dispatch_find_symbol(call: &ToolCall) -> String {
 /// doesn't exist on disk yet (or was just written but not yet reindexed), not a query against
 /// previously-indexed symbols. That's deliberate: waiting for a reindex here would race against
 /// the very call site this is meant to inform (stub generation, which runs before the file is
-/// ever indexed).
+/// ever indexed). It's also why this is the one place canopy still links a roots-* crate
+/// (`roots-parser`) directly rather than shelling out — there's no live Roots index or CLI
+/// command involved, just a plain tree-sitter parsing utility applied to unsaved content (see
+/// CLAUDE.md's Roots section for why this is a deliberate, narrow exception).
 ///
 /// Disagreement across call sites (rather than picking one arbitrarily) is itself useful
 /// information withheld here on purpose — silently trusting an inconsistent test would be worse

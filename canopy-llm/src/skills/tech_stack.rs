@@ -280,36 +280,35 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              NEVER use TypeScript path aliases (@services/..., @app/..., @src/..., etc.) — \
              there is no paths config in tsconfig.json; use only relative imports.\n\
              \n\
-             #### Deriving paths from depends_on\n\
-             depends_on entries are PROJECT-ROOT paths, not import specifiers.\n\
-             Example: generating src/repositories/WidgetRepository.ts with\n\
+             #### Import paths within src/\n\
+             depends_on entries are PROJECT-ROOT paths, not import specifiers. All src/\n\
+             subdirectories are siblings — one dot-dot only:\n\
                depends_on: [\"services/<name>/src/models/Widget.ts\"]\n\
-             Correct import:  import { Widget } from '../models/Widget'     ✓  relative from repositories/ to models/\n\
-             WRONG:           import { Widget } from '@services/<name>/src/models/Widget'  ✗  path alias — invalid\n\
-             WRONG:           import { Widget } from 'services/<name>/src/models/Widget'   ✗  not a node module\n\
-             ALWAYS strip the service prefix (e.g. services/<name>/) from both paths first, then\n\
-             compute the relative path between the two src/ locations.\n\
-             \n\
-             #### Import depth within src/\n\
-             All src/ subdirectories are siblings — one dot-dot only:\n\
-               src/services/WidgetService.ts → import { Widget } from '../models/Widget'       ✓\n\
-               src/services/WidgetService.ts → import { WidgetRepository } from '../repositories/WidgetRepository' ✓\n\
-             WRONG — two dots leaves src/ entirely and reaches the project root:\n\
-               src/services/WidgetService.ts → import { Widget } from '../../models/Widget'    ✗\n\
-               src/services/WidgetService.ts → import ... from '../../infrastructure/...'      ✗\n\
+               src/services/WidgetService.ts → import { Widget } from '../models/Widget'   ✓\n\
+             WRONG — a path alias, a non-relative specifier, or two dots leaving src/ entirely:\n\
+               import { Widget } from '@services/<name>/src/models/Widget'  ✗  path alias — invalid\n\
+               import { Widget } from 'services/<name>/src/models/Widget'   ✗  not a node module\n\
+               import { Widget } from '../../models/Widget'                 ✗  two dots leaves src/ for the project root\n\
+             ALWAYS strip the service prefix (e.g. services/<name>/) from both paths, then compute\n\
+             the relative path between the two src/ locations. When fixing an import error and a\n\
+             `find_symbol` tool is available, ALWAYS call it instead of re-deriving the path by hand.\n\
              \n\
              #### isolatedModules — import type\n\
              tsconfig has `isolatedModules: true`. Any import used ONLY as a type annotation\n\
              MUST use `import type`:\n\
                import type { Product } from '../models/Product'   ✓  (type-only use)\n\
                import { createProduct } from '../models/Product'  ✓  (value use — factory call)\n\
-             Using a plain `import { T }` for a type-only symbol causes TS1484.\n\
+             Using a plain `import { T }` for a type-only symbol causes TS1484. ALWAYS trust\n\
+             `find_symbol`'s type-only flag over guessing from the name.\n\
              \n\
              #### No external utilities\n\
-             RUNTIME ERROR — importing moment, uuid, nanoid, or any package absent from package.json\n\
-             will crash the process. Check package.json before using any package.\n\
+             ONLY Node.js built-ins (crypto, path, ...) and packages listed in an Available\n\
+             packages fact (when present in this prompt) may be imported — check package.json\n\
+             first if that fact isn't here.\n\
                Timestamps: new Date()             ✓  (built-in)\n\
                IDs:        randomUUID()           ✓  — import { randomUUID } from 'crypto'  (Node.js built-in, no npm install)\n\
+             RUNTIME ERROR — importing a package absent from package.json crashes the process;\n\
+             this is not a compile-time check.\n\
              \n\
              ### Exports\n\
              All source files use NAMED exports:\n\
