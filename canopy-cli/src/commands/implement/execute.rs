@@ -344,6 +344,14 @@ pub(crate) fn execute_steps(
             // Re-read test in case the Red fix loop modified it.
             let test_content = std::fs::read_to_string(&test_file)
                 .unwrap_or(test_content);
+            // Re-read the stub too — Green phase was generating "from scratch" with no visibility
+            // into the Red-phase stub it's replacing, even though that stub's signature was
+            // already grounded by observed_call. Confirmed on a real run: Green regenerated
+            // registerProduct(productData: Omit<Product, ...>) as five positional parameters,
+            // matching the entity schema's field count instead of the test's actual one-argument
+            // call — the same arity bug observed_call fixed for stubs, reappearing one phase
+            // later because neither the fact nor the stub's own content ever reached this call.
+            let stub_content_for_green = std::fs::read_to_string(&step.file).ok();
 
             let green_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
             let StepResult { content: impl_content, summary: impl_summary, deviations: impl_deviations } = progress.timed(
@@ -353,9 +361,10 @@ pub(crate) fn execute_steps(
                 Some(&step.file),
                 || execute_implementation_with_test(
                     &client, story, spec, contract_yaml,
-                    step, None, roots_context.as_deref(),
+                    step, stub_content_for_green.as_deref(), roots_context.as_deref(),
                     service_packages, services, &green_siblings, &arch_skills,
                     &test_file, &test_content, pkg_constraints,
+                    observed_call.as_deref(),
                 ),
             ).with_context(|| format!("LLM call failed for Green phase step {}", step.id))?;
 

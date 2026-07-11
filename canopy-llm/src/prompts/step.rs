@@ -65,7 +65,8 @@ fn step_prompt(
 
     let current_section = match current_content {
         Some(content) => format!(
-            "\nCurrent file content (modify operation — preserve what stays, change what the description requires):\n\
+            "\nCurrent file content — preserve what's already correct (e.g. a signature already\n\
+             grounded by the test), change only what the description or errors actually require:\n\
              ```\n{content}\n```\n"
         ),
         None => String::new(),
@@ -149,6 +150,7 @@ fn step_prompt(
              Read the test file carefully: every assertion is a requirement.\n\
              ALWAYS use the EXACT method signatures shown in the sibling section — NEVER add\n\
              extra arguments or change parameter order relative to what is declared there.\n\
+             {arity_check_lead}\
              \n\
              Unit tests that must pass:\n\
              --- {tf} ---\n\
@@ -676,6 +678,7 @@ pub fn execute_implementation_stub(
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn execute_implementation_with_test(
     client: &LlmClient,
     story: &UserStory,
@@ -691,12 +694,13 @@ pub fn execute_implementation_with_test(
     test_file: &str,
     test_content: &str,
     package_constraints: Option<&str>,
+    observed_call: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, false)), package_constraints,
-        None,
+        observed_call,
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
