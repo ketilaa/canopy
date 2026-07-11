@@ -1,5 +1,5 @@
 use crate::build_output::{
-    errors_for_file, extract_error_files, extract_missing_packages, extract_missing_symbol_names,
+    errors_for_file, extract_error_files, extract_missing_packages,
     extract_pom_validation_errors, extract_unresolvable_dependencies, parse_ts_imports,
     read_available_packages, strip_ansi, test_file_passed_cleanly,
 };
@@ -7,7 +7,7 @@ use crate::project_scan::collect_files;
 use crate::roots;
 use crate::ui::{print_step_notes, Progress};
 use canopy_core::{Adr, ServiceEntry};
-use canopy_llm::{detect_layer, find_symbol_tool_spec, fix_file, fix_file_with_tools, skill_for_build_system, skill_for_technology, testing_skill_for_file_with_adrs, FixAttempt, LlmClient};
+use canopy_llm::{detect_layer, find_symbol_tool_spec, fix_file, fix_file_with_tools, read_file_tool_spec, skill_for_build_system, skill_for_technology, testing_skill_for_file_with_adrs, FixAttempt, LlmClient, ToolCall};
 
 /// Outcome of one fix loop run — `iterations` feeds the run-level closing summary
 /// (`execute_steps` sums it across every step) rather than just a pass/fail bool.
@@ -248,40 +248,26 @@ fn run_fix_loop_inner(
 
             let prior_attempts = attempt_history.get(file_path).cloned().unwrap_or_default();
 
+            // Roots' compact surface is a cheap, always-useful fact — inject it proactively when
+            // available. When it isn't (Roots unavailable, file not yet indexed), don't fall back
+            // to dumping full file content into the prompt unconditionally: the read_file tool
+            // (offered below) lets the model pull exactly the file it decides it actually needs,
+            // for exactly the files it needs it for, instead of every plausibly-relevant import
+            // being pushed in whether or not this attempt uses it.
             let referenced: Vec<(String, String)> =
                 if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
                     let imports = parse_ts_imports(&content, file_path, service_dir);
-                    if let Some(surface) = roots::get_ts_module_surface(&imports, service_dir) {
-                        vec![("module-surface (roots index)".to_string(), surface)]
-                    } else {
-                        // Roots not available or files not yet indexed — read the imported files.
-                        imports.iter()
-                            .filter_map(|rel| {
-                                std::fs::read_to_string(format!("{service_dir}/{rel}"))
-                                    .ok()
-                                    .map(|c| (rel.clone(), c))
-                            })
-                            .collect()
-                    }
+                    roots::get_ts_module_surface(&imports, service_dir)
+                        .map(|surface| vec![("module-surface (roots index)".to_string(), surface)])
+                        .unwrap_or_default()
                 } else if file_path.ends_with(".java") {
                     let imported: Vec<&str> = content.lines()
                         .filter(|l| l.starts_with("import ") && !l.contains('*'))
                         .filter_map(|l| l.trim_end_matches(';').rsplit('.').next())
                         .collect();
-                    if let Some(surface) = roots::get_class_surface(&imported, service_dir) {
-                        vec![("type-surface (roots index)".to_string(), surface)]
-                    } else {
-                        service_source_files.iter()
-                            .filter(|f| f.ends_with(".java"))
-                            .filter_map(|rel| {
-                                let full = format!("{service_dir}/{rel}");
-                                if full == *file_path { return None; }
-                                let stem = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                                if !imported.contains(&stem) { return None; }
-                                std::fs::read_to_string(&full).ok().map(|c| (rel.clone(), c))
-                            })
-                            .collect()
-                    }
+                    roots::get_class_surface(&imported, service_dir)
+                        .map(|surface| vec![("type-surface (roots index)".to_string(), surface)])
+                        .unwrap_or_default()
                 } else {
                     vec![]
                 };
@@ -305,12 +291,8 @@ fn run_fix_loop_inner(
                 first_error_line.to_string()
             };
             let same_error_note = if same_error_as_before { " [same error persists]" } else { "" };
-            // TS2304 "Cannot find name 'X'" is a known sibling export the model forgot to
-            // import, not something it needs to reason its way to — offer the Roots-backed
-            // find_symbol tool so it can look the answer up instead of guessing another wrong
-            // path. Every other error class keeps using the plain prompt unchanged.
             let is_ts_family = file_path.ends_with(".ts") || file_path.ends_with(".tsx");
-            let missing_symbols = if is_ts_family { extract_missing_symbol_names(&errors) } else { Vec::new() };
+            let is_java = file_path.ends_with(".java");
             // The real, authoritative package.json dependency list — replaces a static "don't
             // import moment/uuid/nanoid" blocklist in the skill, which can never enumerate every
             // package that ISN'T installed.
@@ -321,29 +303,23 @@ fn run_fix_loop_inner(
                 client,
                 Some(file_path.as_str()),
                 || {
-                    if missing_symbols.is_empty() {
-                        fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts, &available_packages)
-                    } else {
-                        let tool = find_symbol_tool_spec();
+                    if is_ts_family || is_java {
+                        // Offer read_file always — the model decides what it actually needs
+                        // rather than every plausibly-relevant file being pushed in upfront (see
+                        // the `referenced` comment above). find_symbol is TS-only: its answer
+                        // format (relative import specifier, import-type) is TS-specific; both
+                        // tool descriptions state which to prefer for a missing-name error.
+                        let mut tools = vec![read_file_tool_spec()];
+                        if is_ts_family {
+                            tools.push(find_symbol_tool_spec());
+                        }
                         fix_file_with_tools(
                             client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts, &available_packages,
-                            std::slice::from_ref(&tool),
-                            |call| {
-                                let name = call.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                                let result = progress.timed(
-                                    step_idx,
-                                    format!("tool: find_symbol({name})"),
-                                    client,
-                                    Some(file_path.as_str()),
-                                    || roots::dispatch_find_symbol(call, file_path),
-                                );
-                                let summary = result.lines().next().unwrap_or(&result);
-                                let more = result.lines().count().saturating_sub(1);
-                                let suffix = if more > 0 { format!(" (+{more} more)") } else { String::new() };
-                                progress.annotate_last_child(step_idx, &format!("-> {summary}{suffix}"));
-                                result
-                            },
+                            &tools,
+                            |call| dispatch_fix_tool_call(call, file_path, service_dir, progress, step_idx, client),
                         )
+                    } else {
+                        fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts, &available_packages)
                     }
                 },
             );
@@ -487,6 +463,44 @@ pub(crate) fn run_red_test_sanity_check(
     }
     progress.annotate_last_child(step_idx, "Red-phase test still fails for an unexpected reason after max attempts — manual fix needed.");
     RedSanityOutcome::Broken
+}
+
+/// Dispatches one tool call from a fix attempt — `read_file` (any language) or `find_symbol`
+/// (TS-only) — showing it live under the step's tree entry and collapsing to the result, the
+/// same mechanism every other fix-loop sub-step already uses.
+fn dispatch_fix_tool_call(call: &ToolCall, file_path: &str, service_dir: &str, progress: &Progress, step_idx: usize, client: &LlmClient) -> String {
+    let label = match call.name.as_str() {
+        "read_file" => format!("tool: read_file({})", call.arguments.get("path").and_then(|v| v.as_str()).unwrap_or("?")),
+        "find_symbol" => format!("tool: find_symbol({})", call.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?")),
+        other => format!("tool: {other}"),
+    };
+    let result = progress.timed(step_idx, label, client, Some(file_path), || match call.name.as_str() {
+        "read_file" => match call.arguments.get("path").and_then(|v| v.as_str()) {
+            Some(path) => dispatch_read_file(path, service_dir),
+            None => "error: missing required \"path\" argument".to_string(),
+        },
+        "find_symbol" => roots::dispatch_find_symbol(call, file_path),
+        other => format!("error: unknown tool \"{other}\""),
+    });
+    let summary = result.lines().next().unwrap_or(&result);
+    let more = result.lines().count().saturating_sub(1);
+    let suffix = if more > 0 { format!(" (+{more} more)") } else { String::new() };
+    progress.annotate_last_child(step_idx, &format!("-> {summary}{suffix}"));
+    result
+}
+
+/// Executes one `read_file` tool call, resolved relative to `service_dir` — the same base the
+/// "Existing files in the project" listing already uses, so a path the model sees in that list
+/// resolves correctly here. Sandboxed against escaping the service directory (no `..`, no
+/// absolute paths in the requested path).
+fn dispatch_read_file(path: &str, service_dir: &str) -> String {
+    if path.contains("..") || path.starts_with('/') {
+        return format!("error: path \"{path}\" is not allowed");
+    }
+    match std::fs::read_to_string(format!("{service_dir}/{path}")) {
+        Ok(content) => content,
+        Err(e) => format!("error reading \"{path}\": {e}"),
+    }
 }
 
 fn migrate_javax_to_jakarta(service_dir: &str) -> usize {

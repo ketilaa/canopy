@@ -2,7 +2,7 @@ mod client;
 pub use client::{LlmClient, LlmError};
 
 mod tools;
-pub use tools::{find_symbol_tool_spec, ChatMessage, ToolCall, ToolSpec, ToolTurn};
+pub use tools::{find_symbol_tool_spec, read_file_tool_spec, ChatMessage, ToolCall, ToolSpec, ToolTurn};
 
 mod repair;
 

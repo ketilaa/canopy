@@ -180,13 +180,32 @@ pub(crate) fn message_to_json(msg: &ChatMessage) -> serde_json::Value {
 pub fn find_symbol_tool_spec() -> ToolSpec {
     ToolSpec {
         name: "find_symbol".to_string(),
-        description: "Look up where a symbol (function, class, interface) is defined in this project by its exact name. Returns its kind, defining file and line, the exact relative import specifier to use, and whether it needs `import type` — or reports that it wasn't found.".to_string(),
+        description: "ALWAYS prefer this over read_file for a missing name or import error. Look up where a symbol (function, class, interface) is defined in this project by its exact name. Returns its kind, defining file and line, the exact relative import specifier to use, and whether it needs `import type` — or reports that it wasn't found.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "The exact symbol name to look up, e.g. \"createProduct\""}
+                "name": {"type": "string", "description": "The exact symbol name to look up, e.g. \"createWidget\""}
             },
             "required": ["name"]
+        }),
+    }
+}
+
+/// The `read_file` tool spec, offered to the fix loop alongside `find_symbol` — lets the model
+/// pull the content of any project file it decides it needs, instead of every potentially
+/// relevant file being pushed into the prompt upfront whether or not this attempt actually
+/// needs it. The actual file access lives in canopy-cli (sandboxed to the project root); this
+/// is only the wire-format description of the capability.
+pub fn read_file_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: "read_file".to_string(),
+        description: "LAST RESORT — only call this when you need to see a file's actual implementation, several symbols in it at once, or something find_symbol can't answer (it only resolves a single symbol's location/import). For a missing name or import error, ALWAYS try find_symbol first. Reads the full content of a file in this project by its project-relative path.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Project-relative file path, e.g. \"services/widget/src/models/Widget.ts\""}
+            },
+            "required": ["path"]
         }),
     }
 }
