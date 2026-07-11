@@ -33,6 +33,7 @@ fn fix_prompt(
     arch_skills: &str,
     prior_attempts: &[FixAttempt],
     available_packages: &[String],
+    tools: &[ToolSpec],
 ) -> String {
     let ext = std::path::Path::new(file_path)
         .extension()
@@ -112,6 +113,12 @@ fn fix_prompt(
     } else {
         String::new()
     };
+    // Only ever non-empty for fix_file_with_tools — fix_file passes an empty tools slice, and
+    // this section must not appear there: telling a call with no tool access to "call
+    // find_symbol" is an instruction it's structurally unable to follow (confirmed: this exact
+    // sentence used to live in the shared skill text below, unconditionally, and leaked into
+    // test-gen and stub-gen prompts that never had tool access at all).
+    let tools_section = crate::tools::tools_hint_section(tools);
     // For TypeScript errors: include the content of related files so the model can fix
     // cross-file type mismatches (e.g. a missing props interface in an imported component).
     let referenced_section = if !referenced_files.is_empty() {
@@ -170,6 +177,7 @@ fn fix_prompt(
          File: {file_path}\n\
          {files_section}\
          {packages_section}\
+         {tools_section}\
          {referenced_section}\
          {skill_section}\
          {arch_section}\
@@ -205,7 +213,7 @@ pub fn fix_file(
     prior_attempts: &[FixAttempt],
     available_packages: &[String],
 ) -> Result<StepResult, LlmError> {
-    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts, available_packages))?;
+    let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts, available_packages, &[]))?;
     Ok(split_step_response(&raw))
 }
 
@@ -229,7 +237,7 @@ pub fn fix_file_with_tools(
     tools: &[ToolSpec],
     mut dispatch: impl FnMut(&ToolCall) -> String,
 ) -> Result<StepResult, LlmError> {
-    let prompt = fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts, available_packages);
+    let prompt = fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts, available_packages, tools);
     let mut messages = vec![ChatMessage::User(prompt)];
 
     for _ in 0..MAX_TOOL_ITERATIONS {

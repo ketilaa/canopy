@@ -1,4 +1,4 @@
-use crate::fix_loop::{run_fix_loop_logged, run_red_test_sanity_check, RedSanityOutcome};
+use crate::fix_loop::{dispatch_fix_tool_call, run_fix_loop_logged, run_red_test_sanity_check, RedSanityOutcome};
 use crate::project_scan::{
     compile_command_for_service, ensure_npm_installed, scan_service_source_files,
     test_class_command_for_service, test_command_for_service,
@@ -10,8 +10,9 @@ use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{Adr, IntentSpec, ServicesRegistry, StepStatus, StoryPlan, UserStory};
 use canopy_llm::{
-    execute_implementation_step, execute_implementation_stub, execute_implementation_with_test,
-    generate_unit_test_stub, skills_for_architecture, StepResult,
+    execute_implementation_step, execute_implementation_stub, execute_implementation_stub_with_tools,
+    execute_implementation_with_test, find_symbol_tool_spec, generate_unit_test_stub,
+    generate_unit_test_stub_with_tools, read_file_tool_spec, skills_for_architecture, StepResult,
 };
 use canopy_storage::save_story_plan;
 use std::collections::HashMap;
@@ -227,15 +228,28 @@ pub(crate) fn execute_steps(
             // so it can produce test data with all required fields.
             let stub_siblings = build_sibling_section(&step.depends_on, &step_service_dir, &session_written);
 
+            let is_ts_family = step.file.ends_with(".ts") || step.file.ends_with(".tsx");
             let StepResult { content: test_content, summary: test_summary, deviations: test_deviations } = progress.timed(
                 i,
                 format!("generating test    {test_file}"),
                 &client,
                 Some(&test_file),
-                || generate_unit_test_stub(
-                    &client, story, spec, contract_yaml, step, &test_file,
-                    service_packages, services, adrs, &stub_siblings,
-                ),
+                || {
+                    if is_ts_family {
+                        let tools = vec![read_file_tool_spec(), find_symbol_tool_spec()];
+                        generate_unit_test_stub_with_tools(
+                            &client, story, spec, contract_yaml, step, &test_file,
+                            service_packages, services, adrs, &stub_siblings,
+                            &tools,
+                            |call| dispatch_fix_tool_call(call, &test_file, &step_service_dir, &progress, i, &client),
+                        )
+                    } else {
+                        generate_unit_test_stub(
+                            &client, story, spec, contract_yaml, step, &test_file,
+                            service_packages, services, adrs, &stub_siblings,
+                        )
+                    }
+                },
             ).with_context(|| format!("LLM call failed generating test for step {}", step.id))?;
 
             let test_dest = std::path::Path::new(&test_file);
@@ -259,13 +273,28 @@ pub(crate) fn execute_steps(
                 format!("generating stub    {}", step.file),
                 &client,
                 Some(&step.file),
-                || execute_implementation_stub(
-                    &client, story, spec, contract_yaml,
-                    step, None, None,
-                    service_packages, services, &stub_siblings, &arch_skills,
-                    &test_file, &test_content, pkg_constraints,
-                    observed_call.as_deref(),
-                ),
+                || {
+                    if is_ts_family {
+                        let tools = vec![read_file_tool_spec(), find_symbol_tool_spec()];
+                        execute_implementation_stub_with_tools(
+                            &client, story, spec, contract_yaml,
+                            step, None, None,
+                            service_packages, services, &stub_siblings, &arch_skills,
+                            &test_file, &test_content, pkg_constraints,
+                            observed_call.as_deref(),
+                            &tools,
+                            |call| dispatch_fix_tool_call(call, &step.file, &step_service_dir, &progress, i, &client),
+                        )
+                    } else {
+                        execute_implementation_stub(
+                            &client, story, spec, contract_yaml,
+                            step, None, None,
+                            service_packages, services, &stub_siblings, &arch_skills,
+                            &test_file, &test_content, pkg_constraints,
+                            observed_call.as_deref(),
+                        )
+                    }
+                },
             ).with_context(|| format!("LLM call failed generating stub for step {}", step.id))?;
 
             let dest = std::path::Path::new(&step.file);

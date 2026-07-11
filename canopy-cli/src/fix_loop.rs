@@ -465,42 +465,23 @@ pub(crate) fn run_red_test_sanity_check(
     RedSanityOutcome::Broken
 }
 
-/// Dispatches one tool call from a fix attempt — `read_file` (any language) or `find_symbol`
-/// (TS-only) — showing it live under the step's tree entry and collapsing to the result, the
-/// same mechanism every other fix-loop sub-step already uses.
-fn dispatch_fix_tool_call(call: &ToolCall, file_path: &str, service_dir: &str, progress: &Progress, step_idx: usize, client: &LlmClient) -> String {
+/// Dispatches one tool call from a fix attempt, test-gen, or stub-gen call — `read_file` (any
+/// language) or `find_symbol` (TS-only) — showing it live under the step's tree entry and
+/// collapsing to the result, the same mechanism every other sub-step already uses. `file_path`
+/// is whichever file the call is conceptually "about" (the file being fixed, or the test/stub
+/// being generated) — used both as the progress-bar tag and find_symbol's relative-import base.
+pub(crate) fn dispatch_fix_tool_call(call: &ToolCall, file_path: &str, service_dir: &str, progress: &Progress, step_idx: usize, client: &LlmClient) -> String {
     let label = match call.name.as_str() {
         "read_file" => format!("tool: read_file({})", call.arguments.get("path").and_then(|v| v.as_str()).unwrap_or("?")),
         "find_symbol" => format!("tool: find_symbol({})", call.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?")),
         other => format!("tool: {other}"),
     };
-    let result = progress.timed(step_idx, label, client, Some(file_path), || match call.name.as_str() {
-        "read_file" => match call.arguments.get("path").and_then(|v| v.as_str()) {
-            Some(path) => dispatch_read_file(path, service_dir),
-            None => "error: missing required \"path\" argument".to_string(),
-        },
-        "find_symbol" => roots::dispatch_find_symbol(call, file_path),
-        other => format!("error: unknown tool \"{other}\""),
-    });
+    let result = progress.timed(step_idx, label, client, Some(file_path), || roots::dispatch_tool_call(call, file_path, service_dir));
     let summary = result.lines().next().unwrap_or(&result);
     let more = result.lines().count().saturating_sub(1);
     let suffix = if more > 0 { format!(" (+{more} more)") } else { String::new() };
     progress.annotate_last_child(step_idx, &format!("-> {summary}{suffix}"));
     result
-}
-
-/// Executes one `read_file` tool call, resolved relative to `service_dir` — the same base the
-/// "Existing files in the project" listing already uses, so a path the model sees in that list
-/// resolves correctly here. Sandboxed against escaping the service directory (no `..`, no
-/// absolute paths in the requested path).
-fn dispatch_read_file(path: &str, service_dir: &str) -> String {
-    if path.contains("..") || path.starts_with('/') {
-        return format!("error: path \"{path}\" is not allowed");
-    }
-    match std::fs::read_to_string(format!("{service_dir}/{path}")) {
-        Ok(content) => content,
-        Err(e) => format!("error reading \"{path}\": {e}"),
-    }
 }
 
 fn migrate_javax_to_jakarta(service_dir: &str) -> usize {

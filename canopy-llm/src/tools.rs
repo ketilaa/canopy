@@ -210,6 +210,27 @@ pub fn read_file_tool_spec() -> ToolSpec {
     }
 }
 
+/// Builds the "Tools available" prompt section from whichever tools are actually being offered
+/// in this call — empty when `tools` is empty. Shared by every prompt-building function that
+/// may or may not have tool access (fix, test-gen, stub-gen): the hint text must only appear
+/// when the tool it names is actually callable in that specific call, never unconditionally in
+/// shared skill text — a call with no tool access can't act on being told to use one (confirmed:
+/// this exact mistake once left "ALWAYS call find_symbol" sitting in tool-less test-gen prompts).
+pub(crate) fn tools_hint_section(tools: &[ToolSpec]) -> String {
+    let mut hints = Vec::new();
+    if tools.iter().any(|t| t.name == "find_symbol") {
+        hints.push("- find_symbol: resolves a symbol's exact import specifier and whether it's type-only (`import type` vs `import`) — ALWAYS use it instead of re-deriving a path by hand or guessing.");
+    }
+    if tools.iter().any(|t| t.name == "read_file") {
+        hints.push("- read_file: reads any project file's full content — last resort, only when find_symbol can't answer what you need.");
+    }
+    if hints.is_empty() {
+        String::new()
+    } else {
+        format!("\nTools available — ALWAYS prefer them over guessing:\n{}\n", hints.join("\n"))
+    }
+}
+
 /// Builds the OpenAI-compatible `tools` array entry for one `ToolSpec`.
 pub(crate) fn tool_to_json(tool: &ToolSpec) -> serde_json::Value {
     serde_json::json!({

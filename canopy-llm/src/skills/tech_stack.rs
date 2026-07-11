@@ -290,16 +290,14 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                import { Widget } from 'services/<name>/src/models/Widget'   ✗  not a node module\n\
                import { Widget } from '../../models/Widget'                 ✗  two dots leaves src/ for the project root\n\
              ALWAYS strip the service prefix (e.g. services/<name>/) from both paths, then compute\n\
-             the relative path between the two src/ locations. When fixing an import error and a\n\
-             `find_symbol` tool is available, ALWAYS call it instead of re-deriving the path by hand.\n\
+             the relative path between the two src/ locations.\n\
              \n\
              #### isolatedModules — import type\n\
              tsconfig has `isolatedModules: true`. Any import used ONLY as a type annotation\n\
              MUST use `import type`:\n\
-               import type { Product } from '../models/Product'   ✓  (type-only use)\n\
-               import { createProduct } from '../models/Product'  ✓  (value use — factory call)\n\
-             Using a plain `import { T }` for a type-only symbol causes TS1484. ALWAYS trust\n\
-             `find_symbol`'s type-only flag over guessing from the name.\n\
+               import type { Widget } from '../models/Widget'     ✓  (type-only use)\n\
+               import { createWidget } from '../models/Widget'   ✓  (value use — factory call)\n\
+             Using a plain `import { T }` for a type-only symbol causes TS1484.\n\
              \n\
              #### No external utilities\n\
              ONLY Node.js built-ins (crypto, path, ...) and packages listed in an Available\n\

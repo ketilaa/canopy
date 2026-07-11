@@ -1,6 +1,12 @@
 use crate::client::{LlmClient, LlmError};
 use crate::skills::{detect_layer, layer_has_worked_example, skill_for_build_system, skill_for_technology, testing_skill_from_adrs};
+use crate::tools::{tools_hint_section, ChatMessage, ToolCall, ToolSpec, ToolTurn};
 use canopy_core::*;
+
+/// A handful of real runs never needed more than 2 (one tool call, one final answer); this just
+/// guards against a model that keeps calling tools indefinitely instead of ever producing a
+/// final answer. Same bound `fix_file_with_tools` uses.
+const MAX_TOOL_ITERATIONS: usize = 4;
 
 fn step_prompt(
     story: &UserStory,
@@ -16,6 +22,7 @@ fn step_prompt(
     test_hint: Option<(&str, &str, bool)>,
     package_constraints: Option<&str>,
     observed_call: Option<&str>,
+    tools: &[ToolSpec],
 ) -> String {
     // The plan LLM sometimes prefixes service names with their directory (e.g. "frontend/admin-portal").
     // Strip any leading path component before looking up in the registry.
@@ -163,6 +170,7 @@ fn step_prompt(
         Some(c) if !c.is_empty() => format!("{c}\n"),
         _ => String::new(),
     };
+    let tools_section = tools_hint_section(tools);
 
     format!(
         "Generate the complete content of file '{file}'.\n\
@@ -181,6 +189,7 @@ fn step_prompt(
          {current_section}\
          {roots_section}\
          {pkg_section}\
+         {tools_section}\
          {arch_rules}\n\
          {build_rules}\n\
          {tech_rules}\n\
@@ -229,7 +238,7 @@ pub fn execute_implementation_step(
     let prompt = step_prompt(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills, None, package_constraints,
-        None,
+        None, &[],
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
@@ -245,10 +254,11 @@ fn unit_test_stub_prompt(
     services: &ServicesRegistry,
     adrs: &[Adr],
     sibling_section: &str,
+    tools: &[ToolSpec],
 ) -> String {
     let impl_file = &step.file;
     if impl_file.ends_with(".ts") || impl_file.ends_with(".tsx") {
-        return unit_test_stub_prompt_ts(story, spec, contract_yaml, step, test_file, services, adrs, sibling_section);
+        return unit_test_stub_prompt_ts(story, spec, contract_yaml, step, test_file, services, adrs, sibling_section, tools);
     }
 
     let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
@@ -346,6 +356,7 @@ fn unit_test_stub_prompt_ts(
     services: &ServicesRegistry,
     adrs: &[Adr],
     sibling_section: &str,
+    tools: &[ToolSpec],
 ) -> String {
     let impl_file = &step.file;
     let is_component = impl_file.ends_with(".tsx");
@@ -450,8 +461,16 @@ fn unit_test_stub_prompt_ts(
                  const result = create{module_name}(/* mandatory args */, /* optional arg */)\n\
                  expect(result.optionalField).toBe('expected-value')\n\
                }})\n\
+               it('should throw when a mandatory field is missing', () => {{\n\
+                 // Same POSITIONAL call as every test above — cast ONLY the missing argument,\n\
+                 // in its own position. NEVER collapse the call into a single object literal.\n\
+                 expect(() => create{module_name}(undefined as any, /* remaining mandatory args, same order */)).toThrow('...')\n\
+               }})\n\
              }})\n\
-             CRITICAL: `new {module_name}()` will NOT compile — {module_name} is an interface, not a class.",
+             CRITICAL: `new {module_name}()` will NOT compile — {module_name} is an interface, not a class.\n\
+             WRONG for the missing-field test — collapses the positional call into one object:\n\
+               const invalidPayload = {{ /* fields */ }} as any\n\
+               expect(() => create{module_name}(invalidPayload)).toThrow(...)   ✗ this factory takes positional args, not one object",
             module_name = module_name,
             import_path = import_path,
         )
@@ -475,6 +494,7 @@ fn unit_test_stub_prompt_ts(
     } else {
         format!("Dependency types (use these exact field names in test data):\n{sibling_section}\n\n")
     };
+    let tools_section = tools_hint_section(tools);
 
     // Infrastructure/repository/event files never receive invalid input in practice — by the
     // time an aggregate reaches EventPublisher.publish(), a repository's save(), or an event
@@ -556,6 +576,7 @@ fn unit_test_stub_prompt_ts(
          \n\
          {contract_section}\
          {sibling_block}\
+         {tools_section}\
          {tech_rules}\n\
          {test_skill}\n\
          \n\
@@ -594,20 +615,15 @@ fn unit_test_stub_prompt_ts(
            ALWAYS write a separate test per declared condition, with boundary data matching that\n\
            condition — NEVER borrow the other constraint's number or message text.\n\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
-         - EXCEPTION — testing a \"missing mandatory field\" scenario: TypeScript rejects an\n\
-omitted required property or `undefined` positional argument at COMPILE time, before the test\n\
-can even run the RUNTIME check it's meant to test. ALWAYS cast `as any` at the narrowest point\n\
-to allow the deliberately-invalid call — check the subject's ACTUAL signature first, then match\n\
-ONE of these two shapes (never mix them):\n\
-             Single options-object subject (e.g. a service method taking one payload param):\n\
-               const invalidPayload = {{ manufacturer: 'Acme', model: 'X1' }} as any\n\
-               await expect(subject.createWidget(invalidPayload)).rejects.toThrow('name-value not provided...')\n\
-             Positional-argument subject (e.g. a model factory `createWidget(name, otherField, optionalField?)`):\n\
-               cast ONLY the missing argument in its own position — do NOT collapse the call\n\
-               into a single object literal:\n\
-                 expect(() => createWidget(undefined as any, 'other-field-value')).toThrow('name-value not provided...')\n\
-           The cast only affects the value(s) being constructed — it does NOT weaken the real\n\
-           runtime check you are testing.\n\
+         - EXCEPTION — testing a \"missing mandatory field\" scenario on a subject that takes ONE\n\
+options-object parameter (e.g. a service method): TypeScript rejects an omitted required property\n\
+at COMPILE time, before the test can even run the RUNTIME check it's meant to test. ALWAYS cast\n\
+`as any` on the object literal to allow the deliberately-invalid call:\n\
+             const invalidPayload = {{ manufacturer: 'Acme', model: 'X1' }} as any\n\
+             await expect(subject.createWidget(invalidPayload)).rejects.toThrow('name-value not provided...')\n\
+           The cast only affects the value being constructed — it does NOT weaken the real runtime\n\
+           check you are testing. (A positional-argument subject, e.g. a model factory, has its own\n\
+           worked example above.)\n\
          {route_rule}\
          \n\
          Write the raw TypeScript test file content first — no code fences.\n\
@@ -648,8 +664,49 @@ pub fn generate_unit_test_stub(
     adrs: &[Adr],
     sibling_section: &str,
 ) -> Result<StepResult, LlmError> {
-    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section);
+    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, &[]);
     Ok(split_step_response(&client.complete_large(&prompt)?))
+}
+
+/// Same contract as `generate_unit_test_stub`, but gives the model tools to call before
+/// producing its final answer — e.g. checking a dependency's real signature via `find_symbol`
+/// rather than inferring it purely from the entity schema. `dispatch` executes one tool call and
+/// returns its result content; canopy-llm has no Roots dependency itself, so the actual lookup
+/// logic stays in canopy-cli, called back through here.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_unit_test_stub_with_tools(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    test_file: &str,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+    adrs: &[Adr],
+    sibling_section: &str,
+    tools: &[ToolSpec],
+    mut dispatch: impl FnMut(&ToolCall) -> String,
+) -> Result<StepResult, LlmError> {
+    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, tools);
+    let mut messages = vec![ChatMessage::User(prompt)];
+
+    for _ in 0..MAX_TOOL_ITERATIONS {
+        match client.complete_with_tools(&messages, tools)? {
+            ToolTurn::ToolCalls(calls) => {
+                messages.push(ChatMessage::Assistant { content: None, tool_calls: calls.clone() });
+                for call in &calls {
+                    let result = dispatch(call);
+                    messages.push(ChatMessage::Tool { tool_call_id: call.id.clone(), content: result });
+                }
+            }
+            ToolTurn::FinalText(text) => return Ok(split_step_response(&text)),
+        }
+    }
+
+    Err(LlmError::UnexpectedShape(format!(
+        "exhausted {MAX_TOOL_ITERATIONS} tool-call iterations without a final answer for {test_file}"
+    )))
 }
 
 pub fn execute_implementation_stub(
@@ -673,9 +730,61 @@ pub fn execute_implementation_stub(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, true)), package_constraints,
-        observed_call,
+        observed_call, &[],
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
+}
+
+/// Same contract as `execute_implementation_stub`, but gives the model tools to call before
+/// producing its final answer — by stub time, the test and any sibling files already exist on
+/// disk, so a real lookup (e.g. confirming a dependency's exact signature via `find_symbol`)
+/// replaces another round of prompt-guessing. `dispatch` executes one tool call and returns its
+/// result content; canopy-llm has no Roots dependency itself, so the actual lookup logic stays
+/// in canopy-cli, called back through here.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_implementation_stub_with_tools(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    current_content: Option<&str>,
+    roots_context: Option<&str>,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+    sibling_section: &str,
+    arch_skills: &str,
+    test_file: &str,
+    test_content: &str,
+    package_constraints: Option<&str>,
+    observed_call: Option<&str>,
+    tools: &[ToolSpec],
+    mut dispatch: impl FnMut(&ToolCall) -> String,
+) -> Result<StepResult, LlmError> {
+    let prompt = step_prompt(
+        story, spec, contract_yaml, step, current_content, roots_context,
+        service_packages, services, sibling_section, arch_skills,
+        Some((test_file, test_content, true)), package_constraints,
+        observed_call, tools,
+    );
+    let mut messages = vec![ChatMessage::User(prompt)];
+
+    for _ in 0..MAX_TOOL_ITERATIONS {
+        match client.complete_with_tools(&messages, tools)? {
+            ToolTurn::ToolCalls(calls) => {
+                messages.push(ChatMessage::Assistant { content: None, tool_calls: calls.clone() });
+                for call in &calls {
+                    let result = dispatch(call);
+                    messages.push(ChatMessage::Tool { tool_call_id: call.id.clone(), content: result });
+                }
+            }
+            ToolTurn::FinalText(text) => return Ok(split_step_response(&text)),
+        }
+    }
+
+    Err(LlmError::UnexpectedShape(format!(
+        "exhausted {MAX_TOOL_ITERATIONS} tool-call iterations without a final answer for {}", step.file
+    )))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -700,7 +809,7 @@ pub fn execute_implementation_with_test(
         story, spec, contract_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, false)), package_constraints,
-        observed_call,
+        observed_call, &[],
     );
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }

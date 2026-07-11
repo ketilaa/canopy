@@ -202,6 +202,34 @@ pub fn dispatch_find_symbol(call: &ToolCall, from_file: &str) -> String {
     }
 }
 
+/// Executes one `read_file` tool call, resolved relative to `service_dir` — the same base the
+/// "Existing files in the project" listing already uses, so a path the model sees in that list
+/// resolves correctly here. Sandboxed against escaping the service directory (no `..`, no
+/// absolute paths in the requested path).
+pub fn dispatch_read_file(path: &str, service_dir: &str) -> String {
+    if path.contains("..") || path.starts_with('/') {
+        return format!("error: path \"{path}\" is not allowed");
+    }
+    match std::fs::read_to_string(format!("{service_dir}/{path}")) {
+        Ok(content) => content,
+        Err(e) => format!("error reading \"{path}\": {e}"),
+    }
+}
+
+/// Routes one tool call to the right dispatcher by name — shared by every call site that offers
+/// `find_symbol`/`read_file` together (the fix loop, and test-gen/stub-gen), so the actual
+/// lookup logic lives in exactly one place regardless of which prompt triggered it.
+pub fn dispatch_tool_call(call: &ToolCall, from_file: &str, service_dir: &str) -> String {
+    match call.name.as_str() {
+        "read_file" => match call.arguments.get("path").and_then(|v| v.as_str()) {
+            Some(path) => dispatch_read_file(path, service_dir),
+            None => "error: missing required \"path\" argument".to_string(),
+        },
+        "find_symbol" => dispatch_find_symbol(call, from_file),
+        other => format!("error: unknown tool \"{other}\""),
+    }
+}
+
 /// Formats one matched symbol as a self-contained answer: kind, defining file and line, the
 /// exact relative import specifier `from_file` should use, and — since a TS/TSX caller needs to
 /// know — whether it's a type-only construct (`import type`) or a value (`import`). Computing

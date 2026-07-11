@@ -375,11 +375,19 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
       const widget = createWidget('name-value', 'other-field-value', 'optional-value')\n\
       expect(widget.optionalField).toBe('optional-value')\n\
     })\n\
+    it('throws when a mandatory field is missing', () => {\n\
+      // Same POSITIONAL call as every test above — cast ONLY the missing argument, in its own\n\
+      // position. NEVER collapse the call into a single object literal.\n\
+      expect(() => createWidget(undefined as any, 'other-field-value')).toThrow('name-value not provided...')\n\
+    })\n\
   })\n\
   RULES for model tests:\n\
   - NEVER write `new Widget(...)` — the model is an interface, not a class; `new` will not compile\n\
   - NEVER call `widget.save()` or any persistence method — models have no such methods\n\
-  - ALWAYS `import { createWidget }` for the factory call, `import type { Widget }` for types only"
+  - ALWAYS `import { createWidget }` for the factory call, `import type { Widget }` for types only\n\
+  - WRONG for the missing-field test — collapses the positional call into one object:\n\
+      const invalidPayload = { otherField: 'other-field-value' } as any\n\
+      expect(() => createWidget(invalidPayload)).toThrow(...)   ✗ this factory takes positional args, not one object"
          .to_string()),
         ("service",
          "  ### Service unit test example\n\
