@@ -1,5 +1,11 @@
 use crate::client::{LlmClient, LlmError};
+use crate::tools::{ChatMessage, ToolCall, ToolSpec, ToolTurn};
 use super::summary::{canopy_summary_contract, split_step_response, StepResult};
+
+/// Bounded the same way as `try-tools`' own loop — a handful of real runs never needed more
+/// than 2 (one call, one final answer); this just guards against a model that keeps calling
+/// tools indefinitely instead of ever producing a final answer.
+const MAX_TOOL_ITERATIONS: usize = 4;
 
 /// A record of one prior fix attempt on a file — what the model reported doing, and what
 /// actually happened. Deliberately does NOT store the attempt's file content: embedding the
@@ -185,5 +191,45 @@ pub fn fix_file(
 ) -> Result<StepResult, LlmError> {
     let raw = client.complete_large(&fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts))?;
     Ok(split_step_response(&raw))
+}
+
+/// Same contract as `fix_file`, but gives the model tools to call before producing its final
+/// answer — e.g. a Roots-backed symbol lookup, so a missing-import error gets resolved by a
+/// real lookup instead of another round of prompt-guessing. `dispatch` executes one tool call
+/// and returns its result content; canopy-llm has no Roots dependency itself, so the actual
+/// lookup logic stays in canopy-cli, called back through here.
+#[allow(clippy::too_many_arguments)]
+pub fn fix_file_with_tools(
+    client: &LlmClient,
+    file_path: &str,
+    content: &str,
+    errors: &str,
+    existing_files: &[String],
+    referenced_files: &[(String, String)],
+    skill: &str,
+    arch_skills: &str,
+    prior_attempts: &[FixAttempt],
+    tools: &[ToolSpec],
+    mut dispatch: impl FnMut(&ToolCall) -> String,
+) -> Result<StepResult, LlmError> {
+    let prompt = fix_prompt(file_path, content, errors, existing_files, referenced_files, skill, arch_skills, prior_attempts);
+    let mut messages = vec![ChatMessage::User(prompt)];
+
+    for _ in 0..MAX_TOOL_ITERATIONS {
+        match client.complete_with_tools(&messages, tools)? {
+            ToolTurn::ToolCalls(calls) => {
+                messages.push(ChatMessage::Assistant { content: None, tool_calls: calls.clone() });
+                for call in &calls {
+                    let result = dispatch(call);
+                    messages.push(ChatMessage::Tool { tool_call_id: call.id.clone(), content: result });
+                }
+            }
+            ToolTurn::FinalText(text) => return Ok(split_step_response(&text)),
+        }
+    }
+
+    Err(LlmError::UnexpectedShape(format!(
+        "exhausted {MAX_TOOL_ITERATIONS} tool-call iterations without a final answer for {file_path}"
+    )))
 }
 

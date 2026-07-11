@@ -1,5 +1,6 @@
+use canopy_llm::ToolCall;
 use roots_context::{feature_context, FeatureContextPacket};
-use roots_storage::Store;
+use roots_storage::{Store, SymbolRow};
 
 const INDEX_PATH: &str = ".roots/index.db";
 
@@ -155,6 +156,33 @@ pub fn get_ts_module_surface(rel_paths: &[String], service_dir: &str) -> Option<
     }
 
     if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+}
+
+/// Looks up every indexed symbol with this exact name across the whole project — e.g.
+/// resolving which file exports `createProduct` before writing an import for it. Returns None
+/// when the index is unavailable or nothing matches. Backs the `find_symbol` tool exposed to
+/// the fix loop (see `dispatch_find_symbol`) — the same tool validated experimentally by
+/// `canopy try-tools`' symbol-lookup scenario, here querying the real project index instead of
+/// a scratch one.
+pub fn find_symbol(name: &str) -> Option<Vec<SymbolRow>> {
+    let store = open_store()?;
+    let ws = workspace_id();
+    let rows = store.query_exact(&ws, name).ok()?;
+    if rows.is_empty() { None } else { Some(rows) }
+}
+
+/// Executes one `find_symbol` tool call against the real project's Roots index.
+pub fn dispatch_find_symbol(call: &ToolCall) -> String {
+    let Some(name) = call.arguments.get("name").and_then(|v| v.as_str()) else {
+        return "error: missing required \"name\" argument".to_string();
+    };
+    match find_symbol(name) {
+        Some(rows) => rows.iter()
+            .map(|r| format!("{} {} — defined in {} (line {})", r.kind, r.name, r.file, r.line))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => format!("no symbol named \"{name}\" found in the index"),
+    }
 }
 
 /// Finds how a just-generated test file actually calls the subject under test — e.g.

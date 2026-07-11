@@ -8,7 +8,7 @@ mod step;
 mod summary;
 
 pub use dependencies::propose_dependencies;
-pub use fix::{fix_file, FixAttempt};
+pub use fix::{fix_file, fix_file_with_tools, FixAttempt};
 pub use intent::{extract_domain_from_stories, generate_stories_from_intent, suggest_domain_entities, suggest_roles};
 pub use plan::generate_story_plan;
 pub use scaffold::generate_scaffold_from_services;

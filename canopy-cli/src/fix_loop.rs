@@ -1,5 +1,5 @@
 use crate::build_output::{
-    errors_for_file, extract_error_files, extract_missing_packages,
+    errors_for_file, extract_error_files, extract_missing_packages, extract_missing_symbol_names,
     extract_pom_validation_errors, extract_unresolvable_dependencies, parse_ts_imports, strip_ansi,
     test_file_passed_cleanly,
 };
@@ -7,7 +7,7 @@ use crate::project_scan::collect_files;
 use crate::roots;
 use crate::ui::{print_step_notes, Progress};
 use canopy_core::{Adr, ServiceEntry};
-use canopy_llm::{detect_layer, fix_file, skill_for_build_system, skill_for_technology, testing_skill_for_file_with_adrs, FixAttempt, LlmClient};
+use canopy_llm::{detect_layer, find_symbol_tool_spec, fix_file, fix_file_with_tools, skill_for_build_system, skill_for_technology, testing_skill_for_file_with_adrs, FixAttempt, LlmClient};
 
 /// Outcome of one fix loop run — `iterations` feeds the run-level closing summary
 /// (`execute_steps` sums it across every step) rather than just a pass/fail bool.
@@ -305,12 +305,46 @@ fn run_fix_loop_inner(
                 first_error_line.to_string()
             };
             let same_error_note = if same_error_as_before { " [same error persists]" } else { "" };
+            // TS2304 "Cannot find name 'X'" is a known sibling export the model forgot to
+            // import, not something it needs to reason its way to — offer the Roots-backed
+            // find_symbol tool so it can look the answer up instead of guessing another wrong
+            // path. Every other error class keeps using the plain prompt unchanged.
+            let missing_symbols = if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
+                extract_missing_symbol_names(&errors)
+            } else {
+                Vec::new()
+            };
             let fix_result = progress.timed(
                 step_idx,
                 format!("fixing  {short_name} (attempt {}/{max_iterations}){same_error_note} — {error_summary}", iteration + 1),
                 client,
                 Some(file_path.as_str()),
-                || fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts),
+                || {
+                    if missing_symbols.is_empty() {
+                        fix_file(client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts)
+                    } else {
+                        let tool = find_symbol_tool_spec();
+                        fix_file_with_tools(
+                            client, file_path, &content, &errors, service_source_files, &referenced, &fix_skill, arch_skills, &prior_attempts,
+                            std::slice::from_ref(&tool),
+                            |call| {
+                                let name = call.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                                let result = progress.timed(
+                                    step_idx,
+                                    format!("tool: find_symbol({name})"),
+                                    client,
+                                    Some(file_path.as_str()),
+                                    || roots::dispatch_find_symbol(call),
+                                );
+                                let summary = result.lines().next().unwrap_or(&result);
+                                let more = result.lines().count().saturating_sub(1);
+                                let suffix = if more > 0 { format!(" (+{more} more)") } else { String::new() };
+                                progress.annotate_last_child(step_idx, &format!("-> {summary}{suffix}"));
+                                result
+                            },
+                        )
+                    }
+                },
             );
             match fix_result {
                 Ok(result) => {

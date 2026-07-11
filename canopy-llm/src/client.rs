@@ -218,10 +218,11 @@ impl LlmClient {
             "messages": messages.iter().map(message_to_json).collect::<Vec<_>>(),
             "tools": tools.iter().map(tool_to_json).collect::<Vec<_>>(),
         });
+        let body_pretty = serde_json::to_string_pretty(&body).unwrap_or_default();
 
         if self.debug {
             eprintln!("\n╔══ LLM TOOL-CALL INPUT ═════════════════════════════════╗");
-            eprintln!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+            eprintln!("{body_pretty}");
             eprintln!("╚════════════════════════════════════════════════════════╝\n");
         }
 
@@ -234,16 +235,41 @@ impl LlmClient {
             .into_json()
             .map_err(|e| LlmError::JsonParse(e.to_string()))?;
 
+        let model = json["model"].as_str().unwrap_or(&self.model).to_string();
         let input_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
         let output_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
         self.total_input_tokens.fetch_add(input_tokens, std::sync::atomic::Ordering::Relaxed);
         self.total_output_tokens.fetch_add(output_tokens, std::sync::atomic::Ordering::Relaxed);
 
         let message = json["choices"][0]["message"].clone();
+        let message_pretty = serde_json::to_string_pretty(&message).unwrap_or_default();
         if self.debug {
             eprintln!("╔══ LLM TOOL-CALL RESPONSE ══════════════════════════════╗");
-            eprintln!("{}", serde_json::to_string_pretty(&message).unwrap_or_default());
+            eprintln!("{message_pretty}");
             eprintln!("╚════════════════════════════════════════════════════════╝\n");
+        }
+
+        if let Some(log_path) = &self.log_path {
+            let ts = llm_timestamp();
+            let entry = format!(
+                "\n[{ts}] ╔══ LLM TOOL-CALL INPUT ═════════════════════════════════╗\n\
+                 {body_pretty}\n\
+                 [{ts}] ╚════════════════════════════════════════════════════════╝\n\
+                 [{ts}] ╔══ LLM TOOL-CALL RESPONSE ══════════════════════════════╗\n\
+                 [{ts}]   model:         {model}\n\
+                 [{ts}]   input tokens:  {input_tokens}\n\
+                 [{ts}]   output tokens: {output_tokens}\n\
+                 [{ts}] ──────────────────────────────────────────────────────────\n\
+                 {message_pretty}\n\
+                 [{ts}] ╚════════════════════════════════════════════════════════╝\n"
+            );
+            if let Some(parent) = log_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                let _ = f.write_all(entry.as_bytes());
+            }
         }
 
         parse_openai_message(&message, tools).map_err(LlmError::UnexpectedShape)

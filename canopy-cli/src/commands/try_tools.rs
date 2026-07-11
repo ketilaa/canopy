@@ -212,17 +212,10 @@ fn run_symbol_lookup_scenario(client: &LlmClient) -> Result<()> {
 
     let store = Store::open(&scratch_dir.join(".roots/index.db")).context("failed to open scratch Roots index")?;
 
-    let find_symbol_tool = ToolSpec {
-        name: "find_symbol".to_string(),
-        description: "Look up where a symbol (function, class, interface) is defined in this project by its exact name. Returns its kind, defining file, and line — or reports that it wasn't found.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "The exact symbol name to look up, e.g. \"conjureWidget\""}
-            },
-            "required": ["name"]
-        }),
-    };
+    // Shared with the real fix loop (`canopy_llm::find_symbol_tool_spec`) — this scenario and
+    // production wiring offer the model the exact same tool, so a result validated here is
+    // evidence about the wired-in version too, not just a lookalike.
+    let find_symbol_tool = canopy_llm::find_symbol_tool_spec();
 
     let initial_message = ChatMessage::User(format!(
         "The TypeScript file \"services/WidgetService.ts\" fails to compile:\n\n\

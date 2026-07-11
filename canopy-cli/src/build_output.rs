@@ -316,6 +316,59 @@ pub(crate) fn test_file_passed_cleanly(output: &str, file_path: &str) -> bool {
     passed && !failed
 }
 
+/// Parses TypeScript's `TS2304: Cannot find name 'X'.` errors and returns the missing symbol
+/// names, in the order first seen, deduplicated. Used by the fix loop to decide when a fix
+/// attempt should offer the Roots-backed `find_symbol` tool instead of the plain fix prompt —
+/// this class of error is a known sibling export the model forgot to import, not something it
+/// needs to reason its way to, so a real lookup replaces another round of prompt guessing.
+pub(crate) fn extract_missing_symbol_names(errors: &str) -> Vec<String> {
+    const MARKER: &str = "Cannot find name '";
+    let mut names = Vec::new();
+    for line in errors.lines() {
+        if let Some(start) = line.find(MARKER) {
+            let rest = &line[start + MARKER.len()..];
+            if let Some(end) = rest.find('\'') {
+                let name = rest[..end].to_string();
+                if !name.is_empty() && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+#[cfg(test)]
+mod extract_missing_symbol_names_tests {
+    use super::extract_missing_symbol_names;
+
+    #[test]
+    fn finds_single_missing_symbol() {
+        let errors = "src/services/ProductService.ts(20,21): error TS2304: Cannot find name 'createProduct'.";
+        assert_eq!(extract_missing_symbol_names(errors), vec!["createProduct"]);
+    }
+
+    #[test]
+    fn dedupes_repeated_occurrences() {
+        let errors = "a.ts(1,1): error TS2304: Cannot find name 'createProduct'.\n\
+                      a.ts(5,3): error TS2304: Cannot find name 'createProduct'.";
+        assert_eq!(extract_missing_symbol_names(errors), vec!["createProduct"]);
+    }
+
+    #[test]
+    fn finds_multiple_distinct_symbols_in_order() {
+        let errors = "a.ts(1,1): error TS2304: Cannot find name 'createProduct'.\n\
+                      a.ts(2,1): error TS2304: Cannot find name 'randomUUID'.";
+        assert_eq!(extract_missing_symbol_names(errors), vec!["createProduct", "randomUUID"]);
+    }
+
+    #[test]
+    fn unrelated_errors_yield_nothing() {
+        let errors = "a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.";
+        assert!(extract_missing_symbol_names(errors).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod test_file_passed_cleanly_tests {
     use super::test_file_passed_cleanly;

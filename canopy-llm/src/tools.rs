@@ -173,6 +173,25 @@ pub(crate) fn message_to_json(msg: &ChatMessage) -> serde_json::Value {
     }
 }
 
+/// The `find_symbol` tool spec, shared by every caller that offers a Roots-backed symbol
+/// lookup — the `try-tools` experiment and the real fix loop both build the exact same tool
+/// from here, so a result validated in one is evidence about the other, not just a lookalike.
+/// The actual lookup logic lives in canopy-cli (canopy-llm has no Roots dependency); this is
+/// only the wire-format description of the capability.
+pub fn find_symbol_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: "find_symbol".to_string(),
+        description: "Look up where a symbol (function, class, interface) is defined in this project by its exact name. Returns its kind, defining file, and line — or reports that it wasn't found.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The exact symbol name to look up, e.g. \"createProduct\""}
+            },
+            "required": ["name"]
+        }),
+    }
+}
+
 /// Builds the OpenAI-compatible `tools` array entry for one `ToolSpec`.
 pub(crate) fn tool_to_json(tool: &ToolSpec) -> serde_json::Value {
     serde_json::json!({
