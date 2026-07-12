@@ -259,11 +259,12 @@ fn unit_test_stub_prompt(
     services: &ServicesRegistry,
     adrs: &[Adr],
     sibling_section: &str,
+    arch_skills: &str,
     tools: &[ToolSpec],
 ) -> String {
     let impl_file = &step.file;
     if impl_file.ends_with(".ts") || impl_file.ends_with(".tsx") {
-        return unit_test_stub_prompt_ts(story, spec, contract_yaml, step, test_file, services, adrs, sibling_section, tools);
+        return unit_test_stub_prompt_ts(story, spec, contract_yaml, step, test_file, services, adrs, sibling_section, arch_skills, tools);
     }
 
     let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
@@ -313,6 +314,7 @@ fn unit_test_stub_prompt(
          BDD scenarios — one @Test method per scenario:\n\
          {scenarios_yaml}\n\
          \n\
+         {arch_rules}\n\
          {tech_rules}\n\
          {test_skill}\n\
          \n\
@@ -344,6 +346,7 @@ fn unit_test_stub_prompt(
         so_that = story.so_that,
         schema_yaml = schema_yaml,
         scenarios_yaml = scenarios_yaml,
+        arch_rules = arch_skills,
         tech_rules = tech_rules,
         test_skill = test_skill,
         contract = canopy_summary_contract(),
@@ -360,6 +363,7 @@ fn unit_test_stub_prompt_ts(
     services: &ServicesRegistry,
     adrs: &[Adr],
     sibling_section: &str,
+    arch_skills: &str,
     tools: &[ToolSpec],
 ) -> String {
     let impl_file = &step.file;
@@ -670,6 +674,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
          {scenario_coverage_note}\n\
          {scenarios_yaml}\n\
          \n\
+         {arch_rules}\n\
          {contract_section}\
          {sibling_block}\
          {tools_section}\
@@ -718,6 +723,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         schema_section = schema_section,
         scenarios_yaml = scenarios_yaml,
         contract_section = contract_section,
+        arch_rules = arch_skills,
         tech_rules = tech_rules,
         test_skill = test_skill,
         test_structure = test_structure,
@@ -743,8 +749,9 @@ pub fn generate_unit_test_stub(
     services: &ServicesRegistry,
     adrs: &[Adr],
     sibling_section: &str,
+    arch_skills: &str,
 ) -> Result<StepResult, LlmError> {
-    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, &[]);
+    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, arch_skills, &[]);
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
 
@@ -765,10 +772,11 @@ pub fn generate_unit_test_stub_with_tools(
     services: &ServicesRegistry,
     adrs: &[Adr],
     sibling_section: &str,
+    arch_skills: &str,
     tools: &[ToolSpec],
     mut dispatch: impl FnMut(&ToolCall) -> String,
 ) -> Result<StepResult, LlmError> {
-    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, tools);
+    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, arch_skills, tools);
     let mut messages = vec![ChatMessage::User(prompt)];
 
     for _ in 0..MAX_TOOL_ITERATIONS {

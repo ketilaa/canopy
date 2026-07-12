@@ -241,6 +241,7 @@ pub(crate) fn execute_steps(
                         generate_unit_test_stub_with_tools(
                             &client, story, spec, contract_yaml, step, &test_file,
                             service_packages, services, adrs, &stub_siblings,
+                            &arch_skills,
                             &tools,
                             |call| dispatch_fix_tool_call(call, &test_file, &step_service_dir, &progress, i, &client),
                         )
@@ -248,6 +249,7 @@ pub(crate) fn execute_steps(
                         generate_unit_test_stub(
                             &client, story, spec, contract_yaml, step, &test_file,
                             service_packages, services, adrs, &stub_siblings,
+                            &arch_skills,
                         )
                     }
                 },
