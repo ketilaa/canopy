@@ -456,6 +456,61 @@ an unrelated domain, check whether the input it was fed was ever a real error in
 
 ---
 
+## Running a Dogfooding Session Non-Interactively
+
+Canopy's REPL reads commands via `rustyline`, which checks whether stdin is a real terminal and
+falls back to a plain `BufRead::read_line` loop when it isn't — so a command can be piped in
+without needing raw-terminal support:
+
+```
+cd <dogfooding-project-root>
+printf 'implement <story-id>\nexit\n' | canopy --llm-debug > run.log 2>&1
+```
+
+`--llm-debug` is a REPL-startup flag (`canopy --llm-debug`), not an argument to `implement`
+itself — the REPL re-adds it to every command typed inside the session. It only controls whether
+LLM request/response payloads are also printed to the console; the debug log file at
+`<project>/.canopy/logs/llm-debug.log` is written on every run regardless of the flag. Passing it
+is what makes redirected console output (`run.log` above) useful for following a run live, since
+it mirrors the same LLM I/O the log file gets, interleaved with the progress lines — no need to
+tail a second file while the run is active. The log path is relative to CWD, so `cd` into the
+dogfooding project root first or the log lands somewhere unexpected.
+
+**This only runs fully unattended when resuming a story that already has a `plan.yaml`.**
+`implement <story-id>` loads an existing `.canopy/stories/<id>/plan.yaml` if one exists and skips
+straight to step execution — the only `dialoguer` confirmation prompt in the whole `implement`
+flow ("Execute this plan?") sits in the *fresh-plan-generation* branch, never reached on resume.
+Once past that point (or when there was never a plan to confirm), the Red/Green TDD loop, the fix
+loop, and the final cross-service regression pass run with zero further prompts. If a story has
+no `plan.yaml` yet, piping an answer like `y\n` will NOT satisfy that confirmation — `dialoguer`'s
+`Confirm` reads raw key events from an actual terminal, not a stdin line, and errors immediately
+when stdin isn't a tty. Every call site in canopy wraps that error with `.unwrap_or(false)` /
+`.unwrap_or(default)`, so a non-interactive fresh run doesn't hang — it just silently declines and
+leaves the plan saved but not executed. Practical implication: run `implement` once interactively
+to get a story past its first plan confirmation, then all later resumes can be scripted.
+
+Since this can run for many minutes across several steps, launch it as a background process and
+follow along rather than blocking on it:
+
+```
+tail -f run.log                                    # console mirror, if --llm-debug was passed
+tail -f <project>/.canopy/logs/llm-debug.log        # always written, even without --llm-debug
+```
+
+Grep-able markers to watch for while a run is live (each is a plain string, not a progress-bar
+artifact, so they survive redirection to a file):
+- `[N/M] <file> — TDD 🔴` / `TDD 🟢` — which step, and which TDD phase, is currently running.
+- `generating test` / `generating stub` / `implementing` — which of the three LLM calls per step
+  is in flight.
+- `Test file to create :` / `Implementation file :` — inside an `--llm-debug` payload dump,
+  confirms which file's prompt you're looking at (useful once the log has many calls in it).
+- `No fixable errors found — manual fix needed.` — the fix loop exhausted its iterations; the
+  step is stuck and needs the kind of diagnosis described below, not another automatic retry.
+- `removing stale artifact (leftover from an interrupted run)` — a prior run was killed or
+  crashed mid-step; canopy is clearing a half-written file before regenerating it.
+
+---
+
 ## Diagnosing Dogfooding Runs
 
 Canopy is dogfooded against separate throwaway projects driven entirely through the `canopy`
