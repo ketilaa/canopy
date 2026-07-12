@@ -417,7 +417,7 @@ fn unit_test_stub_prompt_ts(
              }})",
             module_name = module_name,
         )
-    } else if layer_has_worked_example(technology, layer) {
+    } else if layer_has_worked_example(adrs, technology, layer) {
         // This layer already gets a complete, correct worked example (imports, beforeEach,
         // mocks, and the exact assertion pattern) from the tech-stack testing skill above —
         // ask the skill itself rather than hand-copying a layer list here, so this stays
@@ -532,12 +532,13 @@ fn unit_test_stub_prompt_ts(
     // — see CLAUDE.md's Diagnosing Dogfooding Runs section). The implementation otherwise
     // correctly does NOT throw, and the test fails for a reason that has nothing to do with a
     // real defect.
-    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" || layer == "middleware" {
+    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" || layer == "middleware" || layer == "api-client" {
         let job = match layer {
             "repository" => "the database access layer — store the data you receive as-is",
             "infrastructure" => "an infrastructure wrapper — pass the data you receive through to the external client unchanged",
             "event" => "the domain event's payload — describe a thin fact about the aggregate, not the aggregate itself",
             "middleware" => "the error-handling middleware — format whatever error already occurred, unchanged",
+            "api-client" => "the typed API client — send the request to the server unchanged",
             _ => unreachable!(),
         };
         format!(

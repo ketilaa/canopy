@@ -172,39 +172,60 @@ Service tests:
 Assertion: jasmine expect() or jest expect() depending on project config.
 Prefer Angular Testing Library (@testing-library/angular) for behaviour-driven tests.";
 
-const NODE_VITEST_UNIT_TEST_SKILL: &str = "\
+const NODE_VITEST_UNIT_TEST_COMMON: &str = "\
 === Testing Skill: Node.js / Express (Vitest + Supertest) ===
 
 Trigger keyword: vitest (node)
 
 Framework stack:
   vitest    — test runner and mocking (vi.fn(), vi.mock())
-  supertest — HTTP integration: request(app).post('/api/...')
+  supertest — HTTP integration: request(app).post('/api/...')";
 
-Route / integration test pattern:
-  import request from 'supertest'
-  import { app } from '../app'
-  import { describe, it, expect, vi, beforeEach } from 'vitest'
+/// Mirrors `node_express_layer_examples()`'s shape — only "route" and "service" have a
+/// dedicated Vitest worked example today. Keying this the same way keeps
+/// `node_vitest_unit_test_skill()` able to defer to `layer_has_worked_example()` per layer
+/// instead of bundling both examples into every layer's prompt unconditionally (the bug this
+/// split fixes: a repository/model/infrastructure-layer test-gen call used to receive the Route
+/// example's "returns 400 when mandatory field is missing" pattern regardless of its own layer,
+/// the same unconditional-vs-gated contradiction shape fixed elsewhere for the Jest skill).
+fn node_vitest_layer_examples() -> std::collections::HashMap<&'static str, String> {
+    std::collections::HashMap::from([
+        ("route",
+         "  Route / integration test pattern:\n\
+            import request from 'supertest'\n\
+            import { app } from '../app'\n\
+            import { describe, it, expect, vi, beforeEach } from 'vitest'\n\
+            \n\
+            describe('POST /api/widgets', () => {\n\
+              it('returns 201 with Location header when payload is valid', async () => {\n\
+                const res = await request(app).post('/api/widgets')\n\
+                  .send({ name: 'Widget', price: 29.99 })\n\
+                  .set('Content-Type', 'application/json')\n\
+                expect(res.status).toBe(201)\n\
+                expect(res.headers.location).toMatch(/\\/api\\/widgets\\//)\n\
+              })\n\
+              it('returns 400 when mandatory field is missing', async () => {\n\
+                const res = await request(app).post('/api/widgets').send({})\n\
+                expect(res.status).toBe(400)\n\
+              })\n\
+            })"
+         .to_string()),
+        ("service",
+         "  Service unit test pattern (mock repository):\n\
+            vi.mock('../repository/WidgetRepository')\n\
+            import { WidgetRepository } from '../repository/WidgetRepository'\n\
+            const mockRepo = vi.mocked(WidgetRepository)\n\
+            mockRepo.save.mockResolvedValue({ id: 'uuid', ...payload })"
+         .to_string()),
+    ])
+}
 
-  describe('POST /api/widgets', () => {
-    it('returns 201 with Location header when payload is valid', async () => {
-      const res = await request(app).post('/api/widgets')
-        .send({ name: 'Widget', price: 29.99 })
-        .set('Content-Type', 'application/json')
-      expect(res.status).toBe(201)
-      expect(res.headers.location).toMatch(/\\/api\\/widgets\\//)
-    })
-    it('returns 400 when mandatory field is missing', async () => {
-      const res = await request(app).post('/api/widgets').send({})
-      expect(res.status).toBe(400)
-    })
-  })
-
-Service unit test pattern (mock repository):
-  vi.mock('../repository/WidgetRepository')
-  import { WidgetRepository } from '../repository/WidgetRepository'
-  const mockRepo = vi.mocked(WidgetRepository)
-  mockRepo.save.mockResolvedValue({ id: 'uuid', ...payload })";
+fn node_vitest_unit_test_skill(layer: &str) -> String {
+    match node_vitest_layer_examples().get(layer) {
+        Some(example) => format!("{NODE_VITEST_UNIT_TEST_COMMON}\n\n{example}"),
+        None => NODE_VITEST_UNIT_TEST_COMMON.to_string(),
+    }
+}
 
 const NODE_EXPRESS_UNIT_TEST_COMMON: &str = "\
 ## Testing: Jest + Supertest (Node.js / Express)
@@ -573,10 +594,26 @@ fn node_express_unit_test_skill(layer: &str) -> String {
 /// showing a second, content-free one. This is the single source of truth for "which layers
 /// have a dedicated example"; callers must not hand-copy the layer list, or it silently goes
 /// stale the moment a new example is added here.
-pub(crate) fn layer_has_worked_example(tech: &str, layer: &str) -> bool {
+pub(crate) fn layer_has_worked_example(adrs: &[Adr], tech: &str, layer: &str) -> bool {
     use crate::tech::TechFamily;
     match TechFamily::detect(tech) {
-        TechFamily::NodeExpress => node_express_layer_examples().contains_key(layer),
+        // Node/Express's example set differs by which testing framework the project's ADR
+        // picked — resolved via the SAME node_testing_adr() helper testing_skill_from_adrs
+        // uses (not an independently-written lookup), so the two can never disagree about
+        // which framework is in play and defer to a worked example the other function never
+        // actually rendered. Defaults to the Jest set when no matching ADR exists, same as
+        // testing_skill_from_adrs's own fallback (unit_testing_skill always resolves
+        // NodeExpress to node_express_unit_test_skill).
+        TechFamily::NodeExpress => {
+            let uses_vitest = node_testing_adr(adrs)
+                .map(|a| a.decision.to_lowercase().contains("vitest"))
+                .unwrap_or(false);
+            if uses_vitest {
+                node_vitest_layer_examples().contains_key(layer)
+            } else {
+                node_express_layer_examples().contains_key(layer)
+            }
+        }
         // Other stacks don't partition their testing skill by layer yet — nothing to defer to.
         TechFamily::Jvm | TechFamily::React | TechFamily::Angular | TechFamily::Vue | TechFamily::Other => false,
     }
@@ -750,8 +787,25 @@ fn is_test_file_path(f: &str) -> bool {
 ///   React/Vite + "jest"                 → REACT_JEST_UNIT_TEST_SKILL
 ///   Angular                             → ANGULAR_UNIT_TEST_SKILL (implicit, no ADR needed)
 ///   Node/Express + "jest"  + "supertest" → NODE_EXPRESS_UNIT_TEST_SKILL
-///   Node/Express + "vitest"+ "supertest" → NODE_VITEST_UNIT_TEST_SKILL
+///   Node/Express + "vitest"+ "supertest" → node_vitest_unit_test_skill(layer)
 ///
+/// The Node/Express ADR (if any) that decided this project's unit-test framework — first match
+/// wins, same as testing_skill_from_adrs always resolved it. Shared with
+/// `layer_has_worked_example` so the two can never disagree about which framework (and thus
+/// which layer's worked example) applies to the same `adrs`/`tech` input: an independently
+/// written second lookup previously used `.any()` over the whole ADR list instead of this exact
+/// `.find()`, so a multi-service project with one Jest ADR and one unrelated Vitest ADR could
+/// have `testing_skill_from_adrs` pick Jest while `layer_has_worked_example` "saw" Vitest —
+/// reintroducing the same unconditional-vs-gated contradiction this pair of functions exists to
+/// prevent.
+fn node_testing_adr(adrs: &[Adr]) -> Option<&Adr> {
+    adrs.iter().find(|a| {
+        if !a.title.to_lowercase().contains("testing") { return false; }
+        let d = a.decision.to_lowercase();
+        (d.contains("jest") || d.contains("vitest")) && d.contains("supertest")
+    })
+}
+
 /// Falls back to unit_testing_skill(tech, layer) when no relevant ADR exists.
 pub(crate) fn testing_skill_from_adrs(adrs: &[Adr], tech: &str, layer: &str) -> String {
     let t = tech.to_lowercase();
@@ -759,14 +813,25 @@ pub(crate) fn testing_skill_from_adrs(adrs: &[Adr], tech: &str, layer: &str) -> 
     let is_react = family == crate::tech::TechFamily::React;
     let is_node = family == crate::tech::TechFamily::NodeExpress;
 
+    if is_node {
+        if let Some(adr) = node_testing_adr(adrs) {
+            let d = adr.decision.to_lowercase();
+            if d.contains("vitest") {
+                return node_vitest_unit_test_skill(layer);
+            }
+            if d.contains("jest") {
+                return node_express_unit_test_skill(layer);
+            }
+        }
+        return unit_testing_skill(tech, layer);
+    }
+
     // Match on decision content — titles are service-scoped and vary across projects.
     let adr = adrs.iter().find(|a| {
         if !a.title.to_lowercase().contains("testing") { return false; }
         let d = a.decision.to_lowercase();
         if is_react {
             (d.contains("vitest") || d.contains("jest")) && d.contains("react testing")
-        } else if is_node {
-            (d.contains("jest") || d.contains("vitest")) && d.contains("supertest")
         } else {
             false
         }
@@ -782,12 +847,6 @@ pub(crate) fn testing_skill_from_adrs(adrs: &[Adr], tech: &str, layer: &str) -> 
         }
         if t.contains("angular") || d.contains("angular testbed") {
             return ANGULAR_UNIT_TEST_SKILL.to_string();
-        }
-        if is_node && d.contains("vitest") {
-            return NODE_VITEST_UNIT_TEST_SKILL.to_string();
-        }
-        if is_node && d.contains("jest") && !d.contains("vitest") {
-            return node_express_unit_test_skill(layer);
         }
     }
     unit_testing_skill(tech, layer)

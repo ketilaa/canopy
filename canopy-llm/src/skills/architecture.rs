@@ -207,6 +207,15 @@ fn microservices_skill() -> ArchitectureSkill {
 /// Derive active architecture skills from the project's ADR decisions.
 /// Scans each ADR for keywords and maps them to the corresponding skill.
 /// Returns the rendered skills joined as a single string for prompt injection.
+// TODO(tech-detection): is_frontend below is a raw tech-string match (only recognizing react/
+// angular/vite/vue), not the authoritative service.component_type signal used elsewhere (e.g.
+// plan.rs's event_scope_rule) — this fn only receives `tech`, not component_type, so fixing it
+// requires a signature change at both call sites (plan.rs, execute.rs), not just a local edit.
+// Misses "svelte" and "next.js"/"nextjs" (real, scaffold.rs-supported frontend tech) — for such
+// a service, DDD/event-orientation architecture skills (Kafka publisher patterns, aggregate
+// vocabulary) would be injected into every file prompt for a service that has no business
+// owning events at all. Left as-is pending its own small, independently reviewed fix — see
+// project memory project-tech-detection-todo-reconciliation.
 pub fn skills_for_architecture(adrs: &[Adr], tech: &str) -> String {
     let text: String = adrs.iter()
         .map(|a| format!("{} {}", a.title, a.decision).to_lowercase())

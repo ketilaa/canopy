@@ -268,6 +268,14 @@ fn plan_prompt_for_service(
     )
 }
 
+    // TODO(tech-detection): is_front here re-derives frontend-ness from the tech string via
+    // TechFamily::detect, rather than from the authoritative service.component_type field this
+    // same file's event_scope_rule uses (see call site). TechFamily::detect itself doesn't
+    // recognize "svelte" or "next.js"/"nextjs" as frontend (both real, scaffold.rs-supported
+    // tech strings) — for such a service this function falls through to the generic backend
+    // ordering rule ("domain → data layer → service → controller"), which doesn't describe that
+    // service's actual file layout at all. Left as-is pending its own small, independently
+    // reviewed fix — see project memory project-tech-detection-todo-reconciliation.
 fn ordering_prompt_for_service(steps: &[ImplementationStep], service_name: &str, tech: &str) -> String {
     let family = crate::tech::TechFamily::detect(tech);
     let is_front = matches!(family, crate::tech::TechFamily::React | crate::tech::TechFamily::Angular | crate::tech::TechFamily::Vue);
@@ -340,8 +348,10 @@ fn layer_weight(file: &str) -> u8 {
     if f.ends_with("pom.xml") || f.ends_with("build.gradle") { return 0; }
     // Tests last — suffix-based; TS/TSX tests are co-located next to source, not under a
     // separate directory, so this must fire before any layer-directory check below matches.
-    if f.contains(".test.") || f.contains("test") && f.ends_with(".ts")
-        || f.ends_with("test.java") || f.contains("spec") { return 10; }
+    // Dot-delimited substrings only (".test.", ".spec.") — a bare `contains("test")` or
+    // `contains("spec")` misclassifies any real implementation file whose name merely contains
+    // that substring (e.g. AttestationService.ts, SpecialOfferService.ts) as a test file.
+    if f.contains(".test.") || f.contains(".spec.") || f.ends_with("test.java") { return 10; }
     // Node.js / Express layer order (plural directory names).
     if f.contains("/models/")         { return 1; }
     if f.contains("/events/")         { return 2; }
