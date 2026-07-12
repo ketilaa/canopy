@@ -11,8 +11,9 @@ use anyhow::{Context, Result};
 use canopy_core::{Adr, IntentSpec, ServicesRegistry, StepStatus, StoryPlan, UserStory};
 use canopy_llm::{
     execute_implementation_step, execute_implementation_stub, execute_implementation_stub_with_tools,
-    execute_implementation_with_test, find_symbol_tool_spec, generate_unit_test_stub,
-    generate_unit_test_stub_with_tools, read_file_tool_spec, skills_for_architecture, StepResult,
+    execute_implementation_with_test, execute_implementation_with_test_and_tools, find_symbol_tool_spec,
+    generate_unit_test_stub, generate_unit_test_stub_with_tools, read_file_tool_spec,
+    skills_for_architecture, StepResult,
 };
 use canopy_storage::save_story_plan;
 use std::collections::HashMap;
@@ -388,13 +389,28 @@ pub(crate) fn execute_steps(
                 format!("implementing      {}", step.file),
                 &client,
                 Some(&step.file),
-                || execute_implementation_with_test(
-                    &client, story, spec, contract_yaml,
-                    step, stub_content_for_green.as_deref(), roots_context.as_deref(),
-                    service_packages, services, &green_siblings, &arch_skills,
-                    &test_file, &test_content, pkg_constraints,
-                    observed_call.as_deref(),
-                ),
+                || {
+                    if is_ts_family {
+                        let tools = vec![read_file_tool_spec(), find_symbol_tool_spec()];
+                        execute_implementation_with_test_and_tools(
+                            &client, story, spec, contract_yaml,
+                            step, stub_content_for_green.as_deref(), roots_context.as_deref(),
+                            service_packages, services, &green_siblings, &arch_skills,
+                            &test_file, &test_content, pkg_constraints,
+                            observed_call.as_deref(),
+                            &tools,
+                            |call| dispatch_fix_tool_call(call, &step.file, &step_service_dir, &progress, i, &client),
+                        )
+                    } else {
+                        execute_implementation_with_test(
+                            &client, story, spec, contract_yaml,
+                            step, stub_content_for_green.as_deref(), roots_context.as_deref(),
+                            service_packages, services, &green_siblings, &arch_skills,
+                            &test_file, &test_content, pkg_constraints,
+                            observed_call.as_deref(),
+                        )
+                    }
+                },
             ).with_context(|| format!("LLM call failed for Green phase step {}", step.id))?;
 
             std::fs::write(dest, &impl_content)

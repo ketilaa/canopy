@@ -18,7 +18,8 @@ pub use skills::{
 mod prompts;
 pub use prompts::{
     execute_implementation_step, execute_implementation_stub, execute_implementation_stub_with_tools,
-    execute_implementation_with_test, extract_domain_from_stories, fix_file, fix_file_with_tools,
+    execute_implementation_with_test, execute_implementation_with_test_and_tools,
+    extract_domain_from_stories, fix_file, fix_file_with_tools,
     generate_scaffold_from_services, generate_stories_from_intent, generate_story_contract,
     generate_story_plan, generate_story_spec, generate_unit_test_stub,
     generate_unit_test_stub_with_tools, identify_architectural_questions, propose_dependencies,

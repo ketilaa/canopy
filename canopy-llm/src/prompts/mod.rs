@@ -15,6 +15,7 @@ pub use scaffold::generate_scaffold_from_services;
 pub use spec::{generate_story_contract, generate_story_spec, identify_architectural_questions};
 pub use step::{
     execute_implementation_step, execute_implementation_stub, execute_implementation_stub_with_tools,
-    execute_implementation_with_test, generate_unit_test_stub, generate_unit_test_stub_with_tools,
+    execute_implementation_with_test, execute_implementation_with_test_and_tools,
+    generate_unit_test_stub, generate_unit_test_stub_with_tools,
 };
 pub use summary::StepResult;

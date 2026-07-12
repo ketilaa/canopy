@@ -893,3 +893,56 @@ pub fn execute_implementation_with_test(
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
 
+/// Same contract as `execute_implementation_with_test`, but gives the model tools to call
+/// before producing its final answer — mirrors `execute_implementation_stub_with_tools`'s
+/// tool-call loop. Before this, Green phase (the call that writes the real implementation,
+/// not just a stub) had no tool access at all: the model could look things up while writing a
+/// stub or a test, and while repairing a broken build in the fix loop, but not while writing the
+/// actual business logic — the one step most likely to need to confirm a sibling's exact
+/// signature or an import path beyond what the pre-computed sibling surface already shows.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_implementation_with_test_and_tools(
+    client: &LlmClient,
+    story: &UserStory,
+    spec: &IntentSpec,
+    contract_yaml: &str,
+    step: &ImplementationStep,
+    current_content: Option<&str>,
+    roots_context: Option<&str>,
+    service_packages: &std::collections::HashMap<String, String>,
+    services: &ServicesRegistry,
+    sibling_section: &str,
+    arch_skills: &str,
+    test_file: &str,
+    test_content: &str,
+    package_constraints: Option<&str>,
+    observed_call: Option<&str>,
+    tools: &[ToolSpec],
+    mut dispatch: impl FnMut(&ToolCall) -> String,
+) -> Result<StepResult, LlmError> {
+    let prompt = step_prompt(
+        story, spec, contract_yaml, step, current_content, roots_context,
+        service_packages, services, sibling_section, arch_skills,
+        Some((test_file, test_content, false)), package_constraints,
+        observed_call, tools,
+    );
+    let mut messages = vec![ChatMessage::User(prompt)];
+
+    for _ in 0..MAX_TOOL_ITERATIONS {
+        match client.complete_with_tools(&messages, tools)? {
+            ToolTurn::ToolCalls(calls) => {
+                messages.push(ChatMessage::Assistant { content: None, tool_calls: calls.clone() });
+                for call in &calls {
+                    let result = dispatch(call);
+                    messages.push(ChatMessage::Tool { tool_call_id: call.id.clone(), content: result });
+                }
+            }
+            ToolTurn::FinalText(text) => return Ok(split_step_response(&text)),
+        }
+    }
+
+    Err(LlmError::UnexpectedShape(format!(
+        "exhausted {MAX_TOOL_ITERATIONS} tool-call iterations without a final answer for {}", step.file
+    )))
+}
+
