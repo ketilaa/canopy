@@ -522,19 +522,30 @@ fn unit_test_stub_prompt_ts(
     // Dogfooding Runs section). The implementation otherwise correctly does NOT throw, and the
     // test fails for a reason that has nothing to do with a real defect.
     let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" {
-        "This layer never validates input — that happens upstream (model factory or route\n\
-         boundary). NEVER write a test for a missing/invalid-field or error-message scenario at\n\
-         this layer, even though the BDD scenario list below includes one — skip it entirely and\n\
-         write tests only for this layer's own job.\n\
-           WRONG — re-testing the factory's own validation at this layer:\n\
-             it('throws an error when name is not provided', async () => {\n\
-               const invalid = createWidget(undefined as any, 'other-field-value')\n\
-               await expect(subject.saveWidget(invalid)).rejects.toThrow('name-value not provided...')\n\
-             })\n\
-           CORRECT: simply do not write a test for that scenario at this layer — it already has\n\
-           one at the model layer, and calling the factory with invalid input above throws\n\
-           immediately, before subject.saveWidget is ever reached, so the assertion never even\n\
-           executes what it claims to test.".to_string()
+        let job = match layer {
+            "repository" => "the database access layer — store the data you receive as-is",
+            "infrastructure" => "an infrastructure wrapper — pass the data you receive through to the external client unchanged",
+            "event" => "the domain event's payload — describe a thin fact about the aggregate, not the aggregate itself",
+            _ => unreachable!(),
+        };
+        format!(
+            "You are implementing {job} for this story.\n\
+             ALWAYS assume the data you receive has already been validated upstream (by the model\n\
+             factory or route boundary) — if you need to confirm exactly what's already enforced\n\
+             there, use find_symbol/read_file on the model file instead of guessing. Your only job\n\
+             is this layer's own responsibility, nothing more.\n\
+             NEVER write a test for a missing/invalid-field or error-message scenario at this\n\
+             layer, even though the BDD scenario list below includes one — skip it entirely.\n\
+               WRONG — re-testing the factory's own validation at this layer:\n\
+                 it('throws an error when name is not provided', async () => {{\n\
+                   const invalid = createWidget(undefined as any, 'other-field-value')\n\
+                   await expect(subject.saveWidget(invalid)).rejects.toThrow('name-value not provided...')\n\
+                 }})\n\
+               CORRECT: simply do not write a test for that scenario at this layer — it already has\n\
+               one at the model layer, and calling the factory with invalid input above throws\n\
+               immediately, before subject.saveWidget is ever reached, so the assertion never even\n\
+               executes what it claims to test."
+        )
     } else {
         "One describe/it block per scenario below — cover every scenario, do not skip or merge any.".to_string()
     };
