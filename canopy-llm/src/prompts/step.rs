@@ -561,6 +561,34 @@ fn unit_test_stub_prompt_ts(
         String::new()
     };
 
+    // Boundary-condition (max length / max item count) validation only ever happens at the
+    // model factory or the route's zod schema — the same reasoning scenario_coverage_note above
+    // already applies to skip missing/invalid-field tests entirely for infrastructure/repository/
+    // event layers. Sending this there would be dead weight: an instruction for an assertion the
+    // model was just told, a few paragraphs prior in this same prompt, never to write.
+    let boundary_rule = if layer == "model" || layer == "route" {
+        "         - Boundary conditions (max length, max items, etc.): ALWAYS construct REAL data that\n\
+           naturally satisfies the condition. NEVER mock a language built-in to fake it —\n\
+           String.prototype.length / Array.prototype.length are non-configurable; jest.spyOn(...,\n\
+           'length', 'get') always throws \"Property 'length' is not declared configurable\":\n\
+             WRONG: jest.spyOn(String.prototype, 'length', 'get').mockReturnValue(201)\n\
+             CORRECT: const name = 'x'.repeat(201)   // an actual 201-character string\n\
+             CORRECT: const tags = Array.from({ length: 6 }, (_, i) => `tag-${i}`)   // actually 6 items\n\
+           An array field (e.g. `type: '[string]'`) can carry TWO independent validations —\n\
+           `max_length` (each element's string length) and `max_items` (the array's item count).\n\
+           ALWAYS write a separate test per declared condition, with boundary data matching that\n\
+           condition. ALWAYS phrase the asserted message from the template for the constraint\n\
+           under test — NEVER the other constraint's number or wording:\n\
+             max_items test  → '<field> exceed maximum array item count of <max_items>'\n\
+             max_length test → '<field> exceed maximum item length of <max_length>'\n\
+             WRONG: testing max_items: 5 with 6 tags, asserting\n\
+               'Tags exceed maximum item length of 100 characters'   // borrowed max_length's number+text\n\
+             CORRECT: testing max_items: 5 with 6 tags, asserting\n\
+               'Tags exceed maximum array item count of 5'\n".to_string()
+    } else {
+        String::new()
+    };
+
     format!(
         "Generate a Jest test file to drive TDD for '{module_name}'.\n\
          \n\
@@ -606,17 +634,7 @@ fn unit_test_stub_prompt_ts(
          - ALWAYS mock dependencies with jest.fn().\n\
          - jest is a global — NEVER import it.\n\
          - ALWAYS use plain string literals for test IDs (e.g. 'widget-1') — NEVER crypto or uuid imports.\n\
-         - Boundary conditions (max length, max items, etc.): ALWAYS construct REAL data that\n\
-           naturally satisfies the condition. NEVER mock a language built-in to fake it —\n\
-           String.prototype.length / Array.prototype.length are non-configurable; jest.spyOn(...,\n\
-           'length', 'get') always throws \"Property 'length' is not declared configurable\":\n\
-             WRONG: jest.spyOn(String.prototype, 'length', 'get').mockReturnValue(201)\n\
-             CORRECT: const name = 'x'.repeat(201)   // an actual 201-character string\n\
-             CORRECT: const categories = Array.from({{ length: 6 }}, (_, i) => `cat-${{i}}`)   // actually 6 items\n\
-           An array field (e.g. `type: '[string]'`) can carry TWO independent validations —\n\
-           `max_length` (each element's string length) and `max_items` (the array's item count).\n\
-           ALWAYS write a separate test per declared condition, with boundary data matching that\n\
-           condition — NEVER borrow the other constraint's number or message text.\n\
+{boundary_rule}\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
          - EXCEPTION — testing a \"missing mandatory field\" scenario on a subject that takes ONE\n\
 options-object parameter (e.g. a service method): TypeScript rejects an omitted required property\n\
@@ -649,6 +667,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         red_reason = red_reason,
         route_rule = route_rule,
         scenario_coverage_note = scenario_coverage_note,
+        boundary_rule = boundary_rule,
         contract = canopy_summary_contract(),
     )
 }
