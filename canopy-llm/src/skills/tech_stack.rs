@@ -396,7 +396,6 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                  }\n\
                }\n\
              RULES:\n\
-             - NEVER generate ids or timestamps — the factory already assigned them.\n\
              - NEVER have a createWidget() or create() method — that is the factory function in the model file.\n\
              - NEVER publish events — that is the service's responsibility.\n\
              - NEVER call EventPublisher — repositories are unaware of events.\n\
@@ -448,8 +447,6 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                CORRECT:\n\
                  const widget = createWidget(widgetData.name, widgetData.otherField, widgetData.optionalField);\n\
              RULES:\n\
-             - Call the factory to construct the aggregate, call the repository to persist it,\n\
-               then call the event publisher — in that order.\n\
              - NEVER assign an id or timestamp directly in a service method — only the factory does.\n\
              - connect() the event publisher, publish(), then disconnect() — do not leave it\n\
                connected after the method returns."
