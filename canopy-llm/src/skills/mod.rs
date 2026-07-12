@@ -27,6 +27,13 @@ pub fn detect_layer(file_path: &str) -> &'static str {
     else if file_path.contains("/repositories/") { "repository" }
     else if file_path.contains("/infrastructure/") { "infrastructure" }
     else if file_path.contains("/middleware/") { "middleware" }
+    // Angular names the layer in the file's own suffix instead of a plural directory
+    // (src/app/<feature>/<feature>.service.ts, never src/services/...) — without this, every
+    // Angular file fell through to the generic "module" branch below, silently disabling every
+    // layer-gated rule in unit_test_stub_prompt_ts for the whole Angular family.
+    else if file_path.ends_with(".service.ts") { "service" }
+    else if file_path.ends_with(".component.ts") { "component" }
+    else if file_path.ends_with(".model.ts") { "model" }
     else {
         let base = std::path::Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or("");
         if base == "app.ts" || base == "index.ts" { "app" }

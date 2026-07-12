@@ -433,7 +433,16 @@ fn unit_test_stub_prompt_ts(
          beforeEach shape, same assertion pattern (objectContaining/toMatchObject, never a \
          second factory call compared by deep-equality). Do not fall back to a generic \
          Arrange/Act/Assert skeleton; the example above is the structure.".to_string()
-    } else if layer == "event" {
+    // These two hand-written skeletons assume the Node/Express factory-function convention
+    // (createWidget with positional args, "interface not a class") — gated on tech family, not
+    // bare layer name, because detect_layer() returns the same "event"/"model" string for every
+    // stack (e.g. Angular's own <feature>.model.ts is a plain interface with no factory at all,
+    // per angular_skill() in tech_stack.rs, and gets its own TestBed-based skill as test_skill
+    // instead). Without this gate, fixing detect_layer() to recognize Angular's file-suffix
+    // convention would have silently routed Angular model/event files into this Node.js-specific
+    // skeleton — the same unconditional-vs-gated contradiction shape as the other fixes above,
+    // just reachable through a layer-detection fix instead of a missing gate.
+    } else if layer == "event" && matches!(crate::tech::TechFamily::detect(technology), crate::tech::TechFamily::NodeExpress) {
         format!(
             "Test structure (domain event — THIN factory function, NOT `new`):\n\
              import {{ create{module_name} }} from '{import_path}'\n\
@@ -457,7 +466,7 @@ fn unit_test_stub_prompt_ts(
             module_name = module_name,
             import_path = import_path,
         )
-    } else if layer == "model" {
+    } else if layer == "model" && matches!(crate::tech::TechFamily::detect(technology), crate::tech::TechFamily::NodeExpress) {
         format!(
             "Test structure (model — factory function, NOT `new`):\n\
              import {{ create{module_name} }} from '{import_path}'\n\
@@ -509,23 +518,26 @@ fn unit_test_stub_prompt_ts(
     };
     let tools_section = tools_hint_section(tools);
 
-    // Infrastructure/repository/event files never receive invalid input in practice — by the
-    // time an aggregate reaches EventPublisher.publish(), a repository's save(), or an event
-    // factory, it has already been validated at the route (zod) or model (factory) layer.
-    // Blindly telling the model to "cover every BDD scenario" causes it to write a validation
-    // test against a layer that has no validation responsibility at all — for an event
-    // specifically, it forces a "missing name" test that can only pass if the event's factory
-    // accepts and re-validates the whole aggregate's fields, directly violating the thin-event
-    // rule (eventId + <entity>Id + occurredAt only) and leaving no implementation that can ever
-    // satisfy both the test and the skill at once (confirmed: this produced an unwinnable Red
-    // fix loop with a real dogfooding project's ProductCreated.ts — see CLAUDE.md's Diagnosing
-    // Dogfooding Runs section). The implementation otherwise correctly does NOT throw, and the
-    // test fails for a reason that has nothing to do with a real defect.
-    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" {
+    // Infrastructure/repository/event/middleware files never receive invalid input in practice —
+    // by the time an aggregate reaches EventPublisher.publish(), a repository's save(), or an
+    // event factory, it has already been validated at the route (zod) or model (factory) layer;
+    // middleware (errorHandler.ts) only formats whatever error already occurred, the same "no
+    // validation responsibility" reasoning. Blindly telling the model to "cover every BDD
+    // scenario" causes it to write a validation test against a layer that has no validation
+    // responsibility at all — for an event specifically, it forces a "missing name" test that
+    // can only pass if the event's factory accepts and re-validates the whole aggregate's fields,
+    // directly violating the thin-event rule (eventId + <entity>Id + occurredAt only) and leaving
+    // no implementation that can ever satisfy both the test and the skill at once (confirmed:
+    // this produced an unwinnable Red fix loop with a real dogfooding project's ProductCreated.ts
+    // — see CLAUDE.md's Diagnosing Dogfooding Runs section). The implementation otherwise
+    // correctly does NOT throw, and the test fails for a reason that has nothing to do with a
+    // real defect.
+    let scenario_coverage_note = if layer == "infrastructure" || layer == "repository" || layer == "event" || layer == "middleware" {
         let job = match layer {
             "repository" => "the database access layer — store the data you receive as-is",
             "infrastructure" => "an infrastructure wrapper — pass the data you receive through to the external client unchanged",
             "event" => "the domain event's payload — describe a thin fact about the aggregate, not the aggregate itself",
+            "middleware" => "the error-handling middleware — format whatever error already occurred, unchanged",
             _ => unreachable!(),
         };
         format!(
@@ -576,8 +588,12 @@ fn unit_test_stub_prompt_ts(
     // model factory or the route's zod schema — the same reasoning scenario_coverage_note above
     // already applies to skip missing/invalid-field tests entirely for infrastructure/repository/
     // event layers. Sending this there would be dead weight: an instruction for an assertion the
-    // model was just told, a few paragraphs prior in this same prompt, never to write.
-    let boundary_rule = if layer == "model" || layer == "route" {
+    // model was just told, a few paragraphs prior in this same prompt, never to write. "service"
+    // is included for the same reason missing_field_exception_rule includes it: the service
+    // worked example calls the factory positionally (tech_stack.rs's Service rules), so a
+    // boundary-condition BDD scenario reaching a service test transitively hits the same
+    // real-data-not-mocked-length requirement.
+    let boundary_rule = if layer == "model" || layer == "route" || layer == "service" {
         "         - Boundary conditions (max length, max items, etc.): ALWAYS construct REAL data that\n\
            naturally satisfies the condition. NEVER mock a language built-in to fake it —\n\
            String.prototype.length / Array.prototype.length are non-configurable; jest.spyOn(...,\n\
@@ -626,6 +642,17 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         String::new()
     };
 
+    // A pure factory (model/event) has no injected dependencies to mock — testing.rs's own
+    // "model" worked example says so explicitly ("A pure factory has nothing to mock: NEVER
+    // jest.mock(), jest.fn()..."). An unconditional "ALWAYS mock dependencies with jest.fn()"
+    // bullet a few lines below would directly contradict that same-prompt instruction for these
+    // two layers — the same unconditional-vs-gated contradiction shape as the other rules above.
+    let mock_dependencies_rule = if layer == "model" || layer == "event" {
+        String::new()
+    } else {
+        "         - ALWAYS mock dependencies with jest.fn().\n".to_string()
+    };
+
     format!(
         "Generate a Jest test file to drive TDD for '{module_name}'.\n\
          \n\
@@ -668,7 +695,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
          - Write REAL assertions.\n\
          - {red_reason}\n\
            NEVER use expect.assertions(0) or skip assertions.\n\
-         - ALWAYS mock dependencies with jest.fn().\n\
+{mock_dependencies_rule}\
          - jest is a global — NEVER import it.\n\
          - ALWAYS use plain string literals for test IDs (e.g. 'widget-1') — NEVER crypto or uuid imports.\n\
 {boundary_rule}\
@@ -698,6 +725,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         scenario_coverage_note = scenario_coverage_note,
         boundary_rule = boundary_rule,
         missing_field_exception_rule = missing_field_exception_rule,
+        mock_dependencies_rule = mock_dependencies_rule,
         contract = canopy_summary_contract(),
     )
 }
