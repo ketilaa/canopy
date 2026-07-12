@@ -589,6 +589,32 @@ fn unit_test_stub_prompt_ts(
         String::new()
     };
 
+    // Only the service layer takes a single options-object parameter (see the Service skill's
+    // `Omit<Widget, 'id' | 'createdAt' | 'modifiedAt'>` shape in tech_stack.rs) — the model
+    // factory takes positional args (its own worked example is under the "model" layer branch
+    // above) and every other layer either has no missing-field scenario to test at all
+    // (scenario_coverage_note above already forbids one for infrastructure/repository/event) or
+    // isn't calling a typed in-process function with an object literal (route tests post an
+    // untyped JSON body via supertest, not a TS-checked call). Sending this unconditionally
+    // handed every layer a worked example of exactly the test scenario_coverage_note tells
+    // infrastructure/repository/event layers never to write — a real contradiction confirmed
+    // live: a repository-layer test copied this pattern almost verbatim, produced an unfixable
+    // Red-phase failure (the factory throws before the repository method is ever reached), and
+    // burned the whole Green-phase fix budget on an implementation that could never satisfy it.
+    let missing_field_exception_rule = if layer == "service" {
+        "         - EXCEPTION — testing a \"missing mandatory field\" scenario on a subject that takes ONE\n\
+options-object parameter (e.g. a service method): TypeScript rejects an omitted required property\n\
+at COMPILE time, before the test can even run the RUNTIME check it's meant to test. ALWAYS cast\n\
+`as any` on the object literal to allow the deliberately-invalid call:\n\
+             const invalidPayload = { manufacturer: 'Acme', model: 'X1' } as any\n\
+             await expect(subject.createWidget(invalidPayload)).rejects.toThrow('name-value not provided...')\n\
+           The cast only affects the value being constructed — it does NOT weaken the real runtime\n\
+           check you are testing. (A positional-argument subject, e.g. a model factory, has its own\n\
+           worked example above.)\n".to_string()
+    } else {
+        String::new()
+    };
+
     format!(
         "Generate a Jest test file to drive TDD for '{module_name}'.\n\
          \n\
@@ -636,15 +662,7 @@ fn unit_test_stub_prompt_ts(
          - ALWAYS use plain string literals for test IDs (e.g. 'widget-1') — NEVER crypto or uuid imports.\n\
 {boundary_rule}\
          - Test data objects MUST include every MANDATORY field from the dependency types above.\n\
-         - EXCEPTION — testing a \"missing mandatory field\" scenario on a subject that takes ONE\n\
-options-object parameter (e.g. a service method): TypeScript rejects an omitted required property\n\
-at COMPILE time, before the test can even run the RUNTIME check it's meant to test. ALWAYS cast\n\
-`as any` on the object literal to allow the deliberately-invalid call:\n\
-             const invalidPayload = {{ manufacturer: 'Acme', model: 'X1' }} as any\n\
-             await expect(subject.createWidget(invalidPayload)).rejects.toThrow('name-value not provided...')\n\
-           The cast only affects the value being constructed — it does NOT weaken the real runtime\n\
-           check you are testing. (A positional-argument subject, e.g. a model factory, has its own\n\
-           worked example above.)\n\
+{missing_field_exception_rule}\
          {route_rule}\
          \n\
          Write the raw TypeScript test file content first.\n\
@@ -668,6 +686,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         route_rule = route_rule,
         scenario_coverage_note = scenario_coverage_note,
         boundary_rule = boundary_rule,
+        missing_field_exception_rule = missing_field_exception_rule,
         contract = canopy_summary_contract(),
     )
 }
