@@ -304,9 +304,9 @@ replaces the module but does NOT create the binding:
 fn node_express_layer_examples() -> std::collections::HashMap<&'static str, String> {
     std::collections::HashMap::from([
         ("route",
-         "  ### Route test example (mock ONLY the service layer — per the Route rules above,\n\
-  never the repository or event publisher directly; this isolates the route test from every\n\
-  infrastructure concern, including any Kafka/DB connection attempt)\n\
+         "  ### Route test example (mock ONLY the service layer, never the repository or event\n\
+  publisher directly; this isolates the route test from every infrastructure concern, including\n\
+  any Kafka/DB connection attempt)\n\
   import request from 'supertest'\n\
   import express from 'express'\n\
   import router from './widgets'\n\
@@ -382,6 +382,8 @@ fn node_express_layer_examples() -> std::collections::HashMap<&'static str, Stri
     })\n\
   })\n\
   RULES for model tests:\n\
+  - A pure factory has nothing to mock: NEVER `jest.mock()`, `jest.fn()`, or reference a\n\
+    repository/service/event publisher in this file — call the real factory with plain arguments.\n\
   - NEVER write `new Widget(...)` — the model is an interface, not a class; `new` will not compile\n\
   - NEVER call `widget.save()` or any persistence method — models have no such methods\n\
   - ALWAYS `import { createWidget }` for the factory call, `import type { Widget }` for types only\n\

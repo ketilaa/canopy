@@ -36,17 +36,25 @@ fn step_prompt(
     // fields or HTTP shapes — showing them unconditionally to e.g. infrastructure/middleware/
     // app/config files is pure bloat, displacing more decisive content from the model's
     // attention for no benefit (those files have no entity fields or endpoints to align with).
-    let schema_yaml = if matches!(layer, "infrastructure" | "middleware" | "app" | "config" | "module") {
-        String::new()
-    } else {
+    // Only the model layer constructs fields directly from the entity schema. Every other
+    // layer either doesn't touch entity fields at all (infrastructure/middleware/app/config),
+    // or gets the same information more precisely from sibling context (repository/service see
+    // the model's actual interface via Roots) or from the OAS contract (route/api-client — the
+    // contract-generation prompt already maps entity_schema's own validation constraints
+    // (max_length → maxLength, etc.) onto the OAS schema, so sending both is redundant).
+    let schema_section = if layer == "model" {
         spec.entity_schema.as_ref()
             .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+            .map(|yaml| format!("Entity schema:\n{yaml}\n"))
             .unwrap_or_default()
-    };
-    let contract_yaml = if matches!(layer, "route" | "api-client" | "app") {
-        contract_yaml
     } else {
-        ""
+        String::new()
+    };
+    // "app" doesn't need endpoint-level contract detail — it only assembles routes/middleware.
+    let contract_section = if matches!(layer, "route" | "api-client") && !contract_yaml.is_empty() {
+        format!("OAS Contract:\n{contract_yaml}\n")
+    } else {
+        String::new()
     };
     // Detect frontend by registry entry OR by file extension (belt-and-suspenders).
     let _is_frontend = service_entry
@@ -119,8 +127,9 @@ fn step_prompt(
             "\nSTUB ONLY — return a compilable skeleton, no logic:\n\
              - ALWAYS export every class/function/type the test below imports.\n\
              - Every function/method body: ONLY `throw new Error('not implemented');` — no\n\
-               validation, no field assignment, no constructed return value. This applies to\n\
-               a standalone factory function exactly the same as a class method.\n\
+               validation, no field assignment, no constructed return value, even logic you\n\
+               already know is correct. This applies to a standalone factory function exactly\n\
+               the same as a class method.\n\
                WRONG — this is a full implementation, not a stub:\n\
                  export function createWidget(name: string, otherField: string): Widget {{\n\
                    if (!name) throw new Error('name-value not provided...')\n\
@@ -131,8 +140,6 @@ fn step_prompt(
                    throw new Error('not implemented');\n\
                  }}\n\
              - Constructor bodies: empty (no field assignments needed yet).\n\
-             - NEVER implement any logic, even logic you already know is correct — the Green\n\
-               phase replaces this stub in a separate step.\n\
              {arity_check_lead}\
                WRONG: test calls `subject.registerWidget(widgetData)` — one argument — but the\n\
                  stub declares `registerWidget(name, otherField, optionalField)` — three params  ✗\n\
@@ -181,10 +188,8 @@ fn step_prompt(
          Story: As a {as_a}, I want {want}, so that {so_that}.\n\
          Service: {service} ({technology})\n\
          \n\
-         Entity schema:\n\
-         {schema_yaml}\n\
-         OAS Contract:\n\
-         {contract_yaml}\n\
+         {schema_section}\
+         {contract_section}\
          {sibling_section}\
          {current_section}\
          {roots_section}\
@@ -204,8 +209,8 @@ fn step_prompt(
         so_that = story.so_that,
         service = step.service,
         technology = technology,
-        schema_yaml = schema_yaml,
-        contract_yaml = contract_yaml,
+        schema_section = schema_section,
+        contract_section = contract_section,
         sibling_section = sibling_section,
         current_section = current_section,
         roots_section = roots_section,
@@ -324,9 +329,8 @@ fn unit_test_stub_prompt(
            The Green phase makes them pass. Do NOT use Assertions.fail().\n\
          - Package declaration: derive sub-package from the test file path.\n\
          - Import {impl_class} from its package under {pkg}.\n\
-         - Use jakarta.* everywhere — never javax.*\n\
          \n\
-         Write the raw Java file content first — no code fences.\n\
+         Write the raw Java file content first.\n\
          {contract}",
         test_class = test_class,
         impl_class = class_name,
@@ -367,9 +371,18 @@ fn unit_test_stub_prompt_ts(
 
     let layer = detect_layer(impl_file);
 
-    let schema_yaml = spec.entity_schema.as_ref()
-        .map(|s| serde_yaml::to_string(s).unwrap_or_default())
-        .unwrap_or_default();
+    // Only the model layer constructs fields directly from the entity schema — every other
+    // layer's test either doesn't touch entity fields at all, or (route) can derive boundary-
+    // condition test data from the OAS contract instead, which already carries the same
+    // validation constraints mapped onto its schema (max_length → maxLength, etc.).
+    let schema_section = if layer == "model" {
+        spec.entity_schema.as_ref()
+            .map(|s| serde_yaml::to_string(s).unwrap_or_default())
+            .map(|yaml| format!("Entity schema:\n{yaml}\n"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let scenarios_yaml = serde_yaml::to_string(&spec.scenarios).unwrap_or_default();
 
     let service_entry = services.services.iter()
@@ -436,10 +449,10 @@ fn unit_test_stub_prompt_ts(
                }})\n\
              }})\n\
              CRITICAL: {module_name} is a THIN record — eventId (its own identity), the aggregate's\n\
-             id (e.g. widgetId), and occurredAt ONLY. The Entity schema below describes the\n\
-             AGGREGATE, not this event — do NOT pass or assert on the aggregate's other fields\n\
-             (name, description, etc.) here; a consumer that needs them fetches the aggregate by\n\
-             its id. Do NOT add a modifiedAt/updatedAt field — an event is a fact about one instant.\n\
+             id (e.g. widgetId), and occurredAt ONLY. Do NOT pass or assert on the aggregate's\n\
+             other fields (name, description, etc.) here, even ones you already know from\n\
+             context — a consumer that needs them fetches the aggregate by its id. Do NOT add a\n\
+             modifiedAt/updatedAt field — an event is a fact about one instant.\n\
              `new {module_name}()` will NOT compile — {module_name} is an interface, not a class.",
             module_name = module_name,
             import_path = import_path,
@@ -537,8 +550,7 @@ fn unit_test_stub_prompt_ts(
     app.use('/widgets', router)\n\
   NEVER write `router(mockWidgetService)` — the route module has no factory to call.\n\
 - ALWAYS match the mount path (e.g. '/widgets' above) to the OAS Contract and app.ts exactly —\n\
-  NEVER invent a different prefix (e.g. '/api/...') unless the contract specifies one.\n\
-- ALWAYS mock only the service layer in a route test — NEVER repository or event publisher directly.\n"
+  NEVER invent a different prefix (e.g. '/api/...') unless the contract specifies one.\n"
     } else {
         ""
     };
@@ -547,14 +559,6 @@ fn unit_test_stub_prompt_ts(
         format!("OAS Contract — the route/endpoint path in your test MUST match this exactly:\n{contract_yaml}\n\n")
     } else {
         String::new()
-    };
-
-    let entity_schema_label = if layer == "event" {
-        "Entity schema (describes the AGGREGATE only — this event's test data must NOT mirror\n\
-         these fields; see the \"### Domain events\" section for the payload shape — eventId,\n\
-         the aggregate's id, occurredAt ONLY):"
-    } else {
-        "Entity schema:"
     };
 
     format!(
@@ -568,8 +572,7 @@ fn unit_test_stub_prompt_ts(
          \n\
          Story: As a {as_a}, I want {want}, so that {so_that}.\n\
          \n\
-         {entity_schema_label}\n\
-         {schema_yaml}\n\
+         {schema_section}\
          BDD scenarios:\n\
          {scenario_coverage_note}\n\
          {scenarios_yaml}\n\
@@ -626,7 +629,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
            worked example above.)\n\
          {route_rule}\
          \n\
-         Write the raw TypeScript test file content first — no code fences.\n\
+         Write the raw TypeScript test file content first.\n\
          {contract}",
         module_name = module_name,
         impl_file = impl_file,
@@ -637,8 +640,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         as_a = story.as_a,
         want = story.want,
         so_that = story.so_that,
-        entity_schema_label = entity_schema_label,
-        schema_yaml = schema_yaml,
+        schema_section = schema_section,
         scenarios_yaml = scenarios_yaml,
         contract_section = contract_section,
         tech_rules = tech_rules,

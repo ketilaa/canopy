@@ -313,12 +313,18 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
                export class WidgetService { ... }      ✓\n\
                export interface Widget { ... }          ✓\n\
                export const errorHandler = ...         ✓\n\
-             EXCEPTION: src/app.ts uses default export: export default app\n\
+             EXCEPTIONS: src/app.ts (export default app) and a route file's Router instance\n\
+             (export default router) use default export — every other file uses named exports.\n\
              NEVER: export default class WidgetService  ✗  causes TS2613/TS2614 in importers"
             .to_string(),
         layer_rules: std::collections::HashMap::from([
             ("model",
              "  ### Models\n\
+             A model is a PURE factory: it constructs and validates ONE aggregate from only the\n\
+             arguments you're given. NEVER import, reference, or depend on any other layer (no\n\
+             repository, service, infrastructure, event publisher, or route file) — a model has\n\
+             no I/O and no state beyond the object it returns.\n\
+             \n\
              A model file exports one interface AND one standalone factory function:\n\
                import { randomUUID } from 'crypto'\n\
                export interface Widget { id: string; createdAt: Date; ... }\n\
@@ -340,8 +346,8 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
             ("event",
              "  ### Domain events\n\
              ALWAYS treat an event as a thin, immutable record that something happened. NEVER\n\
-             copy the aggregate's schema into it — ignore the Entity schema's field list here;\n\
-             it describes the aggregate, not the event payload.\n\
+             copy the aggregate's other fields into it, even ones you already know from context —\n\
+             an event is eventId, the aggregate's id, and occurredAt ONLY.\n\
                import { randomUUID } from 'crypto'\n\
                export interface WidgetCreated {\n\
                  eventId: string;\n\
@@ -488,9 +494,7 @@ factory assigns id via randomUUID() from Node.js built-in 'crypto'; NO imports f
              app.ts imports it as: import { errorHandler } from './middleware/errorHandler'\n\
              NEVER use default export for errorHandler — app.ts must destructure it by name.\n\
              import { ZodError } from 'zod' — use instanceof ZodError,\n\
-             NOT z.ZodError (z is not imported in middleware; ZodError is a named export from 'zod').\n\
-             NEVER store EventPublisher as a private field the route accesses. ALWAYS construct\n\
-             it as a local variable in the route handler — connect/disconnect belong to the caller."
+             NOT z.ZodError (z is not imported in middleware; ZodError is a named export from 'zod')."
              .to_string()),
             ("config",
              "  ### tsconfig.json\n\

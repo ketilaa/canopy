@@ -126,8 +126,7 @@ fn fix_prompt(
             .map(|(path, c)| format!("--- {} ---\n{}", path, c))
             .collect();
         let label = if ext == "java" {
-            "Referenced files — check these for available constructors, setter methods, and field types \
-             before writing any new() calls or method invocations:"
+            "Referenced files — available constructors, setter methods, and field types:"
         } else {
             "Referenced files — check these for the correct component signatures and exported types:"
         };
@@ -190,7 +189,7 @@ fn fix_prompt(
          \n\
          {tdd_rules}\
          Rules:\n\
-         - ALWAYS write ONLY the corrected file content — no prose, no markdown fences, no explanations\
+         - ALWAYS write ONLY the corrected file content.\
          {extra_rules}\n\
          - ALWAYS preserve correct logic — fix only what the errors report.\n\
          - ALWAYS import only from modules that exist in the project files listed above.\n\
