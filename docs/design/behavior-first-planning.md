@@ -369,6 +369,59 @@ Current thinking: this is acceptable as a small, bounded Stage 4 review question
 integration cluster, which existing unit contracts does it exercise?" — rather than something
 Stage 3's mechanical pass needs to resolve. Not yet fully specified.
 
+## Open design note: business policy discovery before scenario generation
+
+Raised 2026-07-13, during Stage 2's live verification. Two different classes of upstream input
+feed this pipeline, and today only one of them gets a real gate before scenario generation:
+
+- **Domain facts** — field names, types, structural constraints. These already get first-class
+  treatment: `mechanical_validation_behaviors`/`mechanical_construction_behaviors`
+  (`canopy-llm/src/prompts/behaviors.rs`) derive behaviors straight from `entity_schema`,
+  bypassing scenarios entirely.
+- **Business policies** — uniqueness, defaults, retention, ordering, authorization, error
+  semantics, idempotency, consistency (Stage 2's own heuristic list for what becomes a Decision
+  Point). These get no equivalent gate. `story_spec_prompt` (`canopy-llm/src/prompts/spec.rs`)
+  generates `entity_schema` and scenarios in one call, with scenarios explicitly required to be
+  grounded in the schema — but nothing asks "what policies does this schema imply" before that
+  call runs. A policy question either gets silently guessed, silently omitted, or accidentally
+  encoded as a scenario detail, and only surfaces later as a byproduct of Stage 0 noticing a
+  completeness gap or Stage 1 noticing a blocked behavior.
+
+**Motivating example:** the system had enough information to know `Product` has `name`,
+`manufacturer`, `model` long before Stage 0 or Stage 1 ever ran. At that point a human analyst
+would naturally ask "what makes a product unique — are duplicates allowed, what's the
+uniqueness scope?" — a policy question, not a behavioral or implementation one. Canopy instead
+let scenario generation proceed without an answer, and the omission was only caught downstream,
+as a Stage 0 gap, requiring a human to hand-patch `spec.yaml` after the fact.
+
+**Why this isn't "invert Behaviors and Scenarios":** a resolved policy ("name+manufacturer+model
+must be unique") doesn't itself define HTTP status, error semantics, or example flows — something
+still has to operationalize the policy into an observable, testable consequence, and that's
+scenarios' real job, not a redundant one. Scenarios and behaviors serve different purposes
+(human-readable example vs. mechanically-processable unit); collapsing one into "derived from the
+other" in either direction loses that distinction.
+
+**Proposed shape — reuse the ADR gate's own pattern, not a new artifact hierarchy.** ADRs already
+follow Discovery → Questions → Human Gate → Resolved ADRs → Scenario Generation
+(`identify_architectural_questions` runs before `generate_story_spec`). Business policy is the
+missing parallel track:
+
+```
+Business Policy Discovery → Decision Points → Human Gate → Resolved Policies → Scenario Generation
+```
+
+concretely: walk the drafted `entity_schema` against Stage 2's heuristic checklist right after
+it's known, producing `DecisionPoint`s (the type Stage 2 already has — no new artifact needed)
+for anything unresolved, gated before `story_spec_prompt`'s scenario-writing call runs. Scenario
+generation would then receive resolved ADRs *and* resolved policies as grounding input, the same
+way it already receives resolved ADRs today. Stage 0 and Stage 2 keep running afterward too, as a
+safety net for anything that still slips through — consistent with the audit-after-generation
+pattern used everywhere else in this pipeline, not a redundancy to design away.
+
+**Status: not yet implemented, deliberately deferred.** Stage 3 and Stage 4 are still unbuilt and
+unproven — opening this as a second front before the core behavior-first pipeline has run
+end-to-end once would risk destabilizing both at the same time. Revisit once Stage 3/4 land.
+
 ## Evidence this is worth the restructuring cost
 
 A direct probe (same model Canopy uses, `qwen2.5-coder:14b`, run outside Canopy against a
