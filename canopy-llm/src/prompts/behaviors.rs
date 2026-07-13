@@ -391,7 +391,7 @@ fn mechanical_construction_behaviors(schema: &EntitySchema, next_id: &mut impl F
 /// Parses the fixed "<EventName> on topic <topic-name>" shape `spec.rs`'s own ADR-proposal
 /// prompt enforces for domain-event ADRs (see canopy-llm/src/prompts/spec.rs) — not a guess,
 /// a documented, generated convention.
-fn parse_event_adr(decision: &str) -> Option<(String, String)> {
+pub fn parse_event_adr(decision: &str) -> Option<(String, String)> {
     let mut parts = decision.splitn(2, " on topic ");
     let event_name = parts.next()?.trim();
     let topic = parts.next()?.trim();

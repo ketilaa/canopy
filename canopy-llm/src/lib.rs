@@ -24,6 +24,6 @@ pub use prompts::{
     generate_contracts, generate_scaffold_from_services, generate_stories_from_intent,
     generate_story_openapi, generate_story_plan, generate_story_spec, generate_unit_test_stub,
     generate_unit_test_stub_with_tools, identify_architectural_questions,
-    identify_specification_gaps, mechanical_cluster, propose_dependencies, review_clustering,
+    identify_specification_gaps, mechanical_cluster, parse_event_adr, propose_dependencies, review_clustering,
     suggest_domain_entities, suggest_roles, FixAttempt, StepResult,
 };

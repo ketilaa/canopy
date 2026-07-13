@@ -3,7 +3,7 @@ use crate::ui::{input_text_required, input_text_with_initial, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{Adr, DomainRegistry, IntentSpec, StoryStatus};
-use canopy_llm::{generate_story_openapi, generate_story_spec, identify_architectural_questions};
+use canopy_llm::{generate_story_openapi, generate_story_spec, identify_architectural_questions, parse_event_adr};
 use canopy_storage::{
     load_all_adrs, load_domain_registry, load_services_registry, load_user_stories,
     save_adr, save_services_registry, save_story_openapi, save_story_spec,
@@ -38,6 +38,40 @@ fn check_entity_continuity(spec: &IntentSpec, domain: &DomainRegistry) -> Result
     Ok(())
 }
 
+/// Mechanical guard, not an LLM judgment: does a newly-accepted domain-event ADR's event name
+/// share the same entity prefix as an entity already established in domain vocabulary? Same
+/// placement and severity as `check_entity_continuity`, one stage earlier — live-verified need:
+/// a reproducibility run's domain-event ADR named "ManufacturerRegistered" while that same run's
+/// domain vocabulary had already extracted the event as "ManufacturerCreated" — same entity,
+/// different verb, which is accepted, ambiguous wording per the domain-extraction rules
+/// themselves (never gated on here). What this catches is the ENTITY an event's name starts with
+/// silently diverging from established vocabulary — e.g. an ADR naming "AccountRegistered" when
+/// domain vocabulary only knows "Manufacturer" — the same class of derailment Entity Continuity
+/// guards against for `entity_schema`. Only checks ADRs accepted during THIS call, not the whole
+/// project's accumulated history, and only once domain vocabulary is established.
+fn check_event_continuity(story_id: &str, newly_accepted_adrs: &[Adr], domain: &DomainRegistry) -> Result<()> {
+    if domain.entities.is_empty() {
+        return Ok(());
+    }
+    for adr in newly_accepted_adrs {
+        let Some((event_name, _topic)) = parse_event_adr(&adr.decision) else { continue };
+        let event_lower = event_name.to_lowercase();
+        let matches_known_entity = domain.entities.iter()
+            .any(|e| event_lower.starts_with(&e.name().to_lowercase()));
+        if !matches_known_entity {
+            let known: Vec<&str> = domain.entities.iter().map(|e| e.name()).collect();
+            anyhow::bail!(
+                "event continuity violation: domain-event ADR '{}' names event '{}', which \
+                 doesn't start with any entity already established in domain vocabulary ({}). \
+                 This usually means the ADR drifted onto an unrelated entity — review the ADR, \
+                 then re-run `canopy spec {}`. Nothing further was saved.",
+                adr.title, event_name, known.join(", "), story_id,
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
 
@@ -67,6 +101,12 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     println!("\nIdentifying architectural questions...");
     let mut proposed = identify_architectural_questions(&client, story, &existing_adrs, &services)
         .context("failed to identify architectural questions")?;
+
+    // Marks where THIS call's own newly-accepted ADRs start — `existing_adrs` began as the
+    // whole project's accumulated history, so checking event continuity against all of it would
+    // false-positive on unrelated ADRs from other stories/entities. Only this run's own ADRs are
+    // relevant to check against this story's own domain vocabulary.
+    let adrs_before_this_run = existing_adrs.len();
 
     if proposed.proposals.is_empty() {
         println!("No architectural questions identified — proceeding to spec generation.");
@@ -215,6 +255,8 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
         save_services_registry(&services).context("failed to save services registry")?;
     }
 
+    check_event_continuity(story_id, &existing_adrs[adrs_before_this_run..], &domain)?;
+
     println!("\nGenerating BDD spec for story '{}'...", story_id);
     let spec =
         generate_story_spec(&client, story, &existing_adrs, &services, &domain)
@@ -355,5 +397,69 @@ mod entity_continuity_tests {
         let spec = spec_with_entity("Manufacturer");
         let domain = domain_with(&[]);
         assert!(check_entity_continuity(&spec, &domain).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod event_continuity_tests {
+    use super::check_event_continuity;
+    use canopy_core::{Adr, DomainEntity, DomainRegistry};
+
+    fn event_adr(title: &str, event_and_topic: &str) -> Adr {
+        Adr {
+            title: title.to_string(),
+            decision: event_and_topic.to_string(),
+            reason: "test fixture".to_string(),
+            alternatives: vec![],
+        }
+    }
+
+    fn domain_with(entities: &[&str]) -> DomainRegistry {
+        DomainRegistry {
+            entities: entities.iter().map(|e| DomainEntity::Simple(e.to_string())).collect(),
+            events: vec![],
+        }
+    }
+
+    #[test]
+    fn passes_when_event_entity_prefix_matches_known_vocabulary() {
+        let adrs = vec![event_adr("Domain Event ADR", "ManufacturerRegistered on topic manufacturer-events")];
+        let domain = domain_with(&["Manufacturer"]);
+        assert!(check_event_continuity("manufacturer-001", &adrs, &domain).is_ok());
+    }
+
+    #[test]
+    fn passes_on_created_vs_registered_wording_variance() {
+        // Same entity, different verb — accepted, ambiguous wording per the domain-extraction
+        // rules themselves; this check gates on entity prefix only, not the exact verb.
+        let adrs = vec![event_adr("Domain Event ADR", "ManufacturerCreated on topic manufacturer-events")];
+        let domain = domain_with(&["Manufacturer"]);
+        assert!(check_event_continuity("manufacturer-001", &adrs, &domain).is_ok());
+    }
+
+    #[test]
+    fn fails_on_live_verified_entity_prefix_divergence() {
+        // Live-verified: an ADR named an event whose entity prefix didn't match any entity
+        // established in domain vocabulary for that same story.
+        let adrs = vec![event_adr("Account Registration Domain Event", "AccountRegistered on topic account-events")];
+        let domain = domain_with(&["Manufacturer"]);
+        let err = check_event_continuity("manufacturer-001", &adrs, &domain).unwrap_err();
+        assert!(err.to_string().contains("event continuity violation"));
+        assert!(err.to_string().contains("AccountRegistered"));
+        assert!(err.to_string().contains("Manufacturer"));
+    }
+
+    #[test]
+    fn ignores_non_event_adrs() {
+        let adrs = vec![event_adr("Tech Stack for Manufacturer Service", "Spring Boot")];
+        let domain = domain_with(&["Manufacturer"]);
+        assert!(check_event_continuity("manufacturer-001", &adrs, &domain).is_ok());
+    }
+
+    #[test]
+    fn passes_when_domain_vocabulary_not_yet_established() {
+        let adrs = vec![event_adr("Domain Event ADR", "AccountRegistered on topic account-events")];
+        let domain = domain_with(&[]);
+        assert!(check_event_continuity("manufacturer-001", &adrs, &domain).is_ok());
     }
 }

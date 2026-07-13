@@ -12,7 +12,7 @@ mod step;
 mod summary;
 mod yaml_util;
 
-pub use behaviors::{audit_behavior_coverage, extract_behaviors, identify_specification_gaps};
+pub use behaviors::{audit_behavior_coverage, extract_behaviors, identify_specification_gaps, parse_event_adr};
 pub use clustering::{audit_clustering, mechanical_cluster, review_clustering};
 pub use contracts::{audit_contracts, generate_contracts};
 pub use decisions::extract_decisions;
