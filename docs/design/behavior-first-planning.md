@@ -190,12 +190,23 @@ question never existed.
 **Human gate** — this is the "Human Gating" step in the pipeline diagram above; it is Stage 2's
 own gate, not a restatement of Stage 1's.
 
-**Not yet implemented, not yet reflected in Stage 0's code.** Stage 0's existing
-`unresolved_question` gap kind is a reasonable precursor (it already surfaces
-`How should the system handle duplicate productName entries?` as a live, real example — see
-"Evidence" below) but stops at flagging; it doesn't yet create a tracked Decision Point artifact,
-doesn't record impacted behaviors/contracts, and doesn't structurally block Stage 4. That
-wiring is future work.
+**Implemented 2026-07-13.** One `DecisionPoint` is created mechanically per
+`spec.open_questions` entry (Rule 1). A bounded LLM call links every behavior Stage 1 marked
+`blocked` to an existing Decision Point or a newly-surfaced one — restructured into two phases
+within a single call after prompt review found the original one-item-at-a-time framing let the
+model rephrase the same underlying question differently across items; Step 1 now has the model
+enumerate the distinct set of new questions across the whole batch once, Step 2 assigns each
+blocked item to a decision id or one of those refs. A second bounded LLM call classifies each
+Decision Point (business/technical/behavioral-ambiguity) and proposes resolution options (Rule
+2/3). Three mechanical audits catch: a blocked behavior with no linked decision, an open question
+with no Decision Point, and a Decision Point with no dependent behaviors (a signal it may be
+stale). Resolution is interactive — a human picks an option, marks it a considered decision or a
+temporary assumption (`Resolved` vs `AcceptedAssumption`), or defers (stays `Pending`, blocking
+Stage 3/4 per Rules 4/5). Live-verified against product-001's real `open_questions` entry:
+mechanical creation, linking, and classification all produced correct output; the interactive
+resolution step itself hasn't been exercised end-to-end by automated testing since it requires a
+real terminal (same `dialoguer` constraint the existing ADR-gating flow already has), only by
+manual/live use.
 
 ### Stage 3 — Mechanical Clustering
 
@@ -380,15 +391,19 @@ reproduced and was fixed the same way, one level below where the original bug wa
 
 ## Status and next steps
 
-**Stage 0 (Specification Completeness) is implemented** — `canopy behaviors <story-id>`
-(`canopy-cli/src/commands/behaviors.rs`, `canopy-llm/src/prompts/behaviors.rs`,
-`SpecificationCompleteness`/`CompletenessGap`/`GapKind`/`GapSeverity` in `canopy-core`).
-Live-verified against `product-001`. Stage 1 onward is not yet implemented — the command
-currently stops after Stage 0's gate.
+**Stages 0-2 are implemented**, all in `canopy behaviors <story-id>`
+(`canopy-cli/src/commands/behaviors.rs`): Specification Completeness
+(`SpecificationCompleteness`/`CompletenessGap`/`GapKind`/`GapSeverity`), Behavior Extraction
+(`Behavior`/`BehaviorList`/`BehaviorGaps`), and Decision Extraction and Gating
+(`DecisionPoint`/`DecisionLog`/`DecisionAudit`) — types in `canopy-core`, prompts in
+`canopy-llm/src/prompts/behaviors.rs` and `canopy-llm/src/prompts/decisions.rs`. All three have
+been live-verified against `product-001`, each surfacing and fixing a real coverage gap along
+the way (see "The recurring principle" and Stage 2's note above). The command currently stops
+after Stage 2's gate — Stage 3 (Clustering) and Stage 4 (Contracts) are not yet implemented.
 
-Before building further: work through `behaviors.yaml`'s schema in detail (including how a
-behavior records a Decision Point dependency per Stage 2's Rule 3), specify the mechanical
-Stage 3 grouping algorithm precisely, wire Stage 2's Decision Point artifact and its Stage 4
-implementation gate (currently only described, not built), and resolve the integration-
-contract-dependency question above. Migration path from the current `plan.yaml` shape to this
-one is also unresolved — out of scope for this document.
+Before building Stage 3: specify the mechanical `(subject, kind)` grouping algorithm precisely,
+and decide how a behavior's Decision Point dependency (Stage 2 Rule 3) is represented in
+`behaviors.yaml` so Stage 3/4 can check it mechanically rather than re-deriving it. Stage 4 still
+needs its implementation gate wired against Stage 2's `DecisionLog` (Rules 4/5), and the
+integration-contract-dependency question above resolved. Migration path from the current
+`plan.yaml` shape to this one is also unresolved — out of scope for this document.
