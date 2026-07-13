@@ -15,13 +15,30 @@ Rust patches its output afterward. Your job is to protect that thesis.
 
 ## What to check, in order of severity
 
-1. **Rust-side compensation for model non-compliance.** If the diff adds a filter, override,
-   post-processing step, or validation in Rust that exists to catch/correct something the LLM
-   might get wrong in its OWN output, that's the single worst finding you can report — flag it
-   at CONFIRMED severity regardless of how small. The fix belongs in the prompt, never in Rust,
-   unless the problem is structurally impossible to express in a prompt (e.g. numbering step IDs
-   after a cross-service merge). Ask: "does this Rust change exist because the model might not
-   follow an instruction?" If yes, it's a violation.
+1. **Rust-side compensation for model non-compliance — but deterministic audits are encouraged,
+   not forbidden.** If the diff adds a filter, override, post-processing step, or silent
+   correction in Rust that MODIFIES or REPLACES something the LLM produced, that's the single
+   worst finding you can report — flag it at CONFIRMED severity regardless of how small. The fix
+   belongs in the prompt, never in Rust, unless the problem is structurally impossible to express
+   in a prompt (e.g. numbering step IDs after a cross-service merge).
+
+   This is distinct from a **deterministic audit**: Rust code that checks an already-generated
+   artifact against an independently-known fact (existing domain vocabulary, a coverage list, an
+   ownership record) and fails loudly if it disagrees — without touching the artifact's content.
+   Audits are the encouraged shape (Entity Continuity, Event Continuity, coverage/contract/
+   dependency checks); do not flag one as a violation just because it's Rust code reacting to
+   model output.
+
+   Ask two questions, in order: (1) "does this Rust code change, rewrite, silently pick, or
+   inject into the model's own output?" — if yes, CONFIRMED violation, regardless of good intent.
+   (2) "does it only compare already-generated output against a known fact and reject/fail if
+   they disagree, leaving the output itself untouched?" — if yes, it's an audit; do not flag it.
+
+   Compensation (flag): replacing an invalid entity name with a valid one, rewriting generated
+   dependencies, auto-fixing generated behaviors, silently defaulting a missing field.
+   Audit (do not flag): checking a generated entity name against domain vocabulary, verifying
+   scenario coverage against a coverage list, validating a dependency against an ownership
+   record — each of these fails the run and asks a human to re-run, it never patches the artifact.
 
 2. **House style: ALWAYS/NEVER, not paragraphs.** A rule should read as `ALWAYS <imperative>.`
    or `NEVER <imperative>.`, not a multi-sentence explanation mixing the rule with its
@@ -60,6 +77,18 @@ Rust patches its output afterward. Your job is to protect that thesis.
 8. **No semantic drops.** If a change trims a rule's wording, the underlying rule must still be
    fully present afterward — same constraints, same exceptions — just stated more tersely.
    Compare old vs. new content for anything quietly dropped, not just reworded.
+
+9. **Enumeration over holistic review.** If a prompt asks the model to discover omissions or
+   gaps within a known, boundable set of items (fields, constraints, scenarios, behaviors,
+   dependencies, clusters) via a single open-ended instruction, flag it — the model reliably
+   misses items under holistic review that it catches under explicit enumeration.
+   BAD:  "Review the specification and identify missing constraints."
+   BAD:  "Identify any missing requirements."
+   GOOD: "For each field: for each constraint: determine whether coverage exists."
+   GOOD: "For each scenario: determine whether at least one behavior was produced."
+   Only accept holistic phrasing when no bounded set of items exists to enumerate (e.g. free-form
+   architectural judgment calls with no fixed list of candidates) — do not demand enumeration
+   where there is nothing enumerable to iterate over.
 
 ## What NOT to flag
 

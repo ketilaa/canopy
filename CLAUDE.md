@@ -352,13 +352,30 @@ and `canopy-llm/src/skills/*.rs` — follows the same rules:
   under `"app"`) is correctly worded but never reaches the file it's meant to constrain — this
   bug produces no error, just silent non-compliance, since layer-scoped rendering only sends the
   matching layer's rules.
+- **Prefer exhaustive enumeration over holistic review.** When a prompt asks the model to review
+  a known, boundable set of items (fields, constraints, scenarios, behaviors, dependencies,
+  clusters) for gaps, ALWAYS have it iterate the set explicitly rather than judge it holistically
+  — a small model reliably misses items under open-ended review that it catches under explicit
+  enumeration. Only fall back to holistic phrasing when no bounded set exists to enumerate.
+  BAD:  "Review the specification and identify missing constraints."
+  GOOD: "For each field: for each constraint: determine whether coverage exists."
+  GOOD: "For each scenario: determine whether at least one behavior was produced."
+  Confirmed live: Stage 0's original constraint audit ("review for gaps") found 4 of 9 real gaps;
+  rewriting it as an explicit field × constraint traversal found all 9. The same shift fixed
+  Stage 1 behavior extraction, dependency review, and clustering review.
 - **When a model ignores a correct instruction, fix the prompt, not the code.** Verify with
   `llm-debug.log` that the instruction actually reached the prompt as intended before concluding
   it's a compliance problem rather than a missing-instruction problem. If it's genuinely a
   compliance problem, the fix is to shorten and reposition the instruction — never a Rust-side
-  filter, override, or post-processing step to compensate, and not by default adding more prose
-  either. A longer WRONG/CORRECT example is a last resort after a short instruction has been
-  tried and shown (with real evidence) to still fail — not the first move.
+  filter, override, or post-processing step that rewrites, corrects, or replaces the model's own
+  output, and not by default adding more prose either. A longer WRONG/CORRECT example is a last
+  resort after a short instruction has been tried and shown (with real evidence) to still fail —
+  not the first move. This is distinct from a **deterministic audit** — Rust code that compares an
+  already-generated artifact against an independently-known fact (existing domain vocabulary, a
+  coverage list, an ownership record) and fails loudly on disagreement without touching the
+  artifact's content (Entity Continuity, Event Continuity, coverage/contract/dependency checks).
+  Audits enforce an invariant; compensation papers over a compliance gap. The test: does the Rust
+  code change what the model produced, or only reject/accept it as-is?
 
 Use the `canopy-prompt-reviewer` subagent (`.claude/agents/canopy-prompt-reviewer.md`) to check
 prompt/skill changes against these rules before installing.
