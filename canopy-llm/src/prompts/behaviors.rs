@@ -107,7 +107,6 @@ Return ONLY valid YAML — no prose, no code fences:
 gaps:
   - kind: missing_scenario | ambiguous_outcome | unresolved_question
     description: "<specific, concrete — name the exact field, scenario id, or question>"
-    blocking: true | false
 "#,
         as_a = story.as_a,
         want = story.want,

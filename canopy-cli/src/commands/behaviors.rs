@@ -5,7 +5,7 @@
 use crate::ui::confirm_default;
 use crate::util::build_client;
 use anyhow::{Context, Result};
-use canopy_core::{GapKind, StoryStatus};
+use canopy_core::{GapKind, GapSeverity, StoryStatus};
 use canopy_llm::identify_specification_gaps;
 use canopy_storage::{load_all_adrs, load_story_spec, load_user_stories, save_specification_completeness};
 use dialoguer::theme::ColorfulTheme;
@@ -49,7 +49,10 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
                 GapKind::AmbiguousOutcome => "ambiguous outcome",
                 GapKind::UnresolvedQuestion => "unresolved question",
             };
-            let marker = if gap.blocking { "BLOCKING" } else { "non-blocking" };
+            let marker = match gap.severity() {
+                GapSeverity::Gap => "GAP",
+                GapSeverity::Review => "review",
+            };
             println!("{}. [{kind_label}] ({marker}) {}", i + 1, gap.description);
         }
     }

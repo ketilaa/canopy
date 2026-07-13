@@ -97,13 +97,46 @@ pub enum GapKind {
     UnresolvedQuestion,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSeverity {
+    /// A false negative here causes missing requirements, incorrect contracts, or
+    /// implementation defects downstream — blocking by default.
+    Gap,
+    /// A false positive here costs a human a moment's review, not a downstream defect —
+    /// non-blocking by default, surfaced for a glance rather than gated on.
+    Review,
+}
+
+impl GapKind {
+    /// Severity is a deterministic property of the KIND of gap, not something to ask the model
+    /// to judge per instance — live-verified 2026-07-13: a missing constraint-coverage scenario
+    /// (MissingScenario) is unconditionally higher-stakes than a debatable "is this outcome
+    /// observable enough" call (AmbiguousOutcome), so the distinction is computed here rather
+    /// than requested as LLM output — one less degree of freedom the model can get wrong.
+    pub fn severity(&self) -> GapSeverity {
+        match self {
+            GapKind::MissingScenario | GapKind::UnresolvedQuestion => GapSeverity::Gap,
+            GapKind::AmbiguousOutcome => GapSeverity::Review,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletenessGap {
     pub kind: GapKind,
     /// Specific and concrete — names the field, scenario, or question this gap concerns.
     pub description: String,
-    /// True if behavior extraction should not proceed until this gap is resolved.
-    pub blocking: bool,
+}
+
+impl CompletenessGap {
+    pub fn severity(&self) -> GapSeverity {
+        self.kind.severity()
+    }
+
+    pub fn is_blocking(&self) -> bool {
+        self.severity() == GapSeverity::Gap
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -114,7 +147,7 @@ pub struct SpecificationCompleteness {
 
 impl SpecificationCompleteness {
     pub fn has_blocking_gaps(&self) -> bool {
-        self.gaps.iter().any(|g| g.blocking)
+        self.gaps.iter().any(|g| g.is_blocking())
     }
 }
 
