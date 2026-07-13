@@ -21,8 +21,16 @@ fn constraint_checklist(schema: &EntitySchema) -> Vec<String> {
         if let Some(n) = v.max_length {
             items.push(format!("Field '{}': max_length={n} — scenario testing a value longer than {n} characters?", field.name));
         }
+        // min_length=0 is vacuous — nothing can be shorter than 0 characters, so there is no
+        // possible violation to test. Rephrasing the checklist item (asking about the empty-value
+        // case instead) was tried live and only partly worked: the model still re-flagged it as
+        // missing on a later run despite an explicit empty-value scenario. Omitting the item
+        // entirely removes the false-positive risk at the source instead of asking the model a
+        // question about a constraint that cannot actually be violated.
         if let Some(n) = v.min_length {
-            items.push(format!("Field '{}': min_length={n} — scenario testing a value shorter than {n} characters (including empty/missing)?", field.name));
+            if n > 0 {
+                items.push(format!("Field '{}': min_length={n} — scenario testing a value shorter than {n} characters (including empty/missing)?", field.name));
+            }
         }
         if let Some(n) = v.min {
             items.push(format!("Field '{}': min={n} — scenario testing a value below {n}?", field.name));
@@ -40,12 +48,34 @@ fn constraint_checklist(schema: &EntitySchema) -> Vec<String> {
     items
 }
 
-/// One line per scenario's own `then` clause — so "is this outcome observable" is answered
-/// against an already-isolated single scenario, not inferred while reading the whole list.
+/// One entry per scenario id, pointing back at `scenario_reference_listing` below rather than
+/// restating its `then` clause — prompt-review finding: an earlier version repeated the full
+/// `then` text here too, duplicating the same scenario content twice within one prompt call
+/// (once bare in the reference listing, once again moments later in this checklist), which is
+/// exactly the token/attention dilution the proximity and duplicate-injection house rules exist
+/// to prevent. The enumeration itself (walk every id, one at a time) is what this checklist
+/// needs — not a second copy of the text already visible just above.
 fn scenario_checklist(scenarios: &[Scenario]) -> Vec<String> {
     scenarios.iter()
-        .map(|s| format!("{}: then: {}", s.id, s.then.join("; ")))
+        .map(|s| format!("{} (see scenario listing above)", s.id))
         .collect()
+}
+
+/// Single canonical scenario listing, shown once before both Checklist 1 and Checklist 2 — each
+/// scenario's `then` outcome and its own explicit `constraints` field. Live-verified bug this
+/// fixes: Checklist 1 asks "does at least one scenario test this exact constraint," but no
+/// scenario text existed anywhere earlier in the prompt for it to cross-reference — the model had
+/// nothing to check against at the point it needed to answer, and flagged every constraint as
+/// missing even when a scenario explicitly stating that exact constraint already existed.
+fn scenario_reference_listing(scenarios: &[Scenario]) -> String {
+    scenarios.iter().enumerate().map(|(i, s)| {
+        let constraints = if s.constraints.is_empty() {
+            String::new()
+        } else {
+            format!(" | constraints: {}", s.constraints.join("; "))
+        };
+        format!("{}. {}: then: {}{}", i + 1, s.id, s.then.join("; "), constraints)
+    }).collect::<Vec<_>>().join("\n")
 }
 
 fn numbered(items: &[String]) -> String {
@@ -71,15 +101,36 @@ fn specification_completeness_prompt(story: &UserStory, spec: &IntentSpec, adrs:
     let scenario_items = scenario_checklist(&spec.scenarios);
     let open_question_items: Vec<String> = spec.open_questions.to_vec();
 
+    // Shown BEFORE both checklists, not after — see `scenario_reference_listing`'s own doc
+    // comment for the live-verified bug this ordering fixes. `has_scenarios` also gates
+    // Checklist 1's instruction wording below: it must not say "listed above" when nothing was
+    // actually listed (prompt-review finding — a spec can have an entity_schema, and therefore
+    // constraint_items, while scenarios is momentarily empty).
+    let has_scenarios = !spec.scenarios.is_empty();
+    let scenario_reference = if has_scenarios {
+        format!(
+            "Scenarios (reference for both checklists below):\n{}\n\n",
+            scenario_reference_listing(&spec.scenarios),
+        )
+    } else {
+        String::new()
+    };
+
+    let checklist1_instruction = if has_scenarios {
+        "For EACH item, does at least one scenario listed above test that exact constraint being violated?"
+    } else {
+        "For EACH item, does at least one BDD scenario test that exact constraint being violated?"
+    };
     let checklist1 = checklist_section(
         "## Checklist 1 — Constraint coverage",
-        "For EACH item, does at least one BDD scenario test that exact constraint being violated?",
+        checklist1_instruction,
         &constraint_items,
     );
     let checklist2 = checklist_section(
         "## Checklist 2 — Scenario outcome clarity",
-        "For EACH item, does the `then` state an observable, checkable outcome? (\"the system \
-         handles it correctly\" is NOT observable; \"an error message ... is shown\" IS observable.)",
+        "For EACH item, does that scenario's `then` clause (in the listing above) state an \
+         observable, checkable outcome? (\"the system handles it correctly\" is NOT observable; \
+         \"an error message ... is shown\" IS observable.)",
         &scenario_items,
     );
     let checklist3 = checklist_section(
@@ -114,7 +165,7 @@ specification as a whole. Answer yes or no for each item individually before mov
 next. Only emit a gap for an item you answered "no" to. A checklist that isn't shown below has
 no items to check — do not emit any gap for it.
 
-{checklist1}{checklist2}{checklist3}Emit a `missing_scenario` gap for each "no" in Checklist 1, an `ambiguous_outcome` gap for each
+{scenario_reference}{checklist1}{checklist2}{checklist3}Emit a `missing_scenario` gap for each "no" in Checklist 1, an `ambiguous_outcome` gap for each
 "no" in Checklist 2, and an `unresolved_question` gap for each "no" in Checklist 3. Do not invent
 gaps outside these three categories, and do not emit anything for an item you answered "yes" to.
 
@@ -128,6 +179,7 @@ gaps:
         want = story.want,
         so_that = story.so_that,
         adrs_summary = adrs_summary,
+        scenario_reference = scenario_reference,
         checklist1 = checklist1,
         checklist2 = checklist2,
         checklist3 = checklist3,
@@ -204,18 +256,29 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                 });
             }
             if let Some(n) = v.min_length {
-                saw_min_length = true;
-                let statement = if is_collection {
-                    format!("Each item in {} shorter than {n} characters is rejected.", field.name)
-                } else {
-                    format!("{} shorter than {n} characters is rejected.", capitalize(&field.name))
-                };
-                out.push(Behavior {
-                    id: next_id(), source: BehaviorSource::EntitySchema,
-                    source_ref: format!("{}.{}.min_length", schema.entity, field.name),
-                    scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
-                    statement, derivation: BehaviorDerivation::Mechanical,
-                });
+                // min_length=0 is vacuous — nothing can be shorter than 0 characters, so there is
+                // no violation for this behavior to describe. Live-verified: emitting one anyway
+                // ("Website shorter than 0 characters is rejected") produced a nonsensical,
+                // untestable requirement, correctly flagged by Stage 3's own cluster review as
+                // not making sense. `saw_min_length` must only be set when a real behavior was
+                // actually pushed — prompt-review caught a real bug here: setting it unconditionally
+                // suppressed the mandatory-field "Missing X is rejected" fallback below even when
+                // n==0 skipped pushing anything, silently losing the field's only required-ness
+                // behavior entirely for a mandatory field that (incorrectly) carries min_length: 0.
+                if n > 0 {
+                    saw_min_length = true;
+                    let statement = if is_collection {
+                        format!("Each item in {} shorter than {n} characters is rejected.", field.name)
+                    } else {
+                        format!("{} shorter than {n} characters is rejected.", capitalize(&field.name))
+                    };
+                    out.push(Behavior {
+                        id: next_id(), source: BehaviorSource::EntitySchema,
+                        source_ref: format!("{}.{}.min_length", schema.entity, field.name),
+                        scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
+                        statement, derivation: BehaviorDerivation::Mechanical,
+                    });
+                }
             }
             if let Some(n) = v.min {
                 out.push(Behavior {
