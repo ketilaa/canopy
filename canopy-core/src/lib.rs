@@ -82,6 +82,42 @@ pub struct IntentSpec {
     pub open_questions: Vec<String>,
 }
 
+/// Stage 0 of the behavior-first planning pipeline (see docs/design/behavior-first-planning.md):
+/// validates that a story's specification (entity schema, scenarios, open questions) is complete
+/// enough to safely decompose into behaviors, before any behavior extraction begins.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GapKind {
+    /// An entity-schema field's validation constraint (max_length, min_items, etc.) has no
+    /// scenario testing what happens when it's violated.
+    MissingScenario,
+    /// A scenario's `then` clause doesn't state an observable, checkable outcome.
+    AmbiguousOutcome,
+    /// An entry in `open_questions` has no accepted ADR or scenario resolving it.
+    UnresolvedQuestion,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletenessGap {
+    pub kind: GapKind,
+    /// Specific and concrete — names the field, scenario, or question this gap concerns.
+    pub description: String,
+    /// True if behavior extraction should not proceed until this gap is resolved.
+    pub blocking: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SpecificationCompleteness {
+    #[serde(default)]
+    pub gaps: Vec<CompletenessGap>,
+}
+
+impl SpecificationCompleteness {
+    pub fn has_blocking_gaps(&self) -> bool {
+        self.gaps.iter().any(|g| g.blocking)
+    }
+}
+
 /// Accumulated entity and event vocabulary across all planned delivery intents.
 /// Built incrementally by `canopy intent` — no upfront global modeling required.
 /// In repository mode, Roots is the authoritative source and supersedes this file.

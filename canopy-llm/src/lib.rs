@@ -22,6 +22,7 @@ pub use prompts::{
     extract_domain_from_stories, fix_file, fix_file_with_tools,
     generate_scaffold_from_services, generate_stories_from_intent, generate_story_openapi,
     generate_story_plan, generate_story_spec, generate_unit_test_stub,
-    generate_unit_test_stub_with_tools, identify_architectural_questions, propose_dependencies,
+    generate_unit_test_stub_with_tools, identify_architectural_questions,
+    identify_specification_gaps, propose_dependencies,
     suggest_domain_entities, suggest_roles, FixAttempt, StepResult,
 };

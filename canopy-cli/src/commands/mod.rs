@@ -1,3 +1,4 @@
+pub mod behaviors;
 pub mod dependencies;
 pub mod domain;
 pub mod implement;

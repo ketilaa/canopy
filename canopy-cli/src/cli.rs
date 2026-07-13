@@ -1,3 +1,4 @@
+use crate::commands::behaviors::cmd_behaviors;
 use crate::commands::dependencies::cmd_dependencies;
 use crate::commands::domain::cmd_domain_show;
 use crate::commands::implement::cmd_implement;
@@ -70,6 +71,12 @@ enum Commands {
     },
     /// Show the global dependency decision log
     Dependencies,
+    /// Stage 0 (Specification Completeness) of the new behavior-first planning pipeline —
+    /// see docs/design/behavior-first-planning.md. Stage 1+ not yet implemented.
+    Behaviors {
+        /// Story ID to check (must have status: accepted and a generated spec)
+        story_id: String,
+    },
 }
 
 pub(crate) fn run_repl(debug: bool) -> Result<()> {
@@ -135,6 +142,7 @@ pub(crate) fn run_repl(debug: bool) -> Result<()> {
                         Commands::Intent { statement }         => cmd_intent(statement, debug),
                         Commands::Spec { story_id }            => cmd_spec(&story_id, debug),
                         Commands::Dependencies                 => cmd_dependencies(),
+                        Commands::Behaviors { story_id }       => cmd_behaviors(&story_id, debug),
                     };
                     if let Err(e) = result {
                         eprintln!("  error: {e:#}");

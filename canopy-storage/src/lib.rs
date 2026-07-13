@@ -147,6 +147,15 @@ pub fn save_story_openapi(story_id: &str, openapi: &str) -> Result<(), StorageEr
     Ok(())
 }
 
+/// Stage 0 (Specification Completeness) output — see docs/design/behavior-first-planning.md.
+pub fn save_specification_completeness(story_id: &str, completeness: &SpecificationCompleteness) -> Result<(), StorageError> {
+    save(&format!("stories/{}/completeness.yaml", story_id), completeness)
+}
+
+pub fn load_specification_completeness(story_id: &str) -> Result<SpecificationCompleteness, StorageError> {
+    load(&format!("stories/{}/completeness.yaml", story_id))
+}
+
 pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {
     let paths = list_adrs()?;
     let mut adrs = Vec::new();
