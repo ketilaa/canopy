@@ -187,7 +187,7 @@ fn microservices_skill() -> ArchitectureSkill {
             "  Each service owns exactly one database schema — no other service reads or writes\n\
              its tables directly.\n\
              Cross-service state changes: prefer async domain events over synchronous HTTP calls.\n\
-             Synchronous HTTP (OAS contract) is acceptable for queries needing an immediate response.\n\
+             Synchronous HTTP (OpenAPI spec) is acceptable for queries needing an immediate response.\n\
              A service's domain model classes are never imported by another service — duplicate\n\
              the fields you need as local DTOs rather than sharing a domain library.\n\
              Service names are kebab-case and match the bounded context they represent."
@@ -199,7 +199,7 @@ fn microservices_skill() -> ArchitectureSkill {
              NEVER share a domain model library — a common-domain JAR couples release cycles and\n\
              violates bounded context autonomy.\n\
              NEVER call another service's internal classes directly — only through its published\n\
-             OAS contract or domain events."
+             OpenAPI spec or domain events."
             .to_string(),
     }
 }

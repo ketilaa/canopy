@@ -6,9 +6,9 @@ use crate::project_scan::detect_service_package;
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{ServicesRegistry, StoryStatus, TechFamily};
-use canopy_llm::generate_story_contract;
+use canopy_llm::generate_story_openapi;
 use canopy_storage::{
-    load_all_adrs, load_services_registry, load_story_spec, load_user_stories, save_story_contract,
+    load_all_adrs, load_services_registry, load_story_spec, load_user_stories, save_story_openapi,
 };
 use dialoguer::theme::ColorfulTheme;
 
@@ -69,21 +69,21 @@ pub(crate) fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path
 
     let adrs = load_all_adrs().unwrap_or_default();
 
-    let contract_path = canopy_storage::storage_dir()
-        .join(format!("stories/{}/contract.yaml", story_id));
-    let contract_yaml = if contract_path.exists() {
-        std::fs::read_to_string(&contract_path)
-            .context("failed to read contract.yaml")?
+    let openapi_path = canopy_storage::storage_dir()
+        .join(format!("stories/{}/openapi.yaml", story_id));
+    let openapi_yaml = if openapi_path.exists() {
+        std::fs::read_to_string(&openapi_path)
+            .context("failed to read openapi.yaml")?
     } else {
-        println!("No contract found for '{}' — generating from spec...", story_id);
-        let client = build_client("contract", debug)?;
-        match generate_story_contract(&client, story, &spec, &services, &adrs) {
+        println!("No OpenAPI spec found for '{}' — generating from spec...", story_id);
+        let client = build_client("openapi", debug)?;
+        match generate_story_openapi(&client, story, &spec, &services, &adrs) {
             Ok(yaml) => {
-                save_story_contract(story_id, &yaml).context("failed to save contract")?;
-                println!("Contract saved to .canopy/stories/{}/contract.yaml", story_id);
+                save_story_openapi(story_id, &yaml).context("failed to save OpenAPI spec")?;
+                println!("OpenAPI spec saved to .canopy/stories/{}/openapi.yaml", story_id);
                 yaml
             }
-            Err(e) => anyhow::bail!("contract generation failed: {e}"),
+            Err(e) => anyhow::bail!("OpenAPI spec generation failed: {e}"),
         }
     };
 
@@ -104,7 +104,7 @@ pub(crate) fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path
     }
 
     let plan = plan::load_or_generate_plan(
-        story_id, debug, story, &spec, &contract_yaml, &services, &adrs, &service_packages, &theme,
+        story_id, debug, story, &spec, &openapi_yaml, &services, &adrs, &service_packages, &theme,
     )?;
     let Some(plan) = plan else { return Ok(()); };
 
@@ -113,7 +113,7 @@ pub(crate) fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path
     ensure_accepted_dependencies_installed(story_id, &services);
 
     execute::execute_steps(
-        story_id, debug, story, &spec, &contract_yaml, &services, &adrs, &service_packages,
+        story_id, debug, story, &spec, &openapi_yaml, &services, &adrs, &service_packages,
         fix_log_dir, plan,
     )
 }

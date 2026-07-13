@@ -121,7 +121,7 @@ pub(crate) fn execute_steps(
     debug: bool,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     services: &ServicesRegistry,
     adrs: &[Adr],
     service_packages: &HashMap<String, String>,
@@ -239,7 +239,7 @@ pub(crate) fn execute_steps(
                     if is_ts_family {
                         let tools = vec![read_file_tool_spec(), find_symbol_tool_spec()];
                         generate_unit_test_stub_with_tools(
-                            &client, story, spec, contract_yaml, step, &test_file,
+                            &client, story, spec, openapi_yaml, step, &test_file,
                             service_packages, services, adrs, &stub_siblings,
                             &arch_skills,
                             &tools,
@@ -247,7 +247,7 @@ pub(crate) fn execute_steps(
                         )
                     } else {
                         generate_unit_test_stub(
-                            &client, story, spec, contract_yaml, step, &test_file,
+                            &client, story, spec, openapi_yaml, step, &test_file,
                             service_packages, services, adrs, &stub_siblings,
                             &arch_skills,
                         )
@@ -280,7 +280,7 @@ pub(crate) fn execute_steps(
                     if is_ts_family {
                         let tools = vec![read_file_tool_spec(), find_symbol_tool_spec()];
                         execute_implementation_stub_with_tools(
-                            &client, story, spec, contract_yaml,
+                            &client, story, spec, openapi_yaml,
                             step, None, None,
                             service_packages, services, &stub_siblings, &arch_skills,
                             &test_file, &test_content, pkg_constraints,
@@ -290,7 +290,7 @@ pub(crate) fn execute_steps(
                         )
                     } else {
                         execute_implementation_stub(
-                            &client, story, spec, contract_yaml,
+                            &client, story, spec, openapi_yaml,
                             step, None, None,
                             service_packages, services, &stub_siblings, &arch_skills,
                             &test_file, &test_content, pkg_constraints,
@@ -395,7 +395,7 @@ pub(crate) fn execute_steps(
                     if is_ts_family {
                         let tools = vec![read_file_tool_spec(), find_symbol_tool_spec()];
                         execute_implementation_with_test_and_tools(
-                            &client, story, spec, contract_yaml,
+                            &client, story, spec, openapi_yaml,
                             step, stub_content_for_green.as_deref(), roots_context.as_deref(),
                             service_packages, services, &green_siblings, &arch_skills,
                             &test_file, &test_content, pkg_constraints,
@@ -405,7 +405,7 @@ pub(crate) fn execute_steps(
                         )
                     } else {
                         execute_implementation_with_test(
-                            &client, story, spec, contract_yaml,
+                            &client, story, spec, openapi_yaml,
                             step, stub_content_for_green.as_deref(), roots_context.as_deref(),
                             service_packages, services, &green_siblings, &arch_skills,
                             &test_file, &test_content, pkg_constraints,
@@ -494,7 +494,7 @@ pub(crate) fn execute_steps(
                 &client,
                 Some(&step.file),
                 || execute_implementation_step(
-                    &client, story, spec, contract_yaml,
+                    &client, story, spec, openapi_yaml,
                     step, current_content.as_deref(), roots_context.as_deref(),
                     service_packages, services, &step_siblings, &arch_skills, pkg_constraints,
                 ),

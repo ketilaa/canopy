@@ -3,10 +3,10 @@ use crate::ui::{input_text_required, input_text_with_initial, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{Adr, StoryStatus};
-use canopy_llm::{generate_story_contract, generate_story_spec, identify_architectural_questions};
+use canopy_llm::{generate_story_openapi, generate_story_spec, identify_architectural_questions};
 use canopy_storage::{
     load_all_adrs, load_domain_registry, load_services_registry, load_user_stories,
-    save_adr, save_services_registry, save_story_contract, save_story_spec,
+    save_adr, save_services_registry, save_story_openapi, save_story_spec,
 };
 use dialoguer::theme::ColorfulTheme;
 
@@ -195,14 +195,14 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     save_story_spec(story_id, &spec).context("failed to save story spec")?;
     println!("\nSpec saved to .canopy/stories/{}/spec.yaml", story_id);
 
-    println!("\nGenerating OAS 3.1.0 contract...");
-    match generate_story_contract(&client, story, &spec, &services, &existing_adrs) {
-        Ok(contract_yaml) => {
-            save_story_contract(story_id, &contract_yaml).context("failed to save contract")?;
-            println!("Contract saved to .canopy/stories/{}/contract.yaml", story_id);
+    println!("\nGenerating OAS 3.1.0 spec...");
+    match generate_story_openapi(&client, story, &spec, &services, &existing_adrs) {
+        Ok(openapi_yaml) => {
+            save_story_openapi(story_id, &openapi_yaml).context("failed to save OpenAPI spec")?;
+            println!("OpenAPI spec saved to .canopy/stories/{}/openapi.yaml", story_id);
         }
         Err(e) => {
-            eprintln!("Warning: contract generation failed: {e}");
+            eprintln!("Warning: OpenAPI spec generation failed: {e}");
         }
     }
 

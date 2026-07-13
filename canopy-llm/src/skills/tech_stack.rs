@@ -130,7 +130,7 @@ fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> TechStack
              3. {pp}/repository/     — JpaRepository interfaces\n\
              4. {pp}/dto/            — request/response classes with validation annotations\n\
              5. {pp}/service/        — @Service business logic\n\
-             6. {pp}/controller/     — @RestController endpoints matching OAS contract\n\
+             6. {pp}/controller/     — @RestController endpoints matching the OpenAPI spec\n\
              7. src/test/**/*IT.java — @SpringBootTest integration tests (end-to-end only)\n\
                 Do NOT plan *Test.java files — the TDD loop generates them automatically.\n\
              Reason: each layer imports from the one above; generate strictly in this order.",

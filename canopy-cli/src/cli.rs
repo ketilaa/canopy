@@ -50,7 +50,7 @@ enum Commands {
         #[arg(long)]
         regenerate: bool,
     },
-    /// Implement a story using its spec and OAS contract
+    /// Implement a story using its spec and OpenAPI spec
     Implement {
         /// Story ID to implement (must have status: accepted and a generated spec)
         story_id: String,

@@ -7,7 +7,7 @@ fn plan_prompt_for_service(
     service: &ServiceEntry,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     adrs: &[Adr],
     existing_files: &[String],
     service_packages: &std::collections::HashMap<String, String>,
@@ -187,8 +187,8 @@ fn plan_prompt_for_service(
          {schema_yaml}\n\
          ## BDD scenarios\n\
          {scenarios_yaml}\n\
-         ## API contract\n\
-         {contract_yaml}\n\
+         ## OpenAPI spec\n\
+         {openapi_yaml}\n\
          ## Architecture decisions\n\
          {adrs_summary}\n\
          {existing_note}\
@@ -260,7 +260,7 @@ fn plan_prompt_for_service(
         arch_section = arch_section,
         schema_yaml = schema_yaml,
         scenarios_yaml = scenarios_yaml,
-        contract_yaml = contract_yaml,
+        openapi_yaml = openapi_yaml,
         adrs_summary = adrs_summary,
         existing_note = existing_note,
         packages_note = packages_note,
@@ -427,7 +427,7 @@ pub fn generate_story_plan(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     services: &ServicesRegistry,
     adrs: &[Adr],
     existing_files: &[String],
@@ -445,7 +445,7 @@ pub fn generate_story_plan(
         let installed = installed_deps_by_service.get(&service.name).map(|v| v.as_slice()).unwrap_or(&[]);
         // Phase 1: Discover what files are needed (no ordering pressure)
         let disc_prompt = plan_prompt_for_service(
-            service, story, spec, contract_yaml, adrs, existing_files, service_packages, &arch_skills, installed,
+            service, story, spec, openapi_yaml, adrs, existing_files, service_packages, &arch_skills, installed,
         );
         let disc_raw = client.complete_large(&disc_prompt)?;
         let mut steps = parse_plan_steps(&disc_raw)?;

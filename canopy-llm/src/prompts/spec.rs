@@ -335,7 +335,7 @@ pub fn generate_story_spec(
         .map_err(|source| LlmError::YamlParse { source, raw: fixed })
 }
 
-fn contract_prompt(
+fn openapi_prompt(
     story: &UserStory,
     spec: &IntentSpec,
     services: &ServicesRegistry,
@@ -363,7 +363,7 @@ fn contract_prompt(
             .join("\n")
     };
     format!(
-        r#"You are an API contract designer generating an OpenAPI Specification (OAS) fragment for a user story.
+        r#"You are an API designer generating an OpenAPI Specification (OAS) fragment for a user story.
 
 Story: As a {as_a}, I want {want}, so that {so_that}
 
@@ -376,7 +376,7 @@ Services:
 Behavioral Specification:
 {spec_yaml}
 
-Generate a minimal OAS 3.0 YAML contract covering the API endpoints required to implement the BDD scenarios above.
+Generate a minimal OAS 3.0 YAML document covering the API endpoints required to implement the BDD scenarios above.
 
 Rules:
 - Include only paths directly required by the scenarios
@@ -399,14 +399,14 @@ Return ONLY valid YAML. No prose. No code fences. No markdown."#,
     )
 }
 
-pub fn generate_story_contract(
+pub fn generate_story_openapi(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
     services: &ServicesRegistry,
     adrs: &[Adr],
 ) -> Result<String, LlmError> {
-    let raw = client.complete_large(&contract_prompt(story, spec, services, adrs))?;
+    let raw = client.complete_large(&openapi_prompt(story, spec, services, adrs))?;
     let stripped = raw
         .trim()
         .trim_start_matches("```yaml")

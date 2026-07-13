@@ -71,6 +71,7 @@ canopy> spec <story-id>   (story must be accepted)
   └─ accepted ADRs → decisions/adr-NNN-slug.yaml
   └─ services and tech stack accumulate → services.yaml
   └─ generates BDD scenarios grounded in resolved architecture → stories/<id>/spec.yaml
+  └─ generates OpenAPI spec → stories/<id>/openapi.yaml
 
 canopy> scaffold [--dir <path>]
   └─ reads services.yaml (skips infrastructure components)
@@ -83,7 +84,7 @@ canopy> implement <story-id>
   └─ human confirms plan before execution
   └─ executes step by step, reindexes after each file
   └─ runs test/fix loop per service after all steps complete (up to 5 iterations)
-  └─ saves: stories/<id>/plan.yaml, stories/<id>/contract.yaml
+  └─ saves: stories/<id>/plan.yaml (generates stories/<id>/openapi.yaml too, if `spec` hasn't already)
 
 canopy> dependencies  → display the global dependency decision log
 ```
@@ -125,7 +126,7 @@ but skipped by `canopy scaffold` — they belong in docker-compose or equivalent
     <story-id>/
       spec.yaml                    BDD scenarios for that story
       plan.yaml                    implementation steps with status (resume-safe)
-      contract.yaml                OAS contract snapshot used during implementation
+      openapi.yaml                 OpenAPI spec snapshot used during implementation
 ```
 
 ---

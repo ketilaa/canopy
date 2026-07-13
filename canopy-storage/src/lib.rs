@@ -138,12 +138,12 @@ pub fn load_story_plan(story_id: &str) -> Result<StoryPlan, StorageError> {
     load(&format!("stories/{}/plan.yaml", story_id))
 }
 
-pub fn save_story_contract(story_id: &str, contract: &str) -> Result<(), StorageError> {
-    let path = storage_dir().join(format!("stories/{}/contract.yaml", story_id));
+pub fn save_story_openapi(story_id: &str, openapi: &str) -> Result<(), StorageError> {
+    let path = storage_dir().join(format!("stories/{}/openapi.yaml", story_id));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, contract)?;
+    std::fs::write(path, openapi)?;
     Ok(())
 }
 

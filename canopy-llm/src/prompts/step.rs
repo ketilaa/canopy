@@ -11,7 +11,7 @@ const MAX_TOOL_ITERATIONS: usize = 4;
 fn step_prompt(
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     current_content: Option<&str>,
     roots_context: Option<&str>,
@@ -32,15 +32,15 @@ fn step_prompt(
     let technology = service_entry.and_then(|s| s.technology.as_deref()).unwrap_or("unknown");
     let layer = detect_layer(&step.file);
 
-    // Entity schema and OAS contract are only relevant to layers that actually touch domain
+    // Entity schema and OpenAPI spec are only relevant to layers that actually touch domain
     // fields or HTTP shapes — showing them unconditionally to e.g. infrastructure/middleware/
     // app/config files is pure bloat, displacing more decisive content from the model's
     // attention for no benefit (those files have no entity fields or endpoints to align with).
     // Only the model layer constructs fields directly from the entity schema. Every other
     // layer either doesn't touch entity fields at all (infrastructure/middleware/app/config),
     // or gets the same information more precisely from sibling context (repository/service see
-    // the model's actual interface via Roots) or from the OAS contract (route/api-client — the
-    // contract-generation prompt already maps entity_schema's own validation constraints
+    // the model's actual interface via Roots) or from the OpenAPI spec (route/api-client — the
+    // OpenAPI-generation prompt already maps entity_schema's own validation constraints
     // (max_length → maxLength, etc.) onto the OAS schema, so sending both is redundant).
     let schema_section = if layer == "model" {
         spec.entity_schema.as_ref()
@@ -50,9 +50,9 @@ fn step_prompt(
     } else {
         String::new()
     };
-    // "app" doesn't need endpoint-level contract detail — it only assembles routes/middleware.
-    let contract_section = if matches!(layer, "route" | "api-client") && !contract_yaml.is_empty() {
-        format!("OAS Contract:\n{contract_yaml}\n")
+    // "app" doesn't need endpoint-level API detail — it only assembles routes/middleware.
+    let openapi_section = if matches!(layer, "route" | "api-client") && !openapi_yaml.is_empty() {
+        format!("OpenAPI Spec:\n{openapi_yaml}\n")
     } else {
         String::new()
     };
@@ -189,7 +189,7 @@ fn step_prompt(
          Service: {service} ({technology})\n\
          \n\
          {schema_section}\
-         {contract_section}\
+         {openapi_section}\
          {sibling_section}\
          {current_section}\
          {roots_section}\
@@ -210,7 +210,7 @@ fn step_prompt(
         service = step.service,
         technology = technology,
         schema_section = schema_section,
-        contract_section = contract_section,
+        openapi_section = openapi_section,
         sibling_section = sibling_section,
         current_section = current_section,
         roots_section = roots_section,
@@ -230,7 +230,7 @@ pub fn execute_implementation_step(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     current_content: Option<&str>,
     roots_context: Option<&str>,
@@ -241,7 +241,7 @@ pub fn execute_implementation_step(
     package_constraints: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
-        story, spec, contract_yaml, step, current_content, roots_context,
+        story, spec, openapi_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills, None, package_constraints,
         None, &[],
     );
@@ -252,7 +252,7 @@ pub fn execute_implementation_step(
 fn unit_test_stub_prompt(
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     test_file: &str,
     service_packages: &std::collections::HashMap<String, String>,
@@ -264,7 +264,7 @@ fn unit_test_stub_prompt(
 ) -> String {
     let impl_file = &step.file;
     if impl_file.ends_with(".ts") || impl_file.ends_with(".tsx") {
-        return unit_test_stub_prompt_ts(story, spec, contract_yaml, step, test_file, services, adrs, sibling_section, arch_skills, tools);
+        return unit_test_stub_prompt_ts(story, spec, openapi_yaml, step, test_file, services, adrs, sibling_section, arch_skills, tools);
     }
 
     let service_name = step.service.rsplit('/').next().unwrap_or(&step.service);
@@ -357,7 +357,7 @@ fn unit_test_stub_prompt(
 fn unit_test_stub_prompt_ts(
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     test_file: &str,
     services: &ServicesRegistry,
@@ -377,7 +377,7 @@ fn unit_test_stub_prompt_ts(
 
     // Only the model layer constructs fields directly from the entity schema — every other
     // layer's test either doesn't touch entity fields at all, or (route) can derive boundary-
-    // condition test data from the OAS contract instead, which already carries the same
+    // condition test data from the OpenAPI spec instead, which already carries the same
     // validation constraints mapped onto its schema (max_length → maxLength, etc.).
     let schema_section = if layer == "model" {
         spec.entity_schema.as_ref()
@@ -577,14 +577,14 @@ fn unit_test_stub_prompt_ts(
     app.locals.widgetService = mockWidgetService\n\
     app.use('/widgets', router)\n\
   NEVER write `router(mockWidgetService)` — the route module has no factory to call.\n\
-- ALWAYS match the mount path (e.g. '/widgets' above) to the OAS Contract and app.ts exactly —\n\
+- ALWAYS match the mount path (e.g. '/widgets' above) to the OpenAPI Spec and app.ts exactly —\n\
   NEVER invent a different prefix (e.g. '/api/...') unless the contract specifies one.\n"
     } else {
         ""
     };
 
-    let contract_section = if (layer == "route" || layer == "api-client") && !contract_yaml.is_empty() {
-        format!("OAS Contract — the route/endpoint path in your test MUST match this exactly:\n{contract_yaml}\n\n")
+    let openapi_section = if (layer == "route" || layer == "api-client") && !openapi_yaml.is_empty() {
+        format!("OpenAPI Spec — the route/endpoint path in your test MUST match this exactly:\n{openapi_yaml}\n\n")
     } else {
         String::new()
     };
@@ -675,7 +675,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
          {scenarios_yaml}\n\
          \n\
          {arch_rules}\n\
-         {contract_section}\
+         {openapi_section}\
          {sibling_block}\
          {tools_section}\
          {tech_rules}\n\
@@ -722,7 +722,7 @@ at COMPILE time, before the test can even run the RUNTIME check it's meant to te
         so_that = story.so_that,
         schema_section = schema_section,
         scenarios_yaml = scenarios_yaml,
-        contract_section = contract_section,
+        openapi_section = openapi_section,
         arch_rules = arch_skills,
         tech_rules = tech_rules,
         test_skill = test_skill,
@@ -742,7 +742,7 @@ pub fn generate_unit_test_stub(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     test_file: &str,
     service_packages: &std::collections::HashMap<String, String>,
@@ -751,7 +751,7 @@ pub fn generate_unit_test_stub(
     sibling_section: &str,
     arch_skills: &str,
 ) -> Result<StepResult, LlmError> {
-    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, arch_skills, &[]);
+    let prompt = unit_test_stub_prompt(story, spec, openapi_yaml, step, test_file, service_packages, services, adrs, sibling_section, arch_skills, &[]);
     Ok(split_step_response(&client.complete_large(&prompt)?))
 }
 
@@ -765,7 +765,7 @@ pub fn generate_unit_test_stub_with_tools(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     test_file: &str,
     service_packages: &std::collections::HashMap<String, String>,
@@ -776,7 +776,7 @@ pub fn generate_unit_test_stub_with_tools(
     tools: &[ToolSpec],
     mut dispatch: impl FnMut(&ToolCall) -> String,
 ) -> Result<StepResult, LlmError> {
-    let prompt = unit_test_stub_prompt(story, spec, contract_yaml, step, test_file, service_packages, services, adrs, sibling_section, arch_skills, tools);
+    let prompt = unit_test_stub_prompt(story, spec, openapi_yaml, step, test_file, service_packages, services, adrs, sibling_section, arch_skills, tools);
     let mut messages = vec![ChatMessage::User(prompt)];
 
     for _ in 0..MAX_TOOL_ITERATIONS {
@@ -801,7 +801,7 @@ pub fn execute_implementation_stub(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     current_content: Option<&str>,
     roots_context: Option<&str>,
@@ -815,7 +815,7 @@ pub fn execute_implementation_stub(
     observed_call: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
-        story, spec, contract_yaml, step, current_content, roots_context,
+        story, spec, openapi_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, true)), package_constraints,
         observed_call, &[],
@@ -834,7 +834,7 @@ pub fn execute_implementation_stub_with_tools(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     current_content: Option<&str>,
     roots_context: Option<&str>,
@@ -850,7 +850,7 @@ pub fn execute_implementation_stub_with_tools(
     mut dispatch: impl FnMut(&ToolCall) -> String,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
-        story, spec, contract_yaml, step, current_content, roots_context,
+        story, spec, openapi_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, true)), package_constraints,
         observed_call, tools,
@@ -880,7 +880,7 @@ pub fn execute_implementation_with_test(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     current_content: Option<&str>,
     roots_context: Option<&str>,
@@ -894,7 +894,7 @@ pub fn execute_implementation_with_test(
     observed_call: Option<&str>,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
-        story, spec, contract_yaml, step, current_content, roots_context,
+        story, spec, openapi_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, false)), package_constraints,
         observed_call, &[],
@@ -914,7 +914,7 @@ pub fn execute_implementation_with_test_and_tools(
     client: &LlmClient,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     step: &ImplementationStep,
     current_content: Option<&str>,
     roots_context: Option<&str>,
@@ -930,7 +930,7 @@ pub fn execute_implementation_with_test_and_tools(
     mut dispatch: impl FnMut(&ToolCall) -> String,
 ) -> Result<StepResult, LlmError> {
     let prompt = step_prompt(
-        story, spec, contract_yaml, step, current_content, roots_context,
+        story, spec, openapi_yaml, step, current_content, roots_context,
         service_packages, services, sibling_section, arch_skills,
         Some((test_file, test_content, false)), package_constraints,
         observed_call, tools,

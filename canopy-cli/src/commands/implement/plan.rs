@@ -22,7 +22,7 @@ pub(crate) fn load_or_generate_plan(
     debug: bool,
     story: &UserStory,
     spec: &IntentSpec,
-    contract_yaml: &str,
+    openapi_yaml: &str,
     services: &ServicesRegistry,
     adrs: &[Adr],
     service_packages: &HashMap<String, String>,
@@ -58,7 +58,7 @@ pub(crate) fn load_or_generate_plan(
             let plan = with_spinner(
                 format!("generating plan for {story_id}"),
                 || generate_story_plan(
-                    &client, story, spec, contract_yaml, services, adrs,
+                    &client, story, spec, openapi_yaml, services, adrs,
                     &existing_files, service_packages, &installed_deps_by_service,
                 ),
             ).context("failed to generate implementation plan")?;
