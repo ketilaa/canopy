@@ -340,6 +340,7 @@ mod entity_continuity_tests {
                 optional: vec![],
             }),
             scenarios: vec![],
+            resolved_policies: vec![],
             out_of_scope: vec![],
             open_questions: vec![],
         }
@@ -384,6 +385,7 @@ mod entity_continuity_tests {
             intent_ref: "manufacturer-001".to_string(),
             entity_schema: None,
             scenarios: vec![],
+            resolved_policies: vec![],
             out_of_scope: vec![],
             open_questions: vec![],
         };

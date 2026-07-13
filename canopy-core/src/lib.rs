@@ -76,10 +76,29 @@ pub struct IntentSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_schema: Option<EntitySchema>,
     pub scenarios: Vec<Scenario>,
+    /// A business policy question (uniqueness, defaults, retention, authorization, idempotency,
+    /// consistency — see the Business policy checklist in `story_spec_prompt`) that was actively
+    /// resolved during spec generation, as opposed to left in `open_questions`. Distinct from a
+    /// scenario: a resolved policy is the stated rule itself ("manufacturer name must be
+    /// unique"), which scenario generation then operationalizes into an observable, testable
+    /// consequence — keeping the two separate is what lets scenario generation consume policy
+    /// resolutions as an input fact instead of re-deriving them.
+    #[serde(default)]
+    pub resolved_policies: Vec<ResolvedPolicy>,
     #[serde(default)]
     pub out_of_scope: Vec<String>,
     #[serde(default)]
     pub open_questions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedPolicy {
+    /// One of the Business policy checklist's own categories: uniqueness, defaults, retention,
+    /// authorization, idempotency, consistency.
+    pub area: String,
+    /// The policy as a stated rule, e.g. "Manufacturer name must be unique across all
+    /// manufacturers."
+    pub resolution: String,
 }
 
 /// Stage 0 of the behavior-first planning pipeline (see docs/design/behavior-first-planning.md):
@@ -869,6 +888,7 @@ agents:
                 then: vec!["A Session token is returned".into()],
                 constraints: vec!["Response under 300ms at p99".into()],
             }],
+            resolved_policies: vec![],
             out_of_scope: vec!["OAuth/SSO".into()],
             open_questions: vec!["Is email case-sensitive?".into()],
         };

@@ -1,5 +1,5 @@
 use crate::client::{LlmClient, LlmError};
-use crate::prompts::yaml_util::parse_lenient_sequence;
+use crate::prompts::yaml_util::{parse_lenient_sequence, strip_code_fence};
 use crate::repair::fix_yaml_colon_in_scalars;
 use canopy_core::*;
 
@@ -156,12 +156,7 @@ pub fn identify_architectural_questions(
     Ok(ProposedAdrs { proposals })
 }
 
-fn story_spec_prompt(
-    story: &UserStory,
-    adrs: &[Adr],
-    services: &ServicesRegistry,
-    domain: &DomainRegistry,
-) -> String {
+fn context_sections(adrs: &[Adr], services: &ServicesRegistry, domain: &DomainRegistry) -> (String, String, String, String) {
     let adrs_summary = if adrs.is_empty() {
         "None yet.".to_string()
     } else {
@@ -202,8 +197,26 @@ fn story_spec_prompt(
             .collect::<Vec<_>>()
             .join(", ")
     };
+    (adrs_summary, services_summary, entities, events)
+}
+
+/// Call 1 of 2 (added 2026-07-13, replacing the previous single-call design): defines the entity
+/// schema and resolves business policy — no scenario-writing here. Live-verified motivation: with
+/// entity_schema and scenarios generated in one holistic call, Stage 0 was repeatedly finding the
+/// same shape of omission (missing constraint-violation scenarios) after the fact, story after
+/// story — a downstream safety net catching a gap scenario generation itself kept leaving behind.
+/// Splitting the schema out lets a mechanical step (`scenario_coverage_matrix`) enumerate exactly
+/// what Call 2 needs to cover, the same "coverage first, narrative second" shift that already
+/// fixed Stage 0's own checklist and Stage 1's behavior extraction.
+fn entity_schema_prompt(
+    story: &UserStory,
+    adrs: &[Adr],
+    services: &ServicesRegistry,
+    domain: &DomainRegistry,
+) -> String {
+    let (adrs_summary, services_summary, entities, events) = context_sections(adrs, services, domain);
     format!(
-        r#"You are a BDD expert writing acceptance criteria for a user story.
+        r#"You are a BDD expert defining the domain model and business policy for a user story.
 
 Story ID: {story_id}
 User Story: As a {as_a}, I want {want}, so that {so_that}
@@ -222,7 +235,7 @@ This is a CREATION STORY if the want contains a creation verb (register, create,
 submit, publish) OR if the domain events include a {{Entity}}Created event for an entity in
 the want statement.
 
-If this is a creation story, you MUST output an entity_schema section before scenarios.
+If this is a creation story, you MUST output an entity_schema section.
 If this is NOT a creation story, omit entity_schema entirely.
 
 entity_schema rules — identify the primary entity being created and define its fields:
@@ -259,16 +272,7 @@ system_generated fields do NOT need a validation block.
   "[string]": max_items (required), max_length (required — max length per individual item)
   "[uuid]":  max_items (required)
 
-Scenario grounding rule — when entity_schema is present, BDD scenarios MUST be grounded in it:
-- "when" MUST explicitly name the mandatory fields the actor submits
-- "then" MUST reference at least the system-generated fields set at creation
-  (e.g. "the system assigns an id and sets createdAt to the current timestamp")
-- Also include a scenario for the missing-mandatory-field failure case
-
-Business policy checklist — walk through EACH item below, ONE AT A TIME, BEFORE writing
-scenarios. For each: mark it resolved (state the policy, and write a failure scenario for it if
-it implies a rejection case), not applicable (state why in one phrase), or unresolved (add it to
-open_questions as a concrete question — never silently pick an interpretation).
+Business policy checklist — walk through EACH item below, ONE AT A TIME:
 1. Uniqueness — must any field, or combination of fields, be unique across all existing records
    of this entity?
 2. Defaults — does any optional field have an implied default value when the actor omits it?
@@ -279,20 +283,10 @@ open_questions as a concrete question — never silently pick an interpretation)
    duplicate, or is it safely repeatable?
 6. Consistency — does creating this entity depend on, or affect, the state of any other entity?
 
-Write BDD scenarios (Given/When/Then) as acceptance criteria. Additional rules:
-- Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
-  HTTP verbs, JSON payloads, or implementation details
-- Given describes actor context and relevant domain state only — never system availability,
-  portal health, service status, or infrastructure operations.
-  Good: "The product manager is authenticated and no product with this name exists."
-  Bad:  "The admin portal is operating normally."
-- When describes what the actor does — one action per scenario
-- Then describes what the actor observes or what changed in the domain — never service internals,
-  technology names, or infrastructure operations.
-  Good: "The product is registered and a ProductCreated event is published."
-  Bad:  "ProductService stores the data and Redpanda receives the event."
-- intent_ref must be exactly: {story_id}
-- Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
+For EACH item, classify it as exactly one of:
+- resolved — add an entry to resolved_policies stating the rule as a concrete constraint.
+- not applicable — do not output anything for it.
+- unresolved — add a concrete question to open_questions. NEVER silently pick an interpretation.
 
 Return ONLY valid YAML — no prose, no code fences.
 YAML string rules — you MUST follow these to avoid parse errors:
@@ -300,7 +294,6 @@ YAML string rules — you MUST follow these to avoid parse errors:
 - Any list item ending with a question mark (?) MUST be enclosed in double quotes
 - type values are strings: string, integer, decimal, uuid, datetime, boolean, "[string]", "[uuid]" — always quote bracket forms: type: "[string]" not type: [string]
 
-intent_ref: {story_id}
 entity_schema:                    # omit entirely if not a creation story
   entity: "<PascalCase entity name>"
   system_generated:
@@ -328,16 +321,9 @@ entity_schema:                    # omit entirely if not a creation story
         min: <N>              # integer/decimal: required
         max: <N>              # integer/decimal: required
         max_items: <N>        # [string]/[uuid]: required
-scenarios:
-  - id: "{story_id}-01"
-    name: "<scenario name>"
-    given:
-      - "<world state precondition>"
-    when: "<user or system action — must name mandatory fields for creation stories>"
-    then:
-      - "<observable outcome — must reference system-assigned fields for creation stories>"
-    constraints:
-      - "<constraint or empty list>"
+resolved_policies:
+  - area: "<uniqueness | defaults | retention | authorization | idempotency | consistency>"
+    resolution: "<the policy stated as a concrete rule>"
 out_of_scope:
   - "<explicitly excluded concern>"
 open_questions:
@@ -354,6 +340,245 @@ open_questions:
     )
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SchemaAndPolicyDraft {
+    #[serde(default)]
+    entity_schema: Option<EntitySchema>,
+    #[serde(default)]
+    resolved_policies: Vec<ResolvedPolicy>,
+    #[serde(default)]
+    out_of_scope: Vec<String>,
+    #[serde(default)]
+    open_questions: Vec<String>,
+}
+
+/// Mechanically enumerates every scenario the spec needs, BEFORE any scenario is written — the
+/// same "exhaustive enumeration over holistic review" principle that fixed Stage 0's own
+/// constraint checklist, applied one stage earlier so scenario generation has an explicit
+/// inventory to fill in rather than an implicit one to invent. One item per field constraint
+/// (mirroring Stage 0's own field×constraint enumeration exactly, so what this produces and what
+/// Stage 0 later checks are the same list by construction), one for missing-mandatory-fields, two
+/// happy-path items, and one per resolved business policy.
+fn scenario_coverage_matrix(schema: &EntitySchema, resolved_policies: &[ResolvedPolicy]) -> Vec<String> {
+    let mut items = Vec::new();
+
+    let system_generated_fields = schema.system_generated.iter()
+        .map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ");
+    items.push(format!(
+        "Success: the actor submits only the mandatory fields — the {} is registered, its \
+         system-generated fields ({}) each hold the exact creation-time value the schema \
+         defines for them — non-null where the schema gives a real value, explicitly null where \
+         the schema marks null-at-creation — and any domain event is published.",
+        schema.entity, system_generated_fields
+    ));
+    if !schema.optional.is_empty() {
+        items.push(format!(
+            "Success: the actor submits the mandatory fields AND the optional fields — the {} is \
+             registered with the optional values stored as provided.",
+            schema.entity
+        ));
+    }
+
+    for field in schema.mandatory.iter().chain(schema.optional.iter()) {
+        let Some(v) = &field.validation else { continue };
+        if let Some(n) = v.max_length {
+            items.push(format!("Failure: '{}' longer than {n} characters is rejected.", field.name));
+        }
+        if let Some(n) = v.min_length {
+            if n > 0 {
+                items.push(format!("Failure: '{}' shorter than {n} characters is rejected.", field.name));
+            }
+        }
+        if let Some(n) = v.min {
+            items.push(format!("Failure: '{}' below {n} is rejected.", field.name));
+        }
+        if let Some(n) = v.max {
+            items.push(format!("Failure: '{}' above {n} is rejected.", field.name));
+        }
+        if v.pattern.is_some() {
+            items.push(format!("Failure: '{}' violating the required pattern is rejected.", field.name));
+        }
+        if let Some(n) = v.max_items {
+            items.push(format!("Failure: more than {n} items for '{}' is rejected.", field.name));
+        }
+    }
+
+    if !schema.mandatory.is_empty() {
+        items.push("Failure: the actor submits with mandatory fields missing entirely — the \
+                     registration is rejected, naming which fields are required.".to_string());
+    }
+
+    for policy in resolved_policies {
+        items.push(format!(
+            "Resolved policy ({}): {}. Write the scenario this policy implies (a rejection case, \
+             if the policy states a constraint that can be violated).",
+            policy.area, policy.resolution
+        ));
+    }
+
+    items
+}
+
+/// Call 2 of 2: writes exactly one scenario per already-enumerated coverage item — a checklist
+/// traversal, not a discovery exercise, the same shape as Stage 1's SUCCESS/FAILURE checklist
+/// that has consistently been the strongest-performing prompt in this pipeline.
+fn scenario_generation_prompt(
+    story: &UserStory,
+    schema: &EntitySchema,
+    coverage_matrix: &[String],
+    adrs: &[Adr],
+) -> String {
+    let coverage_list = coverage_matrix.iter().enumerate()
+        .map(|(i, item)| format!("{}. {item}", i + 1))
+        .collect::<Vec<_>>().join("\n");
+    let adrs_summary = if adrs.is_empty() {
+        "None yet.".to_string()
+    } else {
+        adrs.iter()
+            .map(|a| format!("- {}: {}", a.title, a.decision))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mandatory_fields = schema.mandatory.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ");
+    let optional_fields = if schema.optional.is_empty() {
+        "none".to_string()
+    } else {
+        schema.optional.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ")
+    };
+    let system_generated_fields = schema.system_generated.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ");
+
+    format!(
+        r#"You are a BDD expert writing acceptance criteria from an ALREADY-DETERMINED coverage
+requirement list — you are NOT deciding what needs to be tested, only writing the Given/When/Then
+for each requirement already listed below.
+
+Story ID: {story_id}
+User Story: As a {as_a}, I want {want}, so that {so_that}
+
+Entity: {entity}
+Mandatory fields: {mandatory_fields}
+Optional fields: {optional_fields}
+System-generated fields: {system_generated_fields}
+
+Architecture Decisions in Effect:
+{adrs_summary}
+
+Coverage requirements — for EACH item below, ONE AT A TIME, write exactly one BDD scenario
+satisfying it. Do not skip any. Do not add scenarios for requirements not listed here:
+
+{coverage_list}
+
+Scenario rules:
+- Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
+  HTTP verbs, JSON payloads, or implementation details
+- Given describes actor context and relevant domain state only — never system availability,
+  portal health, service status, or infrastructure operations.
+  Good: "The actor is authenticated and no {entity} with this name exists."
+  Bad:  "The admin portal is operating normally."
+- When describes what the actor does — one action per scenario. For a success requirement, MUST
+  explicitly name the mandatory fields the actor submits.
+- Then describes what the actor observes or what changed in the domain — never service internals,
+  technology names, or infrastructure operations. For a success requirement, MUST reference the
+  system-generated fields set at creation.
+  Good: "The {entity} is registered and a {entity}Created event is published."
+  Bad:  "WidgetService stores the data and the message broker receives the event."
+- constraints: state the exact rule this scenario tests (empty list if the requirement is a
+  happy-path success case with no constraint being violated)
+- Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc., in the same order as
+  the coverage requirements above.
+
+Return ONLY valid YAML — no prose, no code fences.
+YAML string rules — you MUST follow these to avoid parse errors:
+- Any string value containing a colon (:) MUST be enclosed in double quotes
+- Any list item ending with a question mark (?) MUST be enclosed in double quotes
+
+scenarios:
+  - id: "{story_id}-01"
+    name: "<scenario name>"
+    given:
+      - "<world state precondition>"
+    when: "<user or system action>"
+    then:
+      - "<observable outcome>"
+    constraints:
+      - "<constraint or empty list>"
+"#,
+        story_id = story.id,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        entity = schema.entity,
+        mandatory_fields = mandatory_fields,
+        optional_fields = optional_fields,
+        system_generated_fields = system_generated_fields,
+        adrs_summary = adrs_summary,
+        coverage_list = coverage_list,
+    )
+}
+
+/// Fallback for non-creation stories only — no entity_schema exists to build a coverage matrix
+/// from, so this keeps the previous holistic "write BDD scenarios for this story" approach.
+/// Creation stories (the common case for this pipeline so far) always use the coverage-matrix
+/// path above instead.
+fn fallback_scenario_prompt(story: &UserStory, adrs: &[Adr]) -> String {
+    let adrs_summary = if adrs.is_empty() {
+        "None yet.".to_string()
+    } else {
+        adrs.iter()
+            .map(|a| format!("- {}: {}", a.title, a.decision))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        r#"You are a BDD expert writing acceptance criteria for a user story.
+
+Story ID: {story_id}
+User Story: As a {as_a}, I want {want}, so that {so_that}
+
+Architecture Decisions in Effect:
+{adrs_summary}
+
+Write BDD scenarios (Given/When/Then) as acceptance criteria. Rules:
+- Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,
+  HTTP verbs, JSON payloads, or implementation details
+- Given describes actor context and relevant domain state only — never system availability,
+  portal health, service status, or infrastructure operations.
+  Good: "The actor is authenticated and the relevant domain state exists."
+  Bad:  "The admin portal is operating normally."
+- When describes what the actor does — one action per scenario
+- Then describes what the actor observes or what changed in the domain — never service internals,
+  technology names, or infrastructure operations.
+  Good: "The actor sees the updated result."
+  Bad:  "WidgetService updates the record and the message broker receives the event."
+- Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
+
+Return ONLY valid YAML — no prose, no code fences.
+
+scenarios:
+  - id: "{story_id}-01"
+    name: "<scenario name>"
+    given:
+      - "<world state precondition>"
+    when: "<user or system action>"
+    then:
+      - "<observable outcome>"
+    constraints:
+      - "<constraint or empty list>"
+"#,
+        story_id = story.id,
+        as_a = story.as_a,
+        want = story.want,
+        so_that = story.so_that,
+        adrs_summary = adrs_summary,
+    )
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ScenarioBatch {
+    #[serde(default)]
+    scenarios: Vec<Scenario>,
+}
+
 pub fn generate_story_spec(
     client: &LlmClient,
     story: &UserStory,
@@ -361,16 +586,37 @@ pub fn generate_story_spec(
     services: &ServicesRegistry,
     domain: &DomainRegistry,
 ) -> Result<IntentSpec, LlmError> {
-    let raw = client.complete_large(&story_spec_prompt(story, adrs, services, domain))?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    let fixed = fix_yaml_colon_in_scalars(stripped);
-    serde_yaml::from_str::<IntentSpec>(&fixed)
-        .map_err(|source| LlmError::YamlParse { source, raw: fixed })
+    let raw = client.complete_large(&entity_schema_prompt(story, adrs, services, domain))?;
+    let stripped = strip_code_fence(&raw);
+    let fixed = fix_yaml_colon_in_scalars(&stripped);
+    let draft: SchemaAndPolicyDraft = serde_yaml::from_str(&fixed)
+        .map_err(|source| LlmError::YamlParse { source, raw: fixed })?;
+
+    let scenarios = if let Some(schema) = &draft.entity_schema {
+        let matrix = scenario_coverage_matrix(schema, &draft.resolved_policies);
+        let raw2 = client.complete_large(&scenario_generation_prompt(story, schema, &matrix, adrs))?;
+        let stripped2 = strip_code_fence(&raw2);
+        let fixed2 = fix_yaml_colon_in_scalars(&stripped2);
+        let batch: ScenarioBatch = serde_yaml::from_str(&fixed2)
+            .map_err(|source| LlmError::YamlParse { source, raw: fixed2 })?;
+        batch.scenarios
+    } else {
+        let raw2 = client.complete_large(&fallback_scenario_prompt(story, adrs))?;
+        let stripped2 = strip_code_fence(&raw2);
+        let fixed2 = fix_yaml_colon_in_scalars(&stripped2);
+        let batch: ScenarioBatch = serde_yaml::from_str(&fixed2)
+            .map_err(|source| LlmError::YamlParse { source, raw: fixed2 })?;
+        batch.scenarios
+    };
+
+    Ok(IntentSpec {
+        intent_ref: story.id.clone(),
+        entity_schema: draft.entity_schema,
+        scenarios,
+        resolved_policies: draft.resolved_policies,
+        out_of_scope: draft.out_of_scope,
+        open_questions: draft.open_questions,
+    })
 }
 
 fn openapi_prompt(
