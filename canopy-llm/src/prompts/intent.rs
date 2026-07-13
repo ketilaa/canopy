@@ -46,9 +46,12 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
   assign, approve, close) over CRUD verbs (add, create, update, delete)
 - "want" must describe a capability, not a location or component — do not name services, bounded
   contexts, or architectural components (avoid: "in the catalog", "via the API", "in the registry")
-- "want" MUST explicitly name the primary domain object being acted upon. WRONG: "register in the
-  system", "create a record", "submit information". CORRECT: "register an account", "publish a
-  document", "schedule an appointment".
+- "want" MUST explicitly name the primary domain object being acted upon, and it MUST be
+  consistent with the intent statement above. NEVER use a generic object name: account, record,
+  item, thing, object, entity. WRONG: "register in the system", "create a record", "submit
+  information". CORRECT pattern — "<domain verb> <real domain object from the intent>": if the
+  intent is about manufacturers, write "register a manufacturer"; if about products, "register a
+  product"; if about customers, "register a customer".
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
 - A creation story includes all actor-provided attributes — mandatory and optional. Split into an update story only when the intent explicitly describes editing an existing record.
 - One intent action = one story. Do not decompose a single action into sub-steps.

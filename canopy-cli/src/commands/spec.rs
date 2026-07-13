@@ -2,13 +2,41 @@ use crate::adr_wizard::maybe_prompt_testing_strategy;
 use crate::ui::{input_text_required, input_text_with_initial, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
-use canopy_core::{Adr, StoryStatus};
+use canopy_core::{Adr, DomainRegistry, IntentSpec, StoryStatus};
 use canopy_llm::{generate_story_openapi, generate_story_spec, identify_architectural_questions};
 use canopy_storage::{
     load_all_adrs, load_domain_registry, load_services_registry, load_user_stories,
     save_adr, save_services_registry, save_story_openapi, save_story_spec,
 };
 use dialoguer::theme::ColorfulTheme;
+
+/// Mechanical guard, not an LLM judgment: does spec generation's own `entity_schema` name an
+/// entity already established upstream (domain vocabulary, extracted from the story/intent)?
+/// Live-verified need: a reproducibility sweep found a spec-generation call that produced
+/// `entity_schema.entity: Account` for a story whose `as_a` and domain vocabulary both already
+/// said "Manufacturer" — nothing caught this, and it silently saved as if accepted, corrupting
+/// every stage built on top of it. Fails loudly instead of letting a fully different domain
+/// persist unnoticed. Only checks against already-known vocabulary — a story introducing its
+/// first-ever entity (domain.entities empty) has nothing to diverge from yet.
+fn check_entity_continuity(spec: &IntentSpec, domain: &DomainRegistry) -> Result<()> {
+    let Some(schema) = &spec.entity_schema else { return Ok(()) };
+    if domain.entities.is_empty() {
+        return Ok(());
+    }
+    let matches = domain.entities.iter().any(|e| e.name().eq_ignore_ascii_case(&schema.entity));
+    if !matches {
+        let known: Vec<&str> = domain.entities.iter().map(|e| e.name()).collect();
+        anyhow::bail!(
+            "entity continuity violation: spec generation produced entity_schema.entity = '{}', \
+             which doesn't match any entity already established in domain vocabulary ({}). This \
+             usually means spec generation drifted onto an unrelated domain — check the story's \
+             `want` field and .canopy/domain_registry.yaml, then re-run `canopy spec {}`. Nothing \
+             was saved.",
+            schema.entity, known.join(", "), spec.intent_ref,
+        );
+    }
+    Ok(())
+}
 
 pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
@@ -192,6 +220,8 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
         generate_story_spec(&client, story, &existing_adrs, &services, &domain)
             .context("failed to generate story spec")?;
 
+    check_entity_continuity(&spec, &domain)?;
+
     save_story_spec(story_id, &spec).context("failed to save story spec")?;
     println!("\nSpec saved to .canopy/stories/{}/spec.yaml", story_id);
 
@@ -251,4 +281,79 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod entity_continuity_tests {
+    use super::check_entity_continuity;
+    use canopy_core::{DomainEntity, DomainRegistry, EntitySchema, IntentSpec};
+
+    fn spec_with_entity(entity: &str) -> IntentSpec {
+        IntentSpec {
+            intent_ref: "manufacturer-001".to_string(),
+            entity_schema: Some(EntitySchema {
+                entity: entity.to_string(),
+                system_generated: vec![],
+                mandatory: vec![],
+                optional: vec![],
+            }),
+            scenarios: vec![],
+            out_of_scope: vec![],
+            open_questions: vec![],
+        }
+    }
+
+    fn domain_with(entities: &[&str]) -> DomainRegistry {
+        DomainRegistry {
+            entities: entities.iter().map(|e| DomainEntity::Simple(e.to_string())).collect(),
+            events: vec![],
+        }
+    }
+
+    #[test]
+    fn passes_when_entity_matches_known_vocabulary() {
+        let spec = spec_with_entity("Manufacturer");
+        let domain = domain_with(&["Manufacturer"]);
+        assert!(check_entity_continuity(&spec, &domain).is_ok());
+    }
+
+    #[test]
+    fn passes_case_insensitively() {
+        let spec = spec_with_entity("manufacturer");
+        let domain = domain_with(&["Manufacturer"]);
+        assert!(check_entity_continuity(&spec, &domain).is_ok());
+    }
+
+    #[test]
+    fn fails_on_live_verified_account_divergence() {
+        // Live-verified regression: a reproducibility sweep produced entity_schema.entity =
+        // "Account" for a story whose domain vocabulary already established "Manufacturer".
+        let spec = spec_with_entity("Account");
+        let domain = domain_with(&["Manufacturer"]);
+        let err = check_entity_continuity(&spec, &domain).unwrap_err();
+        assert!(err.to_string().contains("entity continuity violation"));
+        assert!(err.to_string().contains("Account"));
+        assert!(err.to_string().contains("Manufacturer"));
+    }
+
+    #[test]
+    fn passes_when_no_entity_schema_present() {
+        let spec = IntentSpec {
+            intent_ref: "manufacturer-001".to_string(),
+            entity_schema: None,
+            scenarios: vec![],
+            out_of_scope: vec![],
+            open_questions: vec![],
+        };
+        let domain = domain_with(&["Manufacturer"]);
+        assert!(check_entity_continuity(&spec, &domain).is_ok());
+    }
+
+    #[test]
+    fn passes_when_domain_vocabulary_not_yet_established() {
+        // A story introducing its first-ever entity has nothing to diverge from yet.
+        let spec = spec_with_entity("Manufacturer");
+        let domain = domain_with(&[]);
+        assert!(check_entity_continuity(&spec, &domain).is_ok());
+    }
 }
