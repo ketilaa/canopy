@@ -1,4 +1,5 @@
 use crate::client::{LlmClient, LlmError};
+use crate::prompts::yaml_util::parse_lenient_sequence;
 use crate::repair::fix_yaml_colon_in_scalars;
 use canopy_core::*;
 
@@ -128,8 +129,12 @@ pub fn identify_architectural_questions(
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    serde_yaml::from_str::<ProposedAdrs>(stripped)
-        .map_err(|source| LlmError::YamlParse { source, raw: stripped.to_string() })
+    // Live-verified need: one malformed proposal (an explicit `null` in a Vec<String> field)
+    // previously failed `serde_yaml`'s atomic Vec<T> deserialization for the WHOLE batch, losing
+    // 5 other correctly-formed proposals along with it — parse item-by-item instead, same as
+    // Stage 0-4's own LLM-output parsing.
+    let proposals = parse_lenient_sequence::<ProposedAdr>(stripped, "proposals")?;
+    Ok(ProposedAdrs { proposals })
 }
 
 fn story_spec_prompt(

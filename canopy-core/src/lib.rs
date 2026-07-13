@@ -625,17 +625,30 @@ pub struct ServicesRegistry {
     pub services: Vec<ServiceEntry>,
 }
 
+/// `#[serde(default)]` alone only covers an *absent* key — an LLM emitting an explicit `null`
+/// for a list field it considers not applicable (live-verified: `service_responsibilities: null`
+/// on a tech-stack proposal with no service-level responsibilities to state) still fails
+/// `Vec<T>`'s deserializer, since `null` isn't a valid sequence. Deserializing into
+/// `Option<Vec<T>>` first accepts both absent and explicit `null` uniformly.
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposedAdr {
     pub question: String,
     pub title: String,
     pub decision: String,
     pub reason: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub alternatives: Vec<String>,
     #[serde(default)]
     pub service: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub service_responsibilities: Vec<String>,
     /// For tech-stack ADRs: the canonical technology identifier used for scaffold dispatch
     #[serde(default)]
