@@ -7,13 +7,21 @@
 
 use crate::client::LlmError;
 
+/// Strips a leading/trailing code fence regardless of language tag (```yaml, ```json, bare ```)
+/// — a fixed prefix list (previously just "```yaml") silently failed to strip other tags: a
+/// leading "```json" would only lose its backticks, leaving the literal word "json" glued to the
+/// content and breaking the parse. Matching up to the first newline after the opening fence
+/// handles any tag, or none, uniformly.
 pub(crate) fn strip_code_fence(raw: &str) -> String {
-    raw.trim()
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim()
-        .to_string()
+    let trimmed = raw.trim();
+    let after_open = match trimmed.strip_prefix("```") {
+        Some(rest) => match rest.find('\n') {
+            Some(idx) => &rest[idx + 1..],
+            None => rest,
+        },
+        None => trimmed,
+    };
+    after_open.trim_end_matches("```").trim().to_string()
 }
 
 /// Parses `stripped` as a YAML mapping, then leniently parses the sequence at `key` into

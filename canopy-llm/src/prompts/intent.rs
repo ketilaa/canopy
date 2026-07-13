@@ -1,4 +1,5 @@
 use crate::client::{LlmClient, LlmError};
+use crate::prompts::yaml_util::strip_code_fence;
 use canopy_core::*;
 
 fn stories_from_intent_prompt(
@@ -82,8 +83,9 @@ pub fn generate_stories_from_intent(
     let raw = client.complete_large(&stories_from_intent_prompt(
         intent, context, existing_stories, roles,
     ))?;
-    serde_yaml::from_str::<UserStories>(&raw)
-        .map_err(|source| LlmError::YamlParse { source, raw })
+    let stripped = strip_code_fence(&raw);
+    serde_yaml::from_str::<UserStories>(&stripped)
+        .map_err(|source| LlmError::YamlParse { source, raw: stripped })
 }
 
 fn domain_extraction_prompt(stories: &[UserStory]) -> String {
@@ -147,14 +149,9 @@ pub fn extract_domain_from_stories(
         return Ok(DomainRegistry::default());
     }
     let raw = client.complete(&domain_extraction_prompt(stories))?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    serde_yaml::from_str::<DomainRegistry>(stripped)
-        .map_err(|source| LlmError::YamlParse { source, raw: stripped.to_string() })
+    let stripped = strip_code_fence(&raw);
+    serde_yaml::from_str::<DomainRegistry>(&stripped)
+        .map_err(|source| LlmError::YamlParse { source, raw: stripped })
 }
 
 fn domain_bootstrap_prompt(idea: &Idea) -> String {
@@ -178,13 +175,8 @@ Return ONLY a JSON array of strings. No explanation. No code fences.
 
 pub fn suggest_domain_entities(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, LlmError> {
     let raw = client.complete(&domain_bootstrap_prompt(idea))?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    serde_json::from_str::<Vec<String>>(stripped)
+    let stripped = strip_code_fence(&raw);
+    serde_json::from_str::<Vec<String>>(&stripped)
         .map_err(|e| LlmError::JsonParse(format!("{e}. Raw was: {raw}")))
 }
 
@@ -210,13 +202,8 @@ Return ONLY a JSON array of strings. No explanation. No code fences.
 
 pub fn suggest_roles(client: &LlmClient, idea: &Idea) -> Result<Vec<String>, LlmError> {
     let raw = client.complete(&roles_bootstrap_prompt(idea))?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    serde_json::from_str::<Vec<String>>(stripped)
+    let stripped = strip_code_fence(&raw);
+    serde_json::from_str::<Vec<String>>(&stripped)
         .map_err(|e| LlmError::JsonParse(format!("{e}. Raw was: {raw}")))
 }
 
