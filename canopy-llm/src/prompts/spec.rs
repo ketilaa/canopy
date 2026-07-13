@@ -3,6 +3,16 @@ use crate::prompts::yaml_util::parse_lenient_sequence;
 use crate::repair::fix_yaml_colon_in_scalars;
 use canopy_core::*;
 
+/// Category 1's domain-event ADR sub-item (added 2026-07-13) replaces a single generic "event
+/// design" bullet with an explicit creation|update|deletion classification. Live-verified need:
+/// two structurally identical creation stories (register a product, register a manufacturer),
+/// same event-driven architecture and broker already decided — one got a domain-event ADR
+/// proposed, the other didn't, with no signal anywhere for why the model treated them
+/// differently. The spec-generation step later invented the event anyway
+/// (`ManufacturerRegistered`), proving the concept was inferable from the story all along; it
+/// just wasn't surfaced when ADRs get proposed. Same shape of fix as Stage 0's original
+/// checklist rewrite: replace implicit pattern recognition with an explicit per-story
+/// classification the model can't skip.
 fn architectural_questions_prompt(
     story: &UserStory,
     existing_adrs: &[Adr],
@@ -51,11 +61,20 @@ SKIP a question entirely if its answer is already captured above. Check precisel
 - Database infrastructure: skip if the specific data-owning service already has a database in Known Services.
   Do NOT skip just because some other service already has a database.
 - Event broker infrastructure: skip if an event broker entry already exists in Known Services.
+- Domain event ADR: skip only if a domain-event ADR for THIS story's entity and operation already
+  exists in Existing Architecture Decisions above — never skip just because the story's own
+  wording never uses the word "event."
 Propose ONLY questions where the decision is genuinely absent from the above context.
 If all decisions are already made, return an empty proposals list.
 
 Include ALL of:
-1. Structural questions — service ownership, data responsibility, integration contracts, event design, API boundaries
+1. Structural questions — service ownership, data responsibility, integration contracts, API boundaries.
+   - Domain event ADR — MANDATORY whenever the Architecture Style ADR above is event-driven and
+     this story's action creates, updates, or deletes an aggregate. Classify the story's own
+     action (want: "{want}") as exactly one of creation | update | deletion | other, then propose
+     exactly ONE domain event ADR naming exactly one event: "<Entity>Created" or
+     "<Entity>Registered" for creation, "<Entity>Updated" for update, "<Entity>Deleted" for
+     deletion.
 2. UI questions — if the story has a human actor performing an action, there must be a frontend component
    through which they act. Ask what UI delivers this capability and propose it as a new service if not yet decided.
    - Set service to the kebab-case frontend component name (e.g. admin-portal) for BOTH the component proposal AND its tech stack proposal.
@@ -245,6 +264,20 @@ Scenario grounding rule — when entity_schema is present, BDD scenarios MUST be
 - "then" MUST reference at least the system-generated fields set at creation
   (e.g. "the system assigns an id and sets createdAt to the current timestamp")
 - Also include a scenario for the missing-mandatory-field failure case
+
+Business policy checklist — walk through EACH item below, ONE AT A TIME, BEFORE writing
+scenarios. For each: mark it resolved (state the policy, and write a failure scenario for it if
+it implies a rejection case), not applicable (state why in one phrase), or unresolved (add it to
+open_questions as a concrete question — never silently pick an interpretation).
+1. Uniqueness — must any field, or combination of fields, be unique across all existing records
+   of this entity?
+2. Defaults — does any optional field have an implied default value when the actor omits it?
+3. Retention — is there a rule for how long this entity persists, or when it expires or archives?
+4. Authorization — does creating or modifying this entity require a specific role or permission
+   beyond the actor already being authenticated?
+5. Idempotency — if the actor submits the same request twice, must that be rejected as a
+   duplicate, or is it safely repeatable?
+6. Consistency — does creating this entity depend on, or affect, the state of any other entity?
 
 Write BDD scenarios (Given/When/Then) as acceptance criteria. Additional rules:
 - Scenarios describe OBSERVABLE BEHAVIOR from the user's perspective — never internal API calls,

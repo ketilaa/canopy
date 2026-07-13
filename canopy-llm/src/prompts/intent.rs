@@ -46,6 +46,9 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
   assign, approve, close) over CRUD verbs (add, create, update, delete)
 - "want" must describe a capability, not a location or component — do not name services, bounded
   contexts, or architectural components (avoid: "in the catalog", "via the API", "in the registry")
+- "want" MUST explicitly name the primary domain object being acted upon. WRONG: "register in the
+  system", "create a record", "submit information". CORRECT: "register an account", "publish a
+  document", "schedule an appointment".
 - "so_that" must state a single concrete business or user benefit — one idea, no "and", no chained thoughts
 - A creation story includes all actor-provided attributes — mandatory and optional. Split into an update story only when the intent explicitly describes editing an existing record.
 - One intent action = one story. Do not decompose a single action into sub-steps.
@@ -88,16 +91,19 @@ pub fn generate_stories_from_intent(
         .map_err(|source| LlmError::YamlParse { source, raw: stripped })
 }
 
-fn domain_extraction_prompt(stories: &[UserStory]) -> String {
+fn domain_extraction_prompt(intent: &str, stories: &[UserStory]) -> String {
     let stories_text = stories
         .iter()
-        .map(|s| format!("- {}", s.want))
+        .map(|s| format!("- As a {}, I want to {}, so that {}", s.as_a, s.want, s.so_that))
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        r#"You are identifying domain vocabulary from a set of story want-statements.
+        r#"You are identifying domain vocabulary from a set of user stories.
 
-Wants (what the actor directly operates on):
+Original behavioral intent these stories were derived from:
+{intent}
+
+Stories derived from it:
 {stories_text}
 
 Extract only domain objects that are directly created, read, updated, or deleted by these actions.
@@ -137,18 +143,27 @@ entities:
 events:
   - <EventName>
 "#,
+        intent = intent,
         stories_text = stories_text,
     )
 }
 
+/// Live-verified bug this fixes: with only `want` text ("register in the system" — no entity
+/// named at all) this extracted `User`/`UserRegistered` instead of `Manufacturer`/
+/// `ManufacturerRegistered`, an information-loss bug rather than a reasoning failure — the
+/// original intent statement ("Manufacturers must be registered...") named the entity
+/// explicitly, but that text never reached this call. Passing the intent and the full story
+/// (as_a/want/so_that, not want alone) gives the model everything a human reviewer would
+/// actually read before naming the domain vocabulary.
 pub fn extract_domain_from_stories(
     client: &LlmClient,
+    intent: &str,
     stories: &[UserStory],
 ) -> Result<DomainRegistry, LlmError> {
     if stories.is_empty() {
         return Ok(DomainRegistry::default());
     }
-    let raw = client.complete(&domain_extraction_prompt(stories))?;
+    let raw = client.complete(&domain_extraction_prompt(intent, stories))?;
     let stripped = strip_code_fence(&raw);
     serde_yaml::from_str::<DomainRegistry>(&stripped)
         .map_err(|source| LlmError::YamlParse { source, raw: stripped })

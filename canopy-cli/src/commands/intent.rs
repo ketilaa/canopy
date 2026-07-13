@@ -104,7 +104,7 @@ pub(crate) fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
         .collect();
     if !accepted_stories.is_empty() {
         print!("Extracting domain vocabulary...");
-        match extract_domain_from_stories(&client, &accepted_stories) {
+        match extract_domain_from_stories(&client, &statement, &accepted_stories) {
             Ok(extracted) => {
                 let mut domain = load_domain_registry().context("failed to load domain registry")?;
                 let mut added_entities = 0usize;

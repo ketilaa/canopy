@@ -96,17 +96,26 @@ fn cluster_review_prompt(behaviors: &BehaviorList, clustering: &ClusteringResult
             .collect::<Vec<_>>().join("\n");
         sections.push(format!(
             "Unit clusters (grouped by subject+kind):\n{unit_list}\n\n\
-For EACH unit cluster above, ONE AT A TIME, answer:\n\
-1. Are all its behaviors genuinely the same responsibility (cohesive)? If not, name the specific \
-behavior that doesn't belong and why.\n\
-2. Does any behavior in it imply a dependency reaching outside this cluster's own layer (e.g. a \
-persistence-kind cluster whose behavior describes an HTTP status code)?"
+Kind definitions — a behavior's statement must stay within its own kind's scope:\n\
+- validation: accepting or rejecting a field value against a rule. Never mentions persistence, \
+HTTP status/response, or event publication.\n\
+- construction: assigning a field on a newly constructed instance (e.g. id, timestamps). Never \
+mentions persistence, HTTP status/response, or event publication.\n\
+- event-shape: an event's own payload fields. Never mentions topic/broker routing, persistence, \
+or HTTP status/response.\n\
+- publication: which topic/broker an event is published to. Never mentions the event's own \
+payload fields, persistence, or HTTP status/response.\n\n\
+For EACH unit cluster above, ONE AT A TIME: does any behavior's statement mention something \
+outside its cluster's kind, per the definitions above? Flag it by name, quoting the exact phrase \
+that's out of scope."
         ));
         if clustering.unit_clusters.len() > 1 {
             sections.push(
-                "Then, across ALL unit clusters together: are there two that describe the same \
-real responsibility under different subject or kind tags and should merge? Name both cluster \
-ids.".to_string()
+                "Then, across ALL unit clusters together: are there two clusters with the SAME \
+kind whose subjects describe the same real responsibility and should merge? Name both cluster \
+ids. NEVER propose merging two clusters with DIFFERENT kinds — construction and event-shape, \
+for example, are always separate concerns by design, no matter how related their subjects \
+look.".to_string()
             );
         }
     }

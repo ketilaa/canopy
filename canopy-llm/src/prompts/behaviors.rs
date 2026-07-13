@@ -7,6 +7,48 @@ use crate::client::{LlmClient, LlmError};
 use crate::prompts::yaml_util::{parse_lenient_sequence, strip_code_fence};
 use canopy_core::*;
 
+/// Best-effort mechanical signal for whether some scenario already addresses a field + numeric
+/// threshold: does any scenario's own text (its `then` clause plus its explicit `constraints`
+/// field) mention both the field name and the threshold number? Deliberately crude — a textual
+/// proxy, not proof — but it turns Checklist 1's question from "recall whether coverage exists"
+/// (holistic recall, the exact shape of judgment live-verified to fail: the model reported gaps
+/// against scenarios that explicitly named the constraint being asked about) into "verify this
+/// specific candidate, or say why it's wrong" (a narrower, easier task per item) — the same
+/// mechanical-baseline-plus-review shape already proven for Stage 3's clustering and Stage 4's
+/// dependency inference.
+fn mechanical_candidate<'a>(field_name: &str, threshold: &str, scenarios: &'a [Scenario]) -> Option<&'a str> {
+    let field_lower = field_name.to_lowercase();
+    scenarios.iter()
+        .find(|s| {
+            let haystack = format!("{} {}", s.then.join(" "), s.constraints.join(" ")).to_lowercase();
+            haystack.contains(&field_lower) && haystack.contains(threshold)
+        })
+        .map(|s| s.id.as_str())
+}
+
+fn constraint_item(field_name: &str, label: &str, threshold: &str, scenarios: &[Scenario]) -> String {
+    // No scenarios exist at all in this case (as opposed to "no matching candidate found among
+    // existing scenarios") — prompt-review finding: referencing "scenario above" or "a DIFFERENT
+    // scenario above" would dangle, since no scenario section is rendered when spec.scenarios is
+    // empty (see `has_scenarios` in specification_completeness_prompt). Fall back to the plain
+    // question with nothing to point at.
+    if scenarios.is_empty() {
+        return format!("Field '{field_name}': {label} — does at least one BDD scenario test this constraint being violated?");
+    }
+    match mechanical_candidate(field_name, threshold, scenarios) {
+        Some(id) => format!(
+            "Field '{field_name}': {label} — candidate: scenario {id} mentions '{field_name}' and \
+             '{threshold}'. Does {id} genuinely test a value violating this constraint? If not, \
+             does a DIFFERENT scenario above cover it?"
+        ),
+        None => format!(
+            "Field '{field_name}': {label} — no scenario mentions both '{field_name}' and \
+             '{threshold}'. Does any scenario above still cover this constraint under different \
+             wording? If not, this is a genuine gap."
+        ),
+    }
+}
+
 /// Mechanically enumerates every (field, constraint) pair from the entity schema — one line per
 /// constraint, in a fixed order. Live-verified: a single holistic "compare schema and scenarios"
 /// prompt correctly found 4 of 5 real gaps against product-001's schema but silently missed one
@@ -14,35 +56,32 @@ use canopy_core::*;
 /// not a conceptual failure, a coverage failure. Forcing an explicit per-constraint checklist
 /// turns "notice everything that's missing" (holistic, omission-prone) into "answer yes/no for
 /// each of these N already-enumerated items" (a much narrower task per item).
-fn constraint_checklist(schema: &EntitySchema) -> Vec<String> {
+fn constraint_checklist(schema: &EntitySchema, scenarios: &[Scenario]) -> Vec<String> {
     let mut items = Vec::new();
     for field in schema.mandatory.iter().chain(schema.optional.iter()) {
         let Some(v) = &field.validation else { continue };
         if let Some(n) = v.max_length {
-            items.push(format!("Field '{}': max_length={n} — scenario testing a value longer than {n} characters?", field.name));
+            items.push(constraint_item(&field.name, &format!("max_length={n}"), &n.to_string(), scenarios));
         }
         // min_length=0 is vacuous — nothing can be shorter than 0 characters, so there is no
-        // possible violation to test. Rephrasing the checklist item (asking about the empty-value
-        // case instead) was tried live and only partly worked: the model still re-flagged it as
-        // missing on a later run despite an explicit empty-value scenario. Omitting the item
-        // entirely removes the false-positive risk at the source instead of asking the model a
-        // question about a constraint that cannot actually be violated.
+        // possible violation to test. Omitting the item entirely removes the false-positive risk
+        // at the source instead of asking a question about a constraint that cannot be violated.
         if let Some(n) = v.min_length {
             if n > 0 {
-                items.push(format!("Field '{}': min_length={n} — scenario testing a value shorter than {n} characters (including empty/missing)?", field.name));
+                items.push(constraint_item(&field.name, &format!("min_length={n}"), &n.to_string(), scenarios));
             }
         }
         if let Some(n) = v.min {
-            items.push(format!("Field '{}': min={n} — scenario testing a value below {n}?", field.name));
+            items.push(constraint_item(&field.name, &format!("min={n}"), &n.to_string(), scenarios));
         }
         if let Some(n) = v.max {
-            items.push(format!("Field '{}': max={n} — scenario testing a value above {n}?", field.name));
+            items.push(constraint_item(&field.name, &format!("max={n}"), &n.to_string(), scenarios));
         }
         if let Some(p) = &v.pattern {
             items.push(format!("Field '{}': pattern={p} — scenario testing a value that violates this pattern?", field.name));
         }
         if let Some(n) = v.max_items {
-            items.push(format!("Field '{}': max_items={n} — scenario testing more than {n} items?", field.name));
+            items.push(constraint_item(&field.name, &format!("max_items={n}"), &n.to_string(), scenarios));
         }
     }
     items
@@ -96,7 +135,7 @@ fn checklist_section(heading: &str, instruction: &str, items: &[String]) -> Stri
 
 fn specification_completeness_prompt(story: &UserStory, spec: &IntentSpec, adrs: &[Adr]) -> String {
     let constraint_items = spec.entity_schema.as_ref()
-        .map(constraint_checklist)
+        .map(|schema| constraint_checklist(schema, &spec.scenarios))
         .unwrap_or_default();
     let scenario_items = scenario_checklist(&spec.scenarios);
     let open_question_items: Vec<String> = spec.open_questions.to_vec();
@@ -116,8 +155,13 @@ fn specification_completeness_prompt(story: &UserStory, spec: &IntentSpec, adrs:
         String::new()
     };
 
+    // Each item already states its own mechanically pre-computed candidate (or lack of one) and
+    // asks a bounded verify-or-name-an-alternative question — this instruction just frames what
+    // "yes"/"no" mean for that per-item question, it doesn't ask the model to judge coverage from
+    // an unaided read of the scenario list the way the item text alone used to.
     let checklist1_instruction = if has_scenarios {
-        "For EACH item, does at least one scenario listed above test that exact constraint being violated?"
+        "For EACH item, answer its own question about the given candidate (or lack of one). \
+         Answer \"yes\" if the constraint is genuinely covered by some scenario above, \"no\" if not."
     } else {
         "For EACH item, does at least one BDD scenario test that exact constraint being violated?"
     };
