@@ -147,6 +147,17 @@ pub fn save_story_openapi(story_id: &str, openapi: &str) -> Result<(), StorageEr
     Ok(())
 }
 
+/// Returns `Ok(None)` (not an error) when no OpenAPI spec has been generated yet for this story —
+/// callers that treat it as optional context (e.g. Stage 1 behavior extraction) shouldn't have
+/// to special-case a `StorageError::NotFound`.
+pub fn load_story_openapi(story_id: &str) -> Result<Option<String>, StorageError> {
+    let path = storage_dir().join(format!("stories/{}/openapi.yaml", story_id));
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(std::fs::read_to_string(path)?))
+}
+
 /// Stage 0 (Specification Completeness) output — see docs/design/behavior-first-planning.md.
 pub fn save_specification_completeness(story_id: &str, completeness: &SpecificationCompleteness) -> Result<(), StorageError> {
     save(&format!("stories/{}/completeness.yaml", story_id), completeness)
@@ -154,6 +165,22 @@ pub fn save_specification_completeness(story_id: &str, completeness: &Specificat
 
 pub fn load_specification_completeness(story_id: &str) -> Result<SpecificationCompleteness, StorageError> {
     load(&format!("stories/{}/completeness.yaml", story_id))
+}
+
+/// Stage 1 (Behavior Extraction) outputs — see docs/design/behavior-first-planning.md.
+/// `behavior-coverage.yaml` is a derived view (see `BehaviorList::coverage`), saved alongside
+/// for a human to audit without re-deriving it.
+pub fn save_behaviors(story_id: &str, behaviors: &BehaviorList) -> Result<(), StorageError> {
+    save(&format!("stories/{}/behaviors.yaml", story_id), behaviors)?;
+    save(&format!("stories/{}/behavior-coverage.yaml", story_id), &behaviors.coverage())
+}
+
+pub fn load_behaviors(story_id: &str) -> Result<BehaviorList, StorageError> {
+    load(&format!("stories/{}/behaviors.yaml", story_id))
+}
+
+pub fn save_behavior_gaps(story_id: &str, gaps: &BehaviorGaps) -> Result<(), StorageError> {
+    save(&format!("stories/{}/behavior-gaps.yaml", story_id), gaps)
 }
 
 pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {

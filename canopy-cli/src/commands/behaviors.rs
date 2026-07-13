@@ -1,13 +1,16 @@
-//! `canopy behaviors <story-id>` — Stage 0 (Specification Completeness) of the behavior-first
-//! planning pipeline (docs/design/behavior-first-planning.md). Stage 1 (behavior extraction) is
-//! not yet implemented; this command currently stops after the completeness gate.
+//! `canopy behaviors <story-id>` — Stages 0-1 of the behavior-first planning pipeline
+//! (docs/design/behavior-first-planning.md). Stage 2 (Decision Extraction) and Stage 3
+//! (Clustering) are not yet implemented; this command currently stops after Stage 1's gate.
 
 use crate::ui::confirm_default;
 use crate::util::build_client;
 use anyhow::{Context, Result};
-use canopy_core::{GapKind, GapSeverity, StoryStatus};
-use canopy_llm::identify_specification_gaps;
-use canopy_storage::{load_all_adrs, load_story_spec, load_user_stories, save_specification_completeness};
+use canopy_core::{BehaviorKind, BehaviorScope, GapKind, GapSeverity, StoryStatus};
+use canopy_llm::{extract_behaviors, identify_specification_gaps};
+use canopy_storage::{
+    load_all_adrs, load_story_openapi, load_story_spec, load_user_stories, save_behavior_gaps,
+    save_behaviors, save_specification_completeness,
+};
 use dialoguer::theme::ColorfulTheme;
 
 pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
@@ -74,6 +77,57 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\nStage 1 (behavior extraction) is not yet implemented.");
+    // Optional context — a story can reach behavior extraction before `canopy spec` has
+    // generated an OpenAPI spec; http-request/http-response behaviors are just weaker without it.
+    let openapi_yaml = load_story_openapi(story_id).unwrap_or(None).unwrap_or_default();
+
+    println!("\nStage 1 — Behavior Extraction");
+    println!("Extracting behaviors for '{}'...", story_id);
+    let (behaviors, gaps) = extract_behaviors(&client, story, &spec, &adrs, &openapi_yaml)
+        .context("failed to extract behaviors")?;
+
+    println!("\n{} behavior(s) extracted:\n", behaviors.behaviors.len());
+    for (i, b) in behaviors.behaviors.iter().enumerate() {
+        let scope_label = match b.scope {
+            BehaviorScope::Unit => "unit",
+            BehaviorScope::Integration => "integration",
+        };
+        let kind_label = match b.kind {
+            BehaviorKind::Validation => "validation",
+            BehaviorKind::Construction => "construction",
+            BehaviorKind::Persistence => "persistence",
+            BehaviorKind::EventShape => "event-shape",
+            BehaviorKind::Publication => "publication",
+            BehaviorKind::Orchestration => "orchestration",
+            BehaviorKind::HttpRequest => "http-request",
+            BehaviorKind::HttpResponse => "http-response",
+            BehaviorKind::ErrorTranslation => "error-translation",
+        };
+        println!(
+            "{}. [{}] {} ({scope_label}/{kind_label}, subject={}) — {}",
+            i + 1, b.id, b.source_ref, b.subject, b.statement
+        );
+    }
+
+    if !gaps.blocked.is_empty() {
+        println!("\n{} behavior(s) blocked on an unresolved decision:\n", gaps.blocked.len());
+        for (i, blocked) in gaps.blocked.iter().enumerate() {
+            println!("{}. {} — {}", i + 1, blocked.source_ref, blocked.reason);
+        }
+    }
+
+    save_behaviors(story_id, &behaviors).context("failed to save behaviors.yaml")?;
+    save_behavior_gaps(story_id, &gaps).context("failed to save behavior-gaps.yaml")?;
+    println!(
+        "\nSaved to .canopy/stories/{}/behaviors.yaml, behavior-coverage.yaml, and behavior-gaps.yaml",
+        story_id
+    );
+
+    if !confirm_default(&theme, "Behavior list looks correct — proceed?", true) {
+        println!("Stopped — edit behaviors.yaml directly, or re-run `canopy behaviors {}` to regenerate.", story_id);
+        return Ok(());
+    }
+
+    println!("\nStage 2 (Decision Extraction) and Stage 3 (Clustering) are not yet implemented.");
     Ok(())
 }

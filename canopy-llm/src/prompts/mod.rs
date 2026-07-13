@@ -8,7 +8,7 @@ mod spec;
 mod step;
 mod summary;
 
-pub use behaviors::identify_specification_gaps;
+pub use behaviors::{extract_behaviors, identify_specification_gaps};
 pub use dependencies::propose_dependencies;
 pub use fix::{fix_file, fix_file_with_tools, FixAttempt};
 pub use intent::{extract_domain_from_stories, generate_stories_from_intent, suggest_domain_entities, suggest_roles};

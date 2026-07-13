@@ -122,6 +122,103 @@ impl GapKind {
     }
 }
 
+/// Stage 1 (Behavior Extraction) — see docs/design/behavior-first-planning.md. A behavior is
+/// atomic, independently-testable, and carries no file/layer/component name — only what must be
+/// true, observably. `scope`/`subject`/`kind` are assigned here, while each behavior's origin is
+/// still known, so Stage 3 (clustering) can group mechanically instead of inferring structure
+/// from an untagged list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BehaviorScope {
+    /// Verifiable by testing one component in isolation.
+    Unit,
+    /// A property of the assembled system spanning multiple components — cannot be observed
+    /// from inside any single unit's own test.
+    Integration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum BehaviorKind {
+    Validation,
+    Construction,
+    Persistence,
+    EventShape,
+    Publication,
+    Orchestration,
+    HttpRequest,
+    HttpResponse,
+    ErrorTranslation,
+}
+
+/// Which specification artifact a behavior was derived from — not free text, so Stage 3+ can
+/// trace a behavior back to its origin without re-reading the original specification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BehaviorSource {
+    EntitySchema,
+    Scenario,
+    Openapi,
+    Adr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Behavior {
+    pub id: String,
+    pub source: BehaviorSource,
+    /// Precise reference within `source` — e.g. "Product.name.max_length" or "product-001-01".
+    /// Not prose: this is what lets Stage 3 cluster without re-reading the original spec.
+    pub source_ref: String,
+    pub scope: BehaviorScope,
+    pub subject: String,
+    pub kind: BehaviorKind,
+    pub statement: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BehaviorList {
+    #[serde(default)]
+    pub behaviors: Vec<Behavior>,
+}
+
+/// Derived view, not separately authored data — every source_ref that produced at least one
+/// behavior, mapped to the behavior ids it produced. This is Stage 1's own completeness audit
+/// (mirroring Stage 0's `SpecificationCompleteness`): a human can answer "did every source
+/// artifact produce something" by reading this file, without re-opening the entity schema,
+/// scenarios, or ADRs it was derived from.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BehaviorCoverage {
+    #[serde(default)]
+    pub coverage: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl BehaviorList {
+    pub fn coverage(&self) -> BehaviorCoverage {
+        let mut coverage: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for b in &self.behaviors {
+            coverage.entry(b.source_ref.clone()).or_default().push(b.id.clone());
+        }
+        BehaviorCoverage { coverage }
+    }
+}
+
+/// A candidate behavior Stage 1 could not generate unambiguously — most commonly because its
+/// exact shape depends on an unresolved open question (a Decision Point candidate — see Stage 2
+/// in the design doc, not yet its own tracked artifact). Recorded instead of silently picking an
+/// interpretation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockedBehaviorCandidate {
+    pub source: BehaviorSource,
+    pub source_ref: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BehaviorGaps {
+    #[serde(default)]
+    pub blocked: Vec<BlockedBehaviorCandidate>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletenessGap {
     pub kind: GapKind,
