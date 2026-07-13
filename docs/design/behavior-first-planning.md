@@ -197,6 +197,56 @@ infer.
   as their own reusable clusters; later stories reference the existing cluster instead of
   re-deriving one.
 
+## Role of tools during implementation
+
+Captured 2026-07-13 as a principle to work through when implementation begins — not yet
+integrated into the stage design above.
+
+The pipeline's overall direction is reducing how much architectural and planning reasoning is
+delegated to the coding model at execution time — Stages 0–3 front-load that reasoning into
+accepted, human-gated artifacts (behaviors, clusters, contracts) instead. If that direction
+holds, tools become most valuable as **retrieval and verification mechanisms**, not reasoning
+mechanisms:
+
+> Use tools to provide facts. Use contracts and behaviors to provide decisions.
+
+**Avoid relying on tool use for:** architecture design, behavior extraction, clustering,
+contract generation, or deciding what to implement next. These stages are increasingly
+deterministic transformations of already-accepted artifacts — giving a smaller model freedom to
+explore or reinterpret them at that point is more likely to introduce drift than value. This
+also applies to *how* execution proceeds: a model should execute a contract, not decide what
+work exists next — the next action should come from the accepted contract graph, not from a
+"figure out what to do" tool loop. Repeated search → open files → search again cycles tend to
+generate noisy context and encourage drift; retrieval should be driven by the current contract,
+not by model-directed exploration. Long-running open-ended think/tool/think/tool loops are
+similarly at odds with the direction this pipeline is moving.
+
+**Where tools remain genuinely valuable:**
+1. **Context retrieval, contract-driven rather than exploration-driven.** Given a contract,
+   supply exactly the files it names as dependencies — "here is the contract, here are the 4
+   relevant files" rather than "search the repository and figure out what matters." The
+   mechanism can still be tool-based; what changes is that the *query* comes from the contract,
+   not from the model deciding what to look for.
+2. **Test execution.** Implementation → run tests → collect failures → repair. Objective
+   feedback from a real test run, not the model reasoning from assumptions about its own code.
+3. **Compiler and lint feedback.** Deterministic signal for whether generated code actually
+   integrates — the model shouldn't have to guess.
+4. **OpenAPI/contract validation.** Where a contract or OpenAPI spec exists, use tools to verify
+   compliance mechanically: OpenAPI conformance, contract behavior coverage, missing test
+   coverage for a contract's declared behaviors.
+5. **Contract-to-test verification (future capability).** Given a contract's behavior list,
+   verify a test exists for each one — "is there a test for behavior A/B/C?" is a tractable,
+   mechanical verification problem, and a much safer question than asking a model to judge
+   whether its own implementation is complete.
+
+**Overall framing to carry into implementation:** treat the coding model primarily as a
+contract-to-code translator. Treat tools primarily as retrieval, compilation, testing,
+validation, and verification — not as an exploration or reasoning aid. The more planning and
+architectural reasoning is front-loaded into accepted behaviors and contracts, the less reason
+there should be to depend on tool-assisted exploration during execution — consistent with what
+the day's live runs already showed: `find_symbol`/`read_file` were available at every call
+across all three failed runs and were never once invoked.
+
 ## Open design note: integration contract dependencies
 
 Unit contracts are mechanically derivable: `(subject, kind) → contract`. Integration contracts
