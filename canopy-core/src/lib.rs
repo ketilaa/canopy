@@ -219,6 +219,82 @@ pub struct BehaviorGaps {
     pub blocked: Vec<BlockedBehaviorCandidate>,
 }
 
+/// Stage 2 (Decision Extraction and Gating) — see docs/design/behavior-first-planning.md.
+/// Distinguishes what a human needs to actively decide (Business) from what's usually already
+/// an ADR concern (Technical) from softer, non-blocking wording/ordering calls
+/// (BehavioralAmbiguity) — so a reviewer can triage a decision list at a glance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionCategory {
+    Business,
+    Technical,
+    BehavioralAmbiguity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionStatus {
+    Pending,
+    Resolved,
+    /// A stated option accepted as a temporary assumption rather than a considered decision —
+    /// tracked the same as a real resolution, not silently assumed (see the design doc's Stage 2
+    /// section: resolution isn't limited to "answer it").
+    AcceptedAssumption,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionPoint {
+    pub id: String,
+    pub question: String,
+    pub category: DecisionCategory,
+    #[serde(default)]
+    pub options: Vec<String>,
+    pub status: DecisionStatus,
+    /// The chosen (or accepted-as-assumption) option text — set once `status` leaves `Pending`.
+    #[serde(default)]
+    pub resolution: Option<String>,
+    /// Behavior/blocked-candidate source_refs that depend on this decision — computed by
+    /// reverse-indexing the linking step, not authored directly.
+    #[serde(default)]
+    pub affects_behaviors: Vec<String>,
+    /// Non-authoritative hint at which future contracts (Stage 4) are likely affected — Stage 3
+    /// clustering doesn't exist yet, so this can only ever be a guess, not a real reference.
+    #[serde(default)]
+    pub affects_future_contracts: Vec<String>,
+}
+
+impl DecisionPoint {
+    pub fn is_blocking(&self) -> bool {
+        self.status == DecisionStatus::Pending
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DecisionLog {
+    #[serde(default)]
+    pub decisions: Vec<DecisionPoint>,
+}
+
+impl DecisionLog {
+    pub fn has_pending_decisions(&self) -> bool {
+        self.decisions.iter().any(|d| d.is_blocking())
+    }
+}
+
+/// Stage 2's own completeness audit, same shape as Stage 0/1's — see docs/design/
+/// behavior-first-planning.md's Audits A/B/C. Computed mechanically from `DecisionLog` +
+/// `BehaviorGaps`, not authored or asked of an LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionAuditFinding {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DecisionAudit {
+    #[serde(default)]
+    pub findings: Vec<DecisionAuditFinding>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletenessGap {
     pub kind: GapKind,

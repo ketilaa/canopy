@@ -1,15 +1,17 @@
-//! `canopy behaviors <story-id>` — Stages 0-1 of the behavior-first planning pipeline
-//! (docs/design/behavior-first-planning.md). Stage 2 (Decision Extraction) and Stage 3
-//! (Clustering) are not yet implemented; this command currently stops after Stage 1's gate.
+//! `canopy behaviors <story-id>` — Stages 0-2 of the behavior-first planning pipeline
+//! (docs/design/behavior-first-planning.md). Stage 3 (Clustering) is not yet implemented; this
+//! command currently stops after Stage 2's gate.
 
-use crate::ui::confirm_default;
+use crate::ui::{confirm_default, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
-use canopy_core::{BehaviorKind, BehaviorScope, GapKind, GapSeverity, StoryStatus};
-use canopy_llm::{extract_behaviors, identify_specification_gaps};
+use canopy_core::{
+    BehaviorKind, BehaviorScope, DecisionCategory, DecisionStatus, GapKind, GapSeverity, StoryStatus,
+};
+use canopy_llm::{extract_behaviors, extract_decisions, identify_specification_gaps};
 use canopy_storage::{
     load_all_adrs, load_story_openapi, load_story_spec, load_user_stories, save_behavior_gaps,
-    save_behaviors, save_specification_completeness,
+    save_behaviors, save_decision_audit, save_decisions, save_specification_completeness,
 };
 use dialoguer::theme::ColorfulTheme;
 
@@ -128,6 +130,74 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\nStage 2 (Decision Extraction) and Stage 3 (Clustering) are not yet implemented.");
+    println!("\nStage 2 — Decision Extraction and Gating");
+    let (mut decisions, audit) = extract_decisions(&client, story, &spec, &gaps)
+        .context("failed to extract decisions")?;
+
+    if decisions.decisions.is_empty() {
+        println!("No decision points — nothing blocked on an unresolved business question.");
+    } else {
+        println!("\n{} decision point(s):\n", decisions.decisions.len());
+        for d in &mut decisions.decisions {
+            let category_label = match d.category {
+                DecisionCategory::Business => "business",
+                DecisionCategory::Technical => "technical",
+                DecisionCategory::BehavioralAmbiguity => "behavioral-ambiguity",
+            };
+            println!("--- {} ({category_label}) ---", d.id);
+            println!("Question : {}", d.question);
+            if !d.affects_behaviors.is_empty() {
+                println!("Affects  : {}", d.affects_behaviors.join(", "));
+            }
+            if !d.affects_future_contracts.is_empty() {
+                println!("Hints    : {} (non-authoritative — Stage 3/4 don't exist yet)", d.affects_future_contracts.join(", "));
+            }
+
+            if d.options.is_empty() {
+                println!("(no options proposed — leaving pending)");
+                continue;
+            }
+
+            let mut items: Vec<String> = d.options.clone();
+            items.push("Defer — leave pending (blocks affected behaviors)".to_string());
+            let item_refs: Vec<&str> = items.iter().map(String::as_str).collect();
+            let choice = select_required(&theme, "Resolution", &item_refs, items.len() - 1, "failed to read decision choice")?;
+
+            if choice == items.len() - 1 {
+                // Deferred — status stays Pending.
+                continue;
+            }
+            let chosen = d.options[choice].clone();
+            let is_assumption = !confirm_default(
+                &theme,
+                "Is this a considered decision (not just a temporary assumption to unblock work)?",
+                true,
+            );
+            d.status = if is_assumption { DecisionStatus::AcceptedAssumption } else { DecisionStatus::Resolved };
+            d.resolution = Some(chosen);
+        }
+    }
+
+    if !audit.findings.is_empty() {
+        println!("\n{} decision-audit finding(s):\n", audit.findings.len());
+        for (i, f) in audit.findings.iter().enumerate() {
+            println!("{}. {}", i + 1, f.description);
+        }
+    }
+
+    save_decisions(story_id, &decisions).context("failed to save decisions.yaml")?;
+    save_decision_audit(story_id, &audit).context("failed to save decision-audit.yaml")?;
+    println!("\nSaved to .canopy/stories/{}/decisions.yaml and decision-audit.yaml", story_id);
+
+    if decisions.has_pending_decisions() {
+        println!(
+            "\n{} decision(s) still pending — behaviors depending on them stay blocked. \
+             Re-run `canopy behaviors {story_id}` after resolving, or edit decisions.yaml directly.",
+            decisions.decisions.iter().filter(|d| d.is_blocking()).count()
+        );
+        return Ok(());
+    }
+
+    println!("\nStage 3 (Clustering) is not yet implemented.");
     Ok(())
 }

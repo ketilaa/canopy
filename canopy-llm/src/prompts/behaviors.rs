@@ -4,6 +4,7 @@
 //! enters at this stage, only whether the specification itself is internally complete.
 
 use crate::client::{LlmClient, LlmError};
+use crate::prompts::yaml_util::{parse_lenient_sequence, strip_code_fence};
 use canopy_core::*;
 
 /// Mechanically enumerates every (field, constraint) pair from the entity schema — one line per
@@ -140,14 +141,9 @@ pub fn identify_specification_gaps(
     adrs: &[Adr],
 ) -> Result<SpecificationCompleteness, LlmError> {
     let raw = client.complete_large(&specification_completeness_prompt(story, spec, adrs))?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    serde_yaml::from_str::<SpecificationCompleteness>(stripped)
-        .map_err(|source| LlmError::YamlParse { source, raw: stripped.to_string() })
+    let stripped = strip_code_fence(&raw);
+    let gaps = parse_lenient_sequence::<CompletenessGap>(&stripped, "gaps")?;
+    Ok(SpecificationCompleteness { gaps })
 }
 
 // ── Stage 1: Behavior Extraction ────────────────────────────────────────────────────────────
@@ -317,14 +313,6 @@ struct RawBlocked {
     reason: String,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-struct RawExtraction {
-    #[serde(default)]
-    behaviors: Vec<RawBehavior>,
-    #[serde(default)]
-    blocked: Vec<RawBlocked>,
-}
-
 fn scenario_behavior_prompt(story: &UserStory, spec: &IntentSpec, openapi_yaml: &str) -> String {
     let scenario_list = numbered(&scenario_checklist(&spec.scenarios));
     let open_questions = if spec.open_questions.is_empty() {
@@ -392,7 +380,7 @@ Rules:
   are already covered.
 - A behavior describing the OVERALL outcome of a scenario's flow (e.g. "X is persisted", "Y is
   published", "X is NOT persisted") is almost always scope=integration — it spans multiple
-  components, not one. Use a subject naming the operation itself (e.g. "ProductRegistration"),
+  components, not one. Use a subject naming the operation itself (e.g. "WidgetRegistration"),
   not a specific file or class. Only use scope=unit if the behavior is genuinely verifiable by
   testing one component alone.
 - Duplicate or near-duplicate behaviors across similar scenarios are fine — do not merge or
@@ -442,16 +430,11 @@ pub fn extract_behaviors(
     }
 
     let raw = client.complete_large(&scenario_behavior_prompt(story, spec, openapi_yaml))?;
-    let stripped = raw
-        .trim()
-        .trim_start_matches("```yaml")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    let extraction = serde_yaml::from_str::<RawExtraction>(stripped)
-        .map_err(|source| LlmError::YamlParse { source, raw: stripped.to_string() })?;
+    let stripped = strip_code_fence(&raw);
+    let raw_behaviors = parse_lenient_sequence::<RawBehavior>(&stripped, "behaviors")?;
+    let raw_blocked = parse_lenient_sequence::<RawBlocked>(&stripped, "blocked")?;
 
-    for rb in extraction.behaviors {
+    for rb in raw_behaviors {
         behaviors.push(Behavior {
             id: next_id(),
             source: BehaviorSource::Scenario,
@@ -463,7 +446,7 @@ pub fn extract_behaviors(
         });
     }
 
-    let blocked = extraction.blocked.into_iter().map(|b| BlockedBehaviorCandidate {
+    let blocked = raw_blocked.into_iter().map(|b| BlockedBehaviorCandidate {
         source: BehaviorSource::Scenario,
         source_ref: b.source_ref,
         reason: b.reason,

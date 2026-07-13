@@ -183,6 +183,19 @@ pub fn save_behavior_gaps(story_id: &str, gaps: &BehaviorGaps) -> Result<(), Sto
     save(&format!("stories/{}/behavior-gaps.yaml", story_id), gaps)
 }
 
+/// Stage 2 (Decision Extraction and Gating) outputs — see docs/design/behavior-first-planning.md.
+pub fn save_decisions(story_id: &str, decisions: &DecisionLog) -> Result<(), StorageError> {
+    save(&format!("stories/{}/decisions.yaml", story_id), decisions)
+}
+
+pub fn load_decisions(story_id: &str) -> Result<DecisionLog, StorageError> {
+    load(&format!("stories/{}/decisions.yaml", story_id))
+}
+
+pub fn save_decision_audit(story_id: &str, audit: &DecisionAudit) -> Result<(), StorageError> {
+    save(&format!("stories/{}/decision-audit.yaml", story_id), audit)
+}
+
 pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {
     let paths = list_adrs()?;
     let mut adrs = Vec::new();

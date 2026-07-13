@@ -1,4 +1,5 @@
 mod behaviors;
+mod decisions;
 mod dependencies;
 mod fix;
 mod intent;
@@ -7,8 +8,10 @@ mod scaffold;
 mod spec;
 mod step;
 mod summary;
+mod yaml_util;
 
 pub use behaviors::{extract_behaviors, identify_specification_gaps};
+pub use decisions::extract_decisions;
 pub use dependencies::propose_dependencies;
 pub use fix::{fix_file, fix_file_with_tools, FixAttempt};
 pub use intent::{extract_domain_from_stories, generate_stories_from_intent, suggest_domain_entities, suggest_roles};
