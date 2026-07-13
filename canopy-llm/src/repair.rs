@@ -82,11 +82,13 @@ pub(crate) fn fix_yaml_colon_in_scalars(yaml: &str) -> String {
             // type: [string] — LLM uses bracket notation for array types but YAML parses
             // it as an inline sequence. Quote any unquoted bracket-enclosed type annotation.
             // Quote bracket-wrapped type annotations like `type: [string]` but NOT
-            // real YAML inline sequences like `depends_on: ["path/to/file.ts"]`.
-            // Real sequences contain quoted strings inside; type annotations do not.
+            // real YAML inline sequences like `depends_on: ["path/to/file.ts"]` or a genuinely
+            // empty sequence like `constraints: []` — a real type annotation always names a
+            // type, so empty inner content can only be a real empty sequence, never one of these.
             let inner = if value.len() >= 2 { &value[1..value.len()-1] } else { "" };
             if value.starts_with('[') && value.ends_with(']') && value.len() >= 2
                 && !value.starts_with("[\n")
+                && !inner.is_empty()
                 && !inner.contains('"')
                 && !inner.contains('\'')
             {
@@ -269,5 +271,37 @@ mod tests {
         let input = "steps:\n- id: \"1\"\n  service: svc\n  file: a.java\n  operation: create\n  description: Create something.";
         let result = dedup_yaml_keys(input);
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn fix_yaml_colon_in_scalars_quotes_a_bracket_type_annotation() {
+        let input = "    type: [string]";
+        let result = fix_yaml_colon_in_scalars(input);
+        assert_eq!(result, "    type: \"[string]\"");
+    }
+
+    #[test]
+    fn fix_yaml_colon_in_scalars_leaves_a_real_empty_sequence_untouched() {
+        // Regression: this used to get quoted into `constraints: "[]"`, a string, which then
+        // fails to deserialize into a Vec<String> field one level up.
+        let input = "    constraints: []";
+        let result = fix_yaml_colon_in_scalars(input);
+        assert_eq!(result, input);
+        let parsed: serde_yaml::Value = serde_yaml::from_str(result.trim()).expect("should parse");
+        assert!(parsed["constraints"].as_sequence().unwrap().is_empty());
+    }
+
+    #[test]
+    fn fix_yaml_colon_in_scalars_leaves_a_real_quoted_sequence_untouched() {
+        let input = "    depends_on: [\"path/to/file.ts\"]";
+        let result = fix_yaml_colon_in_scalars(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn fix_yaml_colon_in_scalars_quotes_an_unquoted_scalar_containing_a_colon() {
+        let input = "    decision: ProductCreated on topic: product-events";
+        let result = fix_yaml_colon_in_scalars(input);
+        assert_eq!(result, "    decision: \"ProductCreated on topic: product-events\"");
     }
 }
