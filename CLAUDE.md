@@ -512,6 +512,77 @@ artifact, so they survive redirection to a file):
 
 ---
 
+## Driving an Interactive Dogfooding Session (`intent` → `spec` → `behaviors`)
+
+The section above covers `implement` resuming a saved plan, where every remaining prompt is a
+`confirm_default` that degrades gracefully without a real terminal. `intent`, `spec`, and
+`behaviors` are different: they gate on `select_required` (story acceptance, ADR accept/modify/
+reject, Stage 2 decision resolution) — this reads raw key events via `dialoguer::Select`, which
+hard-errors with "not a terminal" on a plain pipe. Piping answers with `printf | canopy` does not
+work for these commands past the first `select_required` prompt.
+
+**Use `expect` (or another pty-allocating driver), not a plain pipe.** `expect`'s `spawn` gives
+the child process a real pty, so `Select`/`Confirm`/`Input` all render and respond correctly.
+Minimal pattern for one command with N `select_required` gates, all accepting the sensible
+default:
+
+```tcl
+#!/usr/bin/expect -f
+set timeout 240
+log_file -a /path/to/session.raw.log
+cd <dogfooding-project-root>
+spawn canopy --llm-debug
+expect "canopy>"
+send "behaviors <story-id>\r"
+expect {
+    -re {Accept this ADR\?} { send "\r"; exp_continue }
+    -re {continue to behavior extraction\?} { send "\r"; exp_continue }
+    -re {Clustering looks correct} { send "\r"; exp_continue }
+    "canopy>" { }
+    timeout { puts "TIMEOUT-MARKER" }
+}
+send "exit\r"
+expect eof
+```
+
+**`select_required`'s `default` parameter is almost always index 0, and Enter alone accepts the
+default** — every gate in `intent.rs`/`spec.rs`/`behaviors.rs` (story accept/reject, ADR accept/
+modify/reject, testing-framework choice, decision resolution's option list) passes `default: 0`,
+and index 0 is consistently the "Accept" / recommended option. This means a single generic
+`-re {some known prompt text} { send "\r"; exp_continue }` clause per gate is enough to drive an
+entire multi-gate command without needing arrow-key navigation, *provided* accepting every
+default is actually the reviewer's intent — for anything else (rejecting a story, picking a
+non-default ADR option, choosing a specific decision resolution), send the arrow-key escape
+sequence(s) (`\x1b[B` down, `\x1b[A` up) before `\r`, or resolve it by hand-editing the saved
+artifact afterward instead (see below).
+
+**`intent "<multi-word statement>"` typed inline does not work — the REPL's line parser has no
+shell-quote awareness.** `cli.rs` tokenizes a typed line with plain `split_whitespace()`, so
+`intent "As a foo, I want..."` splits into many separate arguments (the leading `"` stays glued
+to the first word), and clap rejects everything after the first token as an unexpected argument.
+Use the command's own interactive fallback instead: send `intent` bare, wait for the "Behavioral
+intent" `Input` prompt, and send the full statement as a separate line — spaces and punctuation
+are preserved correctly since `dialoguer::Input` reads a raw line, not REPL-tokenized args.
+
+**Human-in-the-loop corrections belong in the saved YAML, not in cleverer keystroke scripting.**
+When a generated artifact needs a real correction (a bad `want` field, an unresolved open
+question, a missing constraint-coverage scenario), it's far more robust to accept the LLM's
+output as generated, then edit `stories.yaml`/`spec.yaml`/`domain_registry.yaml`/`roles.yaml`
+directly with the fix, than to fight `dialoguer`'s "Accept with edit" text-replacement UX (which
+starts the cursor at the end of pre-filled `with_initial_text`, so replacing it needs a kill-line
+keystroke first) through a scripted pty session. Re-run the affected command afterward if the
+correction changes what a later stage needs to see.
+
+**`select_required` genuinely blocks a run when nothing sensible can be defaulted to.** If a
+stage's own completeness check reports a blocking gap (Stage 0's `has_blocking_gaps()`, for
+example), there is no way to "answer past it" via a gate — the command returns before any further
+prompt appears. The only ways through are: fix the underlying artifact (add the missing scenario,
+resolve the open question) and re-run, or — for throwaway live-verification only, never for a
+real run — temporarily short-circuit the check in code (`&& false` on the gate) and revert before
+committing, the same pattern already used throughout this project's own Stage 0–4 development.
+
+---
+
 ## Diagnosing Dogfooding Runs
 
 Canopy is dogfooded against separate throwaway projects driven entirely through the `canopy`
