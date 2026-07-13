@@ -217,6 +217,26 @@ pub fn save_clustering_audit(story_id: &str, audit: &ClusteringAudit) -> Result<
     save(&format!("stories/{}/clustering-audit.yaml", story_id), audit)
 }
 
+/// Stage 4 (Contract Generation) outputs — see docs/design/behavior-first-planning.md.
+/// `contract-coverage.yaml` is a derived view (see `ContractSet::coverage`), saved alongside for
+/// a human to audit without re-deriving it — same pattern as `behavior-coverage.yaml`.
+pub fn save_contracts(story_id: &str, contracts: &ContractSet) -> Result<(), StorageError> {
+    save(&format!("stories/{}/contracts.yaml", story_id), contracts)?;
+    save(&format!("stories/{}/contract-coverage.yaml", story_id), &contracts.coverage())
+}
+
+pub fn load_contracts(story_id: &str) -> Result<ContractSet, StorageError> {
+    load(&format!("stories/{}/contracts.yaml", story_id))
+}
+
+pub fn save_dependency_review(story_id: &str, review: &DependencyReview) -> Result<(), StorageError> {
+    save(&format!("stories/{}/dependency-review.yaml", story_id), review)
+}
+
+pub fn save_contract_audit(story_id: &str, audit: &ContractAudit) -> Result<(), StorageError> {
+    save(&format!("stories/{}/contract-audit.yaml", story_id), audit)
+}
+
 pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {
     let paths = list_adrs()?;
     let mut adrs = Vec::new();

@@ -305,6 +305,40 @@ validation in the repository," there is no path by which a validation behavior c
 the repository contract, because it was clustered elsewhere in Stage 3, before the repository
 contract was even generated.
 
+**Implemented 2026-07-13.** One contract per cluster/grouping, mechanically, never "design a
+component" — always "given this cluster, generate a contract that owns these behaviors." Unit
+contracts are entirely mechanical: name (`{subject}{PascalCase(kind)}`, e.g.
+`ProductNameValidation`), owned behaviors, and `required_tests` (the owned behaviors' own
+statements, verbatim — a behavior statement already reads as a test title, so this is
+deliberately redundant with `owned_behaviors` rather than a fresh LLM rewording) are pure
+derivations of the cluster. Unit dependencies use the one sound mechanical rule available at this
+scope: a non-construction contract depends on the construction contract for the same `subject`,
+when one exists — you need a constructed instance before persisting or publishing it.
+
+Integration contracts get a mechanical dependency *baseline* (case-insensitive substring match of
+each unit cluster's `subject` against the grouping's own behavior statements) followed by one
+bounded LLM review: given the full unit-contract catalog, add or remove from the baseline — never
+touch owned behaviors, never invent a contract. The baseline is deliberately crude, not a design
+flaw to fix: live-verified against `product-001`, it correctly matched `Product` (construction)
+and `ProductCreated` (event-shape) by literal substring, but missed `EventPublisher` entirely,
+since the word "EventPublisher" never appears in a behavior statement like "A ProductCreated
+event is published" — exactly the gap the review step exists to close, and it did, adding the
+missing dependency on that exact live run. Two deliberate simplifications versus the sketch
+above: no `forbidden_imports`/`implementation_target` fields yet — those are file-generation
+specifics that likely belong to a later scaffolding step once `canopy implement` is wired to
+consume contracts, not to this abstract artifact.
+
+**Mechanical audit** (`audit_contracts`, same shape as Stage 0/1/2/3's): every cluster/grouping
+produces exactly one contract, every contract owns at least one behavior, every clustered
+behavior appears in exactly one contract. A derived `ContractCoverage` view (behavior id →
+contract id, mirroring `BehaviorCoverage`) is saved alongside as `contract-coverage.yaml` for the
+same reason `behavior-coverage.yaml` is: answering "which contract owns behavior X" without
+re-deriving it. Live-verified against `product-001`: 9 contracts generated (8 unit + 1
+integration) from the 9 clusters/groupings Stage 3 produced, audit found zero issues — full
+`Behavior → Cluster → Contract` traceability confirmed without re-reading `spec.yaml`,
+`openapi.yaml`, or the ADRs, satisfying the design's own success criterion that contract
+generation run off `behaviors.yaml`/`clusters.yaml` alone.
+
 ## The recurring principle
 
 The same insight surfaced at two different levels of this investigation:
@@ -505,21 +539,25 @@ reproduced and was fixed the same way, one level below where the original bug wa
 
 ## Status and next steps
 
-**Stages 0-3 are implemented**, all in `canopy behaviors <story-id>`
+**All five stages (0-4) are implemented**, all in `canopy behaviors <story-id>`
 (`canopy-cli/src/commands/behaviors.rs`): Specification Completeness
 (`SpecificationCompleteness`/`CompletenessGap`/`GapKind`/`GapSeverity`), Behavior Extraction
 (`Behavior`/`BehaviorList`/`BehaviorGaps`/`BehaviorAudit`), Decision Extraction and Gating
-(`DecisionPoint`/`DecisionLog`/`DecisionAudit`), and Mechanical Clustering
-(`ClusteringResult`/`UnitCluster`/`IntegrationGrouping`/`ClusterReview`/`ClusteringAudit`) — types
-in `canopy-core`, prompts in `canopy-llm/src/prompts/behaviors.rs`, `decisions.rs`, and
-`clustering.rs`. All four have been live-verified against `product-001`, each surfacing and
-fixing a real coverage gap along the way (see "The recurring principle", Stage 1's hardening
-note, and Stage 2/3's notes above). The command currently stops after Stage 3's gate — Stage 4
-(Contracts) is not yet implemented.
+(`DecisionPoint`/`DecisionLog`/`DecisionAudit`), Mechanical Clustering
+(`ClusteringResult`/`UnitCluster`/`IntegrationGrouping`/`ClusterReview`/`ClusteringAudit`), and
+Contract Generation (`Contract`/`ContractSet`/`ContractCoverage`/`DependencyReview`/
+`ContractAudit`) — types in `canopy-core`, prompts in `canopy-llm/src/prompts/behaviors.rs`,
+`decisions.rs`, `clustering.rs`, and `contracts.rs`. All five have been live-verified against
+`product-001`, each surfacing and fixing a real coverage gap along the way (see "The recurring
+principle", Stage 1's hardening note, and Stage 2/3/4's notes above) — the integration-contract-
+dependency question above resolved by that same live run (see Stage 4's note).
 
-Before building Stage 4: decide how a behavior's Decision Point dependency (Stage 2 Rule 3) is
-represented in `behaviors.yaml` so Stage 4 can check it mechanically rather than re-deriving it,
-wire Stage 4's implementation gate against Stage 2's `DecisionLog` (Rules 4/5), and resolve the
-integration-contract-dependency question above (which unit contracts does an integration grouping
-actually exercise). Migration path from the current `plan.yaml` shape to this one is also
-unresolved — out of scope for this document.
+This closes the planning half of the redesign: `Story → Behaviors → Decisions → Clusters →
+Contracts` now runs end-to-end, gated at every stage, fully traceable from behavior to contract
+without re-reading the original specification artifacts. What's left is downstream of this
+document's scope: wiring `canopy implement` to actually consume `contracts.yaml` instead of its
+current ADR/architecture-skill-driven planning, deciding how a behavior's Decision Point
+dependency (Stage 2 Rule 3) is represented so a future re-run after resolving a decision
+re-materializes the behavior it blocked (noted as an open gap during Stage 4 — currently nothing
+re-derives a blocked behavior once its decision resolves), and the migration path from today's
+`plan.yaml` shape to this one.

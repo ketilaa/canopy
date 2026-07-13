@@ -1,21 +1,24 @@
-//! `canopy behaviors <story-id>` — Stages 0-3 of the behavior-first planning pipeline
-//! (docs/design/behavior-first-planning.md). Stage 4 (Contract Generation) is not yet
-//! implemented; this command currently stops after Stage 3's gate.
+//! `canopy behaviors <story-id>` — Stages 0-4 of the behavior-first planning pipeline
+//! (docs/design/behavior-first-planning.md). Stage 4 (Contract Generation) is the pipeline's
+//! last stage; wiring `canopy implement` to consume its contracts is future work.
 
 use crate::ui::{confirm_default, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{
-    BehaviorDerivation, DecisionCategory, DecisionStatus, GapKind, GapSeverity, StoryStatus,
+    BehaviorDerivation, ContractDerivation, DecisionCategory, DecisionStatus, GapKind,
+    GapSeverity, StoryStatus,
 };
 use canopy_llm::{
-    audit_behavior_coverage, audit_clustering, extract_behaviors, extract_decisions,
-    identify_specification_gaps, mechanical_cluster, review_clustering,
+    audit_behavior_coverage, audit_clustering, audit_contracts, extract_behaviors,
+    extract_decisions, generate_contracts, identify_specification_gaps, mechanical_cluster,
+    review_clustering,
 };
 use canopy_storage::{
     load_all_adrs, load_story_openapi, load_story_spec, load_user_stories, save_behavior_audit,
     save_behavior_gaps, save_behaviors, save_cluster_review, save_clustering,
-    save_clustering_audit, save_decision_audit, save_decisions, save_specification_completeness,
+    save_clustering_audit, save_contract_audit, save_contracts, save_decision_audit,
+    save_decisions, save_dependency_review, save_specification_completeness,
 };
 use dialoguer::theme::ColorfulTheme;
 
@@ -261,6 +264,62 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\nStage 4 (Contract Generation) is not yet implemented.");
+    println!("\nStage 4 — Contract Generation");
+    let (contracts, dependency_review) = generate_contracts(story_id, &client, &behaviors, &clustering)
+        .context("failed to generate contracts")?;
+
+    println!("\n{} contract(s) generated:\n", contracts.contracts.len());
+    for c in &contracts.contracts {
+        let derivation_label = match c.derivation {
+            ContractDerivation::Mechanical => "mechanical",
+            ContractDerivation::Reviewed => "reviewed",
+        };
+        println!(
+            "--- {} ({}, {}/{derivation_label}, from {}) ---",
+            c.name, c.id, c.scope.label(), c.source_cluster
+        );
+        if !c.dependencies.is_empty() {
+            println!("  depends on: {}", c.dependencies.join(", "));
+        }
+        for test in &c.required_tests {
+            println!("  test: {test}");
+        }
+    }
+
+    if !dependency_review.findings.is_empty() {
+        println!("\n{} dependency-review finding(s):\n", dependency_review.findings.len());
+        for (i, f) in dependency_review.findings.iter().enumerate() {
+            println!("{}. {}", i + 1, f.description);
+        }
+    }
+
+    let contract_audit = audit_contracts(&clustering, &contracts);
+    if !contract_audit.findings.is_empty() {
+        println!("\n{} contract-audit finding(s):\n", contract_audit.findings.len());
+        for (i, f) in contract_audit.findings.iter().enumerate() {
+            println!("{}. {}", i + 1, f.description);
+        }
+    }
+
+    save_contracts(story_id, &contracts).context("failed to save contracts.yaml")?;
+    save_dependency_review(story_id, &dependency_review).context("failed to save dependency-review.yaml")?;
+    save_contract_audit(story_id, &contract_audit).context("failed to save contract-audit.yaml")?;
+    println!(
+        "\nSaved to .canopy/stories/{}/contracts.yaml, contract-coverage.yaml, dependency-review.yaml, and contract-audit.yaml",
+        story_id
+    );
+
+    if !confirm_default(&theme, "Contracts look correct — accept?", true) {
+        println!(
+            "Stopped — edit contracts.yaml directly per the review findings above, or re-run \
+             `canopy behaviors {}` to regenerate.",
+            story_id
+        );
+        return Ok(());
+    }
+
+    println!(
+        "\nContract generation complete. Wiring `canopy implement` to consume these contracts is future work."
+    );
     Ok(())
 }

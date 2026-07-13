@@ -1,5 +1,6 @@
 mod behaviors;
 mod clustering;
+mod contracts;
 mod decisions;
 mod dependencies;
 mod fix;
@@ -13,6 +14,7 @@ mod yaml_util;
 
 pub use behaviors::{audit_behavior_coverage, extract_behaviors, identify_specification_gaps};
 pub use clustering::{audit_clustering, mechanical_cluster, review_clustering};
+pub use contracts::{audit_contracts, generate_contracts};
 pub use decisions::extract_decisions;
 pub use dependencies::propose_dependencies;
 pub use fix::{fix_file, fix_file_with_tools, FixAttempt};

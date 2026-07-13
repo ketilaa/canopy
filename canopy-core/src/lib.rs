@@ -420,6 +420,105 @@ pub struct ClusteringAudit {
     pub findings: Vec<ClusteringAuditFinding>,
 }
 
+/// Stage 4 (Contract Generation) — see docs/design/behavior-first-planning.md. Whether a
+/// contract's shape came purely from mechanical derivation, or was mechanically generated and
+/// then LLM-reviewed. Distinct from `BehaviorDerivation` — "reviewed" is a stronger trust level
+/// than "inferred": the LLM never authors a contract from scratch, only adds/removes from an
+/// already-mechanical baseline.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractDerivation {
+    Mechanical,
+    Reviewed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contract {
+    pub id: String,
+    /// Mechanically derived from the source cluster's `subject`/`kind` (unit) or `subject` alone
+    /// (integration) — e.g. "ProductNameValidation", "ProductRegistrationWorkflow".
+    pub name: String,
+    pub scope: BehaviorScope,
+    /// The `UnitCluster.id` or `IntegrationGrouping.id` this contract was generated from —
+    /// exactly one contract per cluster, never more, never fewer (see `ContractAudit`).
+    pub source_cluster: String,
+    /// Behavior ids owned by this contract — a behavior may only ever appear in the one contract
+    /// generated from its own cluster; nothing here was assigned outside Stage 3's clustering.
+    #[serde(default)]
+    pub owned_behaviors: Vec<String>,
+    /// The owned behaviors' own statements, verbatim — a behavior statement already reads as a
+    /// test title, so this is deliberately redundant with `owned_behaviors` rather than a fresh
+    /// LLM-authored rewording: same source of truth, two views (ids for audits, text for
+    /// readability).
+    #[serde(default)]
+    pub required_tests: Vec<String>,
+    /// Other contract ids this one depends on. Always empty for most unit contracts (nothing in
+    /// today's taxonomy makes one unit responsibility need another); the one mechanical
+    /// exception is a persistence/event/publication contract depending on the construction
+    /// contract for the same `subject`, when one exists. For integration contracts this starts
+    /// as a mechanical substring-matched baseline and is then LLM-reviewed (see
+    /// `DependencyReview`) — no mechanical rule maps an integration `subject` to the unit
+    /// contracts it actually exercises.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    pub derivation: ContractDerivation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContractSet {
+    #[serde(default)]
+    pub contracts: Vec<Contract>,
+}
+
+/// Derived view, not separately authored data — same shape as `BehaviorCoverage`: every behavior
+/// id mapped to the contract id that owns it, so "which contract owns behavior X" is answerable
+/// by reading this file, without re-deriving it from `contracts.yaml`'s full structure.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContractCoverage {
+    #[serde(default)]
+    pub coverage: std::collections::BTreeMap<String, String>,
+}
+
+impl ContractSet {
+    pub fn coverage(&self) -> ContractCoverage {
+        let mut coverage = std::collections::BTreeMap::new();
+        for c in &self.contracts {
+            for behavior_id in &c.owned_behaviors {
+                coverage.insert(behavior_id.clone(), c.id.clone());
+            }
+        }
+        ContractCoverage { coverage }
+    }
+}
+
+/// Stage 4's bounded LLM review of the mechanical integration-dependency baseline — reviews,
+/// never invents a contract's owned behaviors. Additions/removals only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyReviewFinding {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DependencyReview {
+    #[serde(default)]
+    pub findings: Vec<DependencyReviewFinding>,
+}
+
+/// Stage 4's own mechanical audit, same shape as Stage 0/1/2/3's — computed from
+/// `ClusteringResult` + `ContractSet`, not asked of an LLM: does every cluster/grouping produce
+/// exactly one contract, does every contract own at least one behavior, and does every clustered
+/// behavior appear in exactly one contract?
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractAuditFinding {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContractAudit {
+    #[serde(default)]
+    pub findings: Vec<ContractAuditFinding>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletenessGap {
     pub kind: GapKind,
