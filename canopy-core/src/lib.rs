@@ -137,6 +137,15 @@ pub enum BehaviorScope {
     Integration,
 }
 
+impl BehaviorScope {
+    pub fn label(&self) -> &'static str {
+        match self {
+            BehaviorScope::Unit => "unit",
+            BehaviorScope::Integration => "integration",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum BehaviorKind {
@@ -151,6 +160,22 @@ pub enum BehaviorKind {
     ErrorTranslation,
 }
 
+impl BehaviorKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            BehaviorKind::Validation => "validation",
+            BehaviorKind::Construction => "construction",
+            BehaviorKind::Persistence => "persistence",
+            BehaviorKind::EventShape => "event-shape",
+            BehaviorKind::Publication => "publication",
+            BehaviorKind::Orchestration => "orchestration",
+            BehaviorKind::HttpRequest => "http-request",
+            BehaviorKind::HttpResponse => "http-response",
+            BehaviorKind::ErrorTranslation => "error-translation",
+        }
+    }
+}
+
 /// Which specification artifact a behavior was derived from — not free text, so Stage 3+ can
 /// trace a behavior back to its origin without re-reading the original specification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -160,6 +185,26 @@ pub enum BehaviorSource {
     Scenario,
     Openapi,
     Adr,
+}
+
+/// Whether a behavior was computed deterministically from already-structured data (entity
+/// schema, ADR convention) or produced by an LLM interpreting a scenario. Kept separate from
+/// `source` — `source: adr` behaviors (event-shape, publication) are mechanical too, so `source`
+/// alone can't answer "should I trust this without re-checking." Defaults to `Inferred` so
+/// pre-existing `behaviors.yaml` files (saved before this field existed) load without a
+/// per-entry migration — a reasonable default since old mechanical entries are a minority and
+/// this is diagnostic metadata, not something correctness depends on.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BehaviorDerivation {
+    Mechanical,
+    Inferred,
+}
+
+impl Default for BehaviorDerivation {
+    fn default() -> Self {
+        BehaviorDerivation::Inferred
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +218,8 @@ pub struct Behavior {
     pub subject: String,
     pub kind: BehaviorKind,
     pub statement: String,
+    #[serde(default)]
+    pub derivation: BehaviorDerivation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -217,6 +264,24 @@ pub struct BlockedBehaviorCandidate {
 pub struct BehaviorGaps {
     #[serde(default)]
     pub blocked: Vec<BlockedBehaviorCandidate>,
+}
+
+/// Stage 1's own completeness audit, same shape as Stage 0/2's — anticipated in the design doc
+/// ("has every scenario/constraint/ADR requirement produced at least one behavior?") but not
+/// built until a live run silently dropped every behavior for one scenario: the LLM call
+/// produced them, but a formatting mistake (writing a `kind` value into `scope`) made every one
+/// of them fail per-item validation and get skipped, with no mechanical check to notice a whole
+/// scenario had gone uncovered. Computed from `IntentSpec` + `BehaviorList` + `BehaviorGaps`, not
+/// asked of an LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorAuditFinding {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BehaviorAudit {
+    #[serde(default)]
+    pub findings: Vec<BehaviorAuditFinding>,
 }
 
 /// Stage 2 (Decision Extraction and Gating) — see docs/design/behavior-first-planning.md.
@@ -293,6 +358,66 @@ pub struct DecisionAuditFinding {
 pub struct DecisionAudit {
     #[serde(default)]
     pub findings: Vec<DecisionAuditFinding>,
+}
+
+/// Stage 3 (Mechanical Clustering) — see docs/design/behavior-first-planning.md. Unit behaviors
+/// group by `(subject, kind)`; integration behaviors group by `subject` alone, since an
+/// integration behavior's `kind` names which observable effect it is (persistence, orchestration,
+/// http), not a separate grouping axis — the workflow named by `subject` is the natural
+/// integration-test boundary. Both groupings are computed mechanically, never by an LLM.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UnitCluster {
+    pub id: String,
+    pub subject: String,
+    pub kind: BehaviorKind,
+    #[serde(default)]
+    pub behavior_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IntegrationGrouping {
+    pub id: String,
+    pub subject: String,
+    #[serde(default)]
+    pub behavior_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusteringResult {
+    #[serde(default)]
+    pub unit_clusters: Vec<UnitCluster>,
+    #[serde(default)]
+    pub integration_groupings: Vec<IntegrationGrouping>,
+}
+
+/// Stage 3's bounded LLM review of the mechanical baseline above — reviews, never generates from
+/// scratch. Findings are surfaced for a human to act on (merge two clusters, move a mis-tagged
+/// behavior, flag a cross-layer dependency) by editing `clusters.yaml` directly; the review
+/// itself never mutates the baseline, matching Stage 1/2's precedent of surfacing findings rather
+/// than auto-fixing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterReviewFinding {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusterReview {
+    #[serde(default)]
+    pub findings: Vec<ClusterReviewFinding>,
+}
+
+/// Stage 3's own mechanical audit, same shape as Stage 0/1/2's — computed from `BehaviorList` +
+/// `ClusteringResult`, not asked of an LLM: does every behavior land in exactly one cluster or
+/// grouping matching its own scope?
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusteringAuditFinding {
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusteringAudit {
+    #[serde(default)]
+    pub findings: Vec<ClusteringAuditFinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

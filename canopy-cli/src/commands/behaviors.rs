@@ -1,17 +1,21 @@
-//! `canopy behaviors <story-id>` — Stages 0-2 of the behavior-first planning pipeline
-//! (docs/design/behavior-first-planning.md). Stage 3 (Clustering) is not yet implemented; this
-//! command currently stops after Stage 2's gate.
+//! `canopy behaviors <story-id>` — Stages 0-3 of the behavior-first planning pipeline
+//! (docs/design/behavior-first-planning.md). Stage 4 (Contract Generation) is not yet
+//! implemented; this command currently stops after Stage 3's gate.
 
 use crate::ui::{confirm_default, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{
-    BehaviorKind, BehaviorScope, DecisionCategory, DecisionStatus, GapKind, GapSeverity, StoryStatus,
+    BehaviorDerivation, DecisionCategory, DecisionStatus, GapKind, GapSeverity, StoryStatus,
 };
-use canopy_llm::{extract_behaviors, extract_decisions, identify_specification_gaps};
+use canopy_llm::{
+    audit_behavior_coverage, audit_clustering, extract_behaviors, extract_decisions,
+    identify_specification_gaps, mechanical_cluster, review_clustering,
+};
 use canopy_storage::{
-    load_all_adrs, load_story_openapi, load_story_spec, load_user_stories, save_behavior_gaps,
-    save_behaviors, save_decision_audit, save_decisions, save_specification_completeness,
+    load_all_adrs, load_story_openapi, load_story_spec, load_user_stories, save_behavior_audit,
+    save_behavior_gaps, save_behaviors, save_cluster_review, save_clustering,
+    save_clustering_audit, save_decision_audit, save_decisions, save_specification_completeness,
 };
 use dialoguer::theme::ColorfulTheme;
 
@@ -90,24 +94,13 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
 
     println!("\n{} behavior(s) extracted:\n", behaviors.behaviors.len());
     for (i, b) in behaviors.behaviors.iter().enumerate() {
-        let scope_label = match b.scope {
-            BehaviorScope::Unit => "unit",
-            BehaviorScope::Integration => "integration",
-        };
-        let kind_label = match b.kind {
-            BehaviorKind::Validation => "validation",
-            BehaviorKind::Construction => "construction",
-            BehaviorKind::Persistence => "persistence",
-            BehaviorKind::EventShape => "event-shape",
-            BehaviorKind::Publication => "publication",
-            BehaviorKind::Orchestration => "orchestration",
-            BehaviorKind::HttpRequest => "http-request",
-            BehaviorKind::HttpResponse => "http-response",
-            BehaviorKind::ErrorTranslation => "error-translation",
+        let derivation_label = match b.derivation {
+            BehaviorDerivation::Mechanical => "mechanical",
+            BehaviorDerivation::Inferred => "inferred",
         };
         println!(
-            "{}. [{}] {} ({scope_label}/{kind_label}, subject={}) — {}",
-            i + 1, b.id, b.source_ref, b.subject, b.statement
+            "{}. [{}] {} ({}/{}, subject={}, {derivation_label}) — {}",
+            i + 1, b.id, b.source_ref, b.scope.label(), b.kind.label(), b.subject, b.statement
         );
     }
 
@@ -118,10 +111,19 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
         }
     }
 
+    let behavior_audit = audit_behavior_coverage(&spec, &behaviors, &gaps);
+    if !behavior_audit.findings.is_empty() {
+        println!("\n{} behavior-audit finding(s):\n", behavior_audit.findings.len());
+        for (i, f) in behavior_audit.findings.iter().enumerate() {
+            println!("{}. {}", i + 1, f.description);
+        }
+    }
+
     save_behaviors(story_id, &behaviors).context("failed to save behaviors.yaml")?;
     save_behavior_gaps(story_id, &gaps).context("failed to save behavior-gaps.yaml")?;
+    save_behavior_audit(story_id, &behavior_audit).context("failed to save behavior-audit.yaml")?;
     println!(
-        "\nSaved to .canopy/stories/{}/behaviors.yaml, behavior-coverage.yaml, and behavior-gaps.yaml",
+        "\nSaved to .canopy/stories/{}/behaviors.yaml, behavior-coverage.yaml, behavior-gaps.yaml, and behavior-audit.yaml",
         story_id
     );
 
@@ -198,6 +200,67 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\nStage 3 (Clustering) is not yet implemented.");
+    println!("\nStage 3 — Mechanical Clustering");
+    let clustering = mechanical_cluster(story_id, &behaviors);
+    println!(
+        "\n{} unit cluster(s), {} integration grouping(s):\n",
+        clustering.unit_clusters.len(),
+        clustering.integration_groupings.len()
+    );
+    for c in &clustering.unit_clusters {
+        println!("--- {} (unit, subject={}, kind={}) ---", c.id, c.subject, c.kind.label());
+        for id in &c.behavior_ids {
+            if let Some(b) = behaviors.behaviors.iter().find(|b| &b.id == id) {
+                println!("  {} — {}", b.id, b.statement);
+            }
+        }
+    }
+    for g in &clustering.integration_groupings {
+        println!("--- {} (integration, subject={}) ---", g.id, g.subject);
+        for id in &g.behavior_ids {
+            if let Some(b) = behaviors.behaviors.iter().find(|b| &b.id == id) {
+                println!("  {} — {}", b.id, b.statement);
+            }
+        }
+    }
+
+    let clustering_audit = audit_clustering(&behaviors, &clustering);
+    if !clustering_audit.findings.is_empty() {
+        println!("\n{} clustering-audit finding(s):\n", clustering_audit.findings.len());
+        for (i, f) in clustering_audit.findings.iter().enumerate() {
+            println!("{}. {}", i + 1, f.description);
+        }
+    }
+
+    println!("\nReviewing clustering baseline...");
+    let review = review_clustering(&client, &behaviors, &clustering)
+        .context("failed to review clustering")?;
+    if review.findings.is_empty() {
+        println!("No issues found — clustering baseline looks sound.");
+    } else {
+        println!("\n{} review finding(s):\n", review.findings.len());
+        for (i, f) in review.findings.iter().enumerate() {
+            println!("{}. {}", i + 1, f.description);
+        }
+    }
+
+    save_clustering(story_id, &clustering).context("failed to save clusters.yaml")?;
+    save_cluster_review(story_id, &review).context("failed to save cluster-review.yaml")?;
+    save_clustering_audit(story_id, &clustering_audit).context("failed to save clustering-audit.yaml")?;
+    println!(
+        "\nSaved to .canopy/stories/{}/clusters.yaml, cluster-review.yaml, and clustering-audit.yaml",
+        story_id
+    );
+
+    if !confirm_default(&theme, "Clustering looks correct — accept?", true) {
+        println!(
+            "Stopped — edit clusters.yaml directly per the review findings above, or re-run \
+             `canopy behaviors {}` to regenerate the baseline.",
+            story_id
+        );
+        return Ok(());
+    }
+
+    println!("\nStage 4 (Contract Generation) is not yet implemented.");
     Ok(())
 }

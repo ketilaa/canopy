@@ -124,6 +124,39 @@ set aside for Stage 4's integration-test contracts instead of being clustered as
 
 **Human gate.**
 
+**Hardened 2026-07-13, during Stage 3's live verification.** A live run surfaced a bug more
+fundamental than a coverage gap: the model correctly generated http-response/error-translation
+behaviors and correctly reasoned about a FAILURE scenario's implied persistence/publication
+prevention, but wrote the `kind` value into the `scope` field for those entries (e.g.
+`scope: http-response, kind: http-response` instead of `scope: integration, kind: http-response`).
+Since `scope` only accepts `unit`/`integration`, every one of those malformed entries failed
+per-item YAML validation and was silently dropped — not a reasoning failure, a serialization
+failure: `Generated Behavior → Serialization Error → Parser Rejection → Coverage Loss`, rather
+than `Generated Behavior → Missing Reasoning`. One scenario (`product-001-02`) lost all three of
+its behaviors this way, with nothing recording that it had produced anything at all. Fixed three
+ways:
+1. **Prompt fix at the root cause** — an explicit WRONG/CORRECT rule added to
+   `scenario_behavior_prompt`'s Rules section: "`scope` is ALWAYS exactly `unit` or
+   `integration` — never the same value as `kind`."
+2. **A new mechanical audit** (`audit_behavior_coverage`, mirroring Stage 0/2's own audits): does
+   every scenario in the spec have at least one surviving behavior, or an entry in
+   `gaps.blocked`? Anything with neither is flagged as a real coverage loss, not a legitimate
+   empty outcome — this is the exact check that would have caught the bug above mechanically
+   instead of requiring manual YAML inspection to notice. Saved to `behavior-audit.yaml`.
+3. **A `derivation` tag** (`mechanical` | `inferred`) added to every `Behavior`, defaulting to
+   `inferred` for schema compatibility with files saved before this field existed. Motivated
+   directly by this investigation: the disappearance was isolated entirely to inferred
+   behaviors, and having the tag up front would have narrowed the search space immediately
+   instead of requiring source-by-source elimination.
+
+Live-verified after the fix: all three of `product-001-02`'s behaviors now survive with correct
+`scope=integration`, http-response/error-translation behaviors from all four scenarios now
+appear, and `audit_behavior_coverage` reports zero findings. Also fixed in the same pass: a
+schema-ambiguous mechanical statement — `categories` (`type: [string]`) with `max_length: 100`
+was worded "Categories longer than 100 characters is rejected," ambiguous between "the collection"
+and "each element." `is_collection_field` now detects array-typed fields from the schema's own
+`type` string and rewords to "Each item in categories longer than 100 characters is rejected."
+
 ### Stage 2 — Decision Extraction and Gating
 
 Added 2026-07-13, alongside Stage 0's checklist fix — the same session that showed Stage 0
@@ -227,6 +260,34 @@ into Stage 1, where it's a small decision made once per behavior with fresh cont
 Stage 3 from the pipeline's single largest risk into a mechanical fold plus a bounded review.
 
 **Output:** approved unit clusters and approved integration groupings.
+
+**Implemented 2026-07-13.** `mechanical_cluster` groups unit behaviors by `(subject, kind)` and
+integration behaviors by `subject` alone — the latter wasn't fully specified when this doc was
+first written; the resolution is that an integration behavior's `kind` names which observable
+effect it is (persistence, orchestration, http), not a separate grouping axis, so the workflow
+named by `subject` is the natural integration-test boundary, and all of a workflow's integration
+behaviors land in one grouping regardless of kind. `audit_clustering` mechanically checks every
+behavior lands in exactly one cluster or grouping matching its own scope — same audit-after-
+generation shape as Stage 0/1/2. `review_clustering` is the bounded LLM review: given the
+mechanical baseline, flag (not fix) cohesion problems, cross-layer dependencies, and merge
+candidates; findings are surfaced for a human to act on by editing `clusters.yaml` directly, not
+auto-applied.
+
+Live-verified against `product-001` (post Stage 1 hardening, above): mechanical clustering
+produced exactly the expected shape — one cluster per validation-bearing field, one for
+construction, one for event-shape, one for publication, and a single integration grouping
+holding all 12 of `ProductRegistration`'s integration behaviors (persistence, orchestration,
+http-response, and error-translation together) — confirming the "group integration by subject
+alone" resolution above. The mechanical audit found zero issues. The LLM review ran successfully
+end-to-end but its two findings were weak-to-wrong on inspection (flagging a plain "required
+field" validation behavior as an unexplained "external dependency," and proposing to merge the
+construction cluster with the event-shape cluster — two responsibilities the design explicitly
+keeps separate, see Stage 1's `ProductCreated contains eventId` vs. `...is published on
+product-events` note above). This is expected, not a defect: the review step is advisory,
+gated by a human, exactly like Stage 0/2's findings — its value is surfacing candidates for a
+human to judge, not being correct unassisted. One prompt tightening applied after observing
+this: an explicit line that an empty `findings` list is a good, expected outcome, so the model
+doesn't manufacture a plausible-sounding problem just to have something to report.
 
 ### Stage 4 — Contract Generation
 
@@ -444,19 +505,21 @@ reproduced and was fixed the same way, one level below where the original bug wa
 
 ## Status and next steps
 
-**Stages 0-2 are implemented**, all in `canopy behaviors <story-id>`
+**Stages 0-3 are implemented**, all in `canopy behaviors <story-id>`
 (`canopy-cli/src/commands/behaviors.rs`): Specification Completeness
 (`SpecificationCompleteness`/`CompletenessGap`/`GapKind`/`GapSeverity`), Behavior Extraction
-(`Behavior`/`BehaviorList`/`BehaviorGaps`), and Decision Extraction and Gating
-(`DecisionPoint`/`DecisionLog`/`DecisionAudit`) — types in `canopy-core`, prompts in
-`canopy-llm/src/prompts/behaviors.rs` and `canopy-llm/src/prompts/decisions.rs`. All three have
-been live-verified against `product-001`, each surfacing and fixing a real coverage gap along
-the way (see "The recurring principle" and Stage 2's note above). The command currently stops
-after Stage 2's gate — Stage 3 (Clustering) and Stage 4 (Contracts) are not yet implemented.
+(`Behavior`/`BehaviorList`/`BehaviorGaps`/`BehaviorAudit`), Decision Extraction and Gating
+(`DecisionPoint`/`DecisionLog`/`DecisionAudit`), and Mechanical Clustering
+(`ClusteringResult`/`UnitCluster`/`IntegrationGrouping`/`ClusterReview`/`ClusteringAudit`) — types
+in `canopy-core`, prompts in `canopy-llm/src/prompts/behaviors.rs`, `decisions.rs`, and
+`clustering.rs`. All four have been live-verified against `product-001`, each surfacing and
+fixing a real coverage gap along the way (see "The recurring principle", Stage 1's hardening
+note, and Stage 2/3's notes above). The command currently stops after Stage 3's gate — Stage 4
+(Contracts) is not yet implemented.
 
-Before building Stage 3: specify the mechanical `(subject, kind)` grouping algorithm precisely,
-and decide how a behavior's Decision Point dependency (Stage 2 Rule 3) is represented in
-`behaviors.yaml` so Stage 3/4 can check it mechanically rather than re-deriving it. Stage 4 still
-needs its implementation gate wired against Stage 2's `DecisionLog` (Rules 4/5), and the
-integration-contract-dependency question above resolved. Migration path from the current
-`plan.yaml` shape to this one is also unresolved — out of scope for this document.
+Before building Stage 4: decide how a behavior's Decision Point dependency (Stage 2 Rule 3) is
+represented in `behaviors.yaml` so Stage 4 can check it mechanically rather than re-deriving it,
+wire Stage 4's implementation gate against Stage 2's `DecisionLog` (Rules 4/5), and resolve the
+integration-contract-dependency question above (which unit contracts does an integration grouping
+actually exercise). Migration path from the current `plan.yaml` shape to this one is also
+unresolved — out of scope for this document.

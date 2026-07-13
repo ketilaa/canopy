@@ -183,6 +183,10 @@ pub fn save_behavior_gaps(story_id: &str, gaps: &BehaviorGaps) -> Result<(), Sto
     save(&format!("stories/{}/behavior-gaps.yaml", story_id), gaps)
 }
 
+pub fn save_behavior_audit(story_id: &str, audit: &BehaviorAudit) -> Result<(), StorageError> {
+    save(&format!("stories/{}/behavior-audit.yaml", story_id), audit)
+}
+
 /// Stage 2 (Decision Extraction and Gating) outputs — see docs/design/behavior-first-planning.md.
 pub fn save_decisions(story_id: &str, decisions: &DecisionLog) -> Result<(), StorageError> {
     save(&format!("stories/{}/decisions.yaml", story_id), decisions)
@@ -194,6 +198,23 @@ pub fn load_decisions(story_id: &str) -> Result<DecisionLog, StorageError> {
 
 pub fn save_decision_audit(story_id: &str, audit: &DecisionAudit) -> Result<(), StorageError> {
     save(&format!("stories/{}/decision-audit.yaml", story_id), audit)
+}
+
+/// Stage 3 (Mechanical Clustering) outputs — see docs/design/behavior-first-planning.md.
+pub fn save_clustering(story_id: &str, clustering: &ClusteringResult) -> Result<(), StorageError> {
+    save(&format!("stories/{}/clusters.yaml", story_id), clustering)
+}
+
+pub fn load_clustering(story_id: &str) -> Result<ClusteringResult, StorageError> {
+    load(&format!("stories/{}/clusters.yaml", story_id))
+}
+
+pub fn save_cluster_review(story_id: &str, review: &ClusterReview) -> Result<(), StorageError> {
+    save(&format!("stories/{}/cluster-review.yaml", story_id), review)
+}
+
+pub fn save_clustering_audit(story_id: &str, audit: &ClusteringAudit) -> Result<(), StorageError> {
+    save(&format!("stories/{}/clustering-audit.yaml", story_id), audit)
 }
 
 pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {

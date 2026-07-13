@@ -171,29 +171,50 @@ fn subject_for_field(entity: &str, field: &str) -> String {
 /// `constraint_checklist` walks, just emitting a statement instead of a coverage question.
 /// A mandatory field with no `min_length` still gets an explicit "must be provided" behavior —
 /// required-ness is a constraint even when the schema doesn't spell out a length bound for it.
+/// True for a schema field whose `type` names a collection (`[string]`, `array`, ...) — `field`
+/// doesn't otherwise carry this signal anywhere accessible to statement wording, so `max_length`
+/// on such a field means "each element's length," not "the collection's own length," and the
+/// generated statement must say so explicitly rather than reading as if it measured the
+/// collection (live-verified ambiguity: "Categories longer than 100 characters is rejected."
+/// read as if the whole list, not each category string, were being measured).
+fn is_collection_field(field: &FieldDef) -> bool {
+    field.field_type.trim_start().starts_with('[') || field.field_type.eq_ignore_ascii_case("array")
+}
+
 fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnMut() -> String) -> Vec<Behavior> {
     let mut out = Vec::new();
     let mandatory = schema.mandatory.iter().map(|f| (f, true));
     let optional = schema.optional.iter().map(|f| (f, false));
     for (field, is_mandatory) in mandatory.chain(optional) {
         let subject = subject_for_field(&schema.entity, &field.name);
+        let is_collection = is_collection_field(field);
         let mut saw_min_length = false;
         if let Some(v) = &field.validation {
             if let Some(n) = v.max_length {
+                let statement = if is_collection {
+                    format!("Each item in {} longer than {n} characters is rejected.", field.name)
+                } else {
+                    format!("{} longer than {n} characters is rejected.", capitalize(&field.name))
+                };
                 out.push(Behavior {
                     id: next_id(), source: BehaviorSource::EntitySchema,
                     source_ref: format!("{}.{}.max_length", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
-                    statement: format!("{} longer than {n} characters is rejected.", capitalize(&field.name)),
+                    statement, derivation: BehaviorDerivation::Mechanical,
                 });
             }
             if let Some(n) = v.min_length {
                 saw_min_length = true;
+                let statement = if is_collection {
+                    format!("Each item in {} shorter than {n} characters is rejected.", field.name)
+                } else {
+                    format!("{} shorter than {n} characters is rejected.", capitalize(&field.name))
+                };
                 out.push(Behavior {
                     id: next_id(), source: BehaviorSource::EntitySchema,
                     source_ref: format!("{}.{}.min_length", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
-                    statement: format!("{} shorter than {n} characters is rejected.", capitalize(&field.name)),
+                    statement, derivation: BehaviorDerivation::Mechanical,
                 });
             }
             if let Some(n) = v.min {
@@ -202,6 +223,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     source_ref: format!("{}.{}.min", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("{} below {n} is rejected.", capitalize(&field.name)),
+                    derivation: BehaviorDerivation::Mechanical,
                 });
             }
             if let Some(n) = v.max {
@@ -210,6 +232,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     source_ref: format!("{}.{}.max", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("{} above {n} is rejected.", capitalize(&field.name)),
+                    derivation: BehaviorDerivation::Mechanical,
                 });
             }
             if v.pattern.is_some() {
@@ -218,6 +241,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     source_ref: format!("{}.{}.pattern", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("{} violating the required pattern is rejected.", capitalize(&field.name)),
+                    derivation: BehaviorDerivation::Mechanical,
                 });
             }
             if let Some(n) = v.max_items {
@@ -226,6 +250,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     source_ref: format!("{}.{}.max_items", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("More than {n} {} is rejected.", field.name),
+                    derivation: BehaviorDerivation::Mechanical,
                 });
             }
         }
@@ -235,6 +260,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                 source_ref: format!("{}.{}.required", schema.entity, field.name),
                 scope: BehaviorScope::Unit, subject, kind: BehaviorKind::Validation,
                 statement: format!("Missing {} is rejected.", field.name),
+                derivation: BehaviorDerivation::Mechanical,
             });
         }
     }
@@ -251,6 +277,7 @@ fn mechanical_construction_behaviors(schema: &EntitySchema, next_id: &mut impl F
         subject: schema.entity.clone(),
         kind: BehaviorKind::Construction,
         statement: format!("{} construction assigns {}.", schema.entity, field.name),
+        derivation: BehaviorDerivation::Mechanical,
     }).collect()
 }
 
@@ -282,17 +309,20 @@ fn mechanical_event_behaviors(entity: &str, adrs: &[Adr], next_id: &mut impl FnM
                 id: next_id(), source: BehaviorSource::Adr, source_ref: adr.title.clone(),
                 scope: BehaviorScope::Unit, subject: event_name.clone(), kind: BehaviorKind::EventShape,
                 statement: format!("{event_name} contains {field}."),
+                derivation: BehaviorDerivation::Mechanical,
             });
         }
         out.push(Behavior {
             id: next_id(), source: BehaviorSource::Adr, source_ref: adr.title.clone(),
             scope: BehaviorScope::Unit, subject: event_name.clone(), kind: BehaviorKind::EventShape,
             statement: format!("{event_name} contains {aggregate_ref}."),
+            derivation: BehaviorDerivation::Mechanical,
         });
         out.push(Behavior {
             id: next_id(), source: BehaviorSource::Adr, source_ref: adr.title.clone(),
             scope: BehaviorScope::Unit, subject: "EventPublisher".to_string(), kind: BehaviorKind::Publication,
             statement: format!("{event_name} is published on {topic}."),
+            derivation: BehaviorDerivation::Mechanical,
         });
     }
     out
@@ -383,6 +413,8 @@ Rules:
   components, not one. Use a subject naming the operation itself (e.g. "WidgetRegistration"),
   not a specific file or class. Only use scope=unit if the behavior is genuinely verifiable by
   testing one component alone.
+- `scope` is ALWAYS exactly `unit` or `integration` — never the same value as `kind`. WRONG:
+  `scope: http-response, kind: http-response`. CORRECT: `scope: integration, kind: http-response`.
 - Duplicate or near-duplicate behaviors across similar scenarios are fine — do not merge or
   skip them. Each preserves traceability to its own scenario; consolidation happens later, in
   clustering, not here.
@@ -443,6 +475,7 @@ pub fn extract_behaviors(
             subject: rb.subject,
             kind: rb.kind,
             statement: rb.statement,
+            derivation: BehaviorDerivation::Inferred,
         });
     }
 
@@ -453,4 +486,27 @@ pub fn extract_behaviors(
     }).collect();
 
     Ok((BehaviorList { behaviors }, BehaviorGaps { blocked }))
+}
+
+/// Stage 1's own mechanical audit — same shape as Stage 0/2's. Live-verified need: a scenario
+/// whose LLM-generated behaviors all failed per-item YAML validation (a `scope` field mistakenly
+/// set to the behavior's own `kind` value) produced zero surviving behaviors and wasn't recorded
+/// as blocked either — silently invisible without this check. The invariant: every scenario in
+/// `spec.scenarios` must have produced at least one surviving behavior OR appear in
+/// `gaps.blocked`; anything with neither is a real coverage loss, not a legitimate outcome.
+pub fn audit_behavior_coverage(spec: &IntentSpec, behaviors: &BehaviorList, gaps: &BehaviorGaps) -> BehaviorAudit {
+    let mut findings = Vec::new();
+    for scenario in &spec.scenarios {
+        let has_behavior = behaviors.behaviors.iter().any(|b| b.source_ref == scenario.id);
+        let is_blocked = gaps.blocked.iter().any(|b| b.source_ref == scenario.id);
+        if !has_behavior && !is_blocked {
+            findings.push(BehaviorAuditFinding {
+                description: format!(
+                    "Scenario '{}' produced no surviving behaviors and isn't recorded as blocked either — likely lost during generation or parsing, not a legitimate empty outcome.",
+                    scenario.id
+                ),
+            });
+        }
+    }
+    BehaviorAudit { findings }
 }
