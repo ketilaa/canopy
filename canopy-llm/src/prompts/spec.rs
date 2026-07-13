@@ -272,21 +272,24 @@ system_generated fields do NOT need a validation block.
   "[string]": max_items (required), max_length (required — max length per individual item)
   "[uuid]":  max_items (required)
 
-Business policy checklist — walk through EACH item below, ONE AT A TIME:
-1. Uniqueness — must any field, or combination of fields, be unique across all existing records
-   of this entity?
-2. Defaults — does any optional field have an implied default value when the actor omits it?
-3. Retention — is there a rule for how long this entity persists, or when it expires or archives?
-4. Authorization — does creating or modifying this entity require a specific role or permission
-   beyond the actor already being authenticated?
-5. Idempotency — if the actor submits the same request twice, must that be rejected as a
+Business policy checklist — output EXACTLY the 6 items below in policy_checklist, in this exact
+order, using this exact area name for each. Do not skip an area. Do not add an extra item.
+1. area "uniqueness" — must any field, or combination of fields, be unique across all existing
+   records of this entity?
+2. area "defaults" — does any optional field have an implied default value when the actor omits it?
+3. area "retention" — is there a rule for how long this entity persists, or when it expires or
+   archives?
+4. area "authorization" — does creating or modifying this entity require a specific role or
+   permission beyond the actor already being authenticated?
+5. area "idempotency" — if the actor submits the same request twice, must that be rejected as a
    duplicate, or is it safely repeatable?
-6. Consistency — does creating this entity depend on, or affect, the state of any other entity?
+6. area "consistency" — does creating this entity depend on, or affect, the state of any other
+   entity?
 
-For EACH item, classify it as exactly one of:
-- resolved — add an entry to resolved_policies stating the rule as a concrete constraint.
-- not applicable — do not output anything for it.
-- unresolved — add a concrete question to open_questions. NEVER silently pick an interpretation.
+For EACH item, set classification to exactly one of these three values — NEVER any other value:
+- "resolved" — detail states the rule as a concrete constraint.
+- "not_applicable" — detail may be omitted.
+- "unresolved" — detail states a concrete question. NEVER silently pick an interpretation.
 
 Return ONLY valid YAML — no prose, no code fences.
 YAML string rules — you MUST follow these to avoid parse errors:
@@ -321,13 +324,27 @@ entity_schema:                    # omit entirely if not a creation story
         min: <N>              # integer/decimal: required
         max: <N>              # integer/decimal: required
         max_items: <N>        # [string]/[uuid]: required
-resolved_policies:
-  - area: "<uniqueness | defaults | retention | authorization | idempotency | consistency>"
-    resolution: "<the policy stated as a concrete rule>"
+policy_checklist:
+  - area: "uniqueness"
+    classification: "resolved | not_applicable | unresolved"
+    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+  - area: "defaults"
+    classification: "resolved | not_applicable | unresolved"
+    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+  - area: "retention"
+    classification: "resolved | not_applicable | unresolved"
+    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+  - area: "authorization"
+    classification: "resolved | not_applicable | unresolved"
+    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+  - area: "idempotency"
+    classification: "resolved | not_applicable | unresolved"
+    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+  - area: "consistency"
+    classification: "resolved | not_applicable | unresolved"
+    detail: "<concrete rule, concrete question, or omit if not_applicable>"
 out_of_scope:
   - "<explicitly excluded concern>"
-open_questions:
-  - "<unresolved question if any>"
 "#,
         story_id = story.id,
         as_a = story.as_a,
@@ -341,15 +358,62 @@ open_questions:
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct PolicyChecklistItem {
+    area: String,
+    classification: String,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct SchemaAndPolicyDraft {
     #[serde(default)]
     entity_schema: Option<EntitySchema>,
     #[serde(default)]
-    resolved_policies: Vec<ResolvedPolicy>,
+    policy_checklist: Vec<PolicyChecklistItem>,
     #[serde(default)]
     out_of_scope: Vec<String>,
-    #[serde(default)]
-    open_questions: Vec<String>,
+}
+
+/// Mechanically buckets Call 1's forced per-item policy classification into the two downstream
+/// `IntentSpec` fields — a deterministic transform of the model's own explicit output, not a
+/// correction of it (the audit/compensation distinction in CLAUDE.md's Prompt House Style).
+/// Live-verified need: even with a per-item resolved/not_applicable/unresolved classification
+/// already asked for, a run put 3 of 6 items in a 4th, unsanctioned bucket (`out_of_scope`)
+/// instead — that case has a `detail` the model actually wrote, so relaying it into
+/// open_questions unchanged is legitimate bucketing, not compensation.
+///
+/// A "resolved" or unrecognized-classification item with NO `detail` at all is a different,
+/// stricter case: there is no model-authored text to relay. Rather than fabricate a question the
+/// model never asked (compensation — the exact thing this house rule forbids), fail loudly, the
+/// same shape as `check_entity_continuity`/`check_event_continuity`: nothing is saved, and the
+/// caller re-runs `canopy spec`.
+fn bucket_policy_checklist(items: Vec<PolicyChecklistItem>) -> Result<(Vec<ResolvedPolicy>, Vec<String>), LlmError> {
+    let mut resolved = Vec::new();
+    let mut open_questions = Vec::new();
+    for item in items {
+        match item.classification.trim().to_lowercase().as_str() {
+            "resolved" => match item.detail {
+                Some(detail) => resolved.push(ResolvedPolicy { area: item.area, resolution: detail }),
+                None => return Err(LlmError::UnexpectedShape(format!(
+                    "policy checklist item '{}' was classified 'resolved' but no detail was \
+                     provided — nothing to resolve it to. Re-run `canopy spec`.",
+                    item.area
+                ))),
+            },
+            "not_applicable" | "not applicable" => {}
+            _ => match item.detail {
+                Some(detail) => open_questions.push(detail),
+                None => return Err(LlmError::UnexpectedShape(format!(
+                    "policy checklist item '{}' had classification '{}' (not one of resolved | \
+                     not_applicable | unresolved) and no detail — nothing to surface as an open \
+                     question. Re-run `canopy spec`.",
+                    item.area, item.classification
+                ))),
+            },
+        }
+    }
+    Ok((resolved, open_questions))
 }
 
 /// Mechanically enumerates every scenario the spec needs, BEFORE any scenario is written — the
@@ -591,9 +655,10 @@ pub fn generate_story_spec(
     let fixed = fix_yaml_colon_in_scalars(&stripped);
     let draft: SchemaAndPolicyDraft = serde_yaml::from_str(&fixed)
         .map_err(|source| LlmError::YamlParse { source, raw: fixed })?;
+    let (resolved_policies, open_questions) = bucket_policy_checklist(draft.policy_checklist)?;
 
     let scenarios = if let Some(schema) = &draft.entity_schema {
-        let matrix = scenario_coverage_matrix(schema, &draft.resolved_policies);
+        let matrix = scenario_coverage_matrix(schema, &resolved_policies);
         let raw2 = client.complete_large(&scenario_generation_prompt(story, schema, &matrix, adrs))?;
         let stripped2 = strip_code_fence(&raw2);
         let fixed2 = fix_yaml_colon_in_scalars(&stripped2);
@@ -613,10 +678,90 @@ pub fn generate_story_spec(
         intent_ref: story.id.clone(),
         entity_schema: draft.entity_schema,
         scenarios,
-        resolved_policies: draft.resolved_policies,
+        resolved_policies,
         out_of_scope: draft.out_of_scope,
-        open_questions: draft.open_questions,
+        open_questions,
     })
+}
+
+#[cfg(test)]
+mod policy_checklist_tests {
+    use super::{bucket_policy_checklist, PolicyChecklistItem};
+
+    fn item(area: &str, classification: &str, detail: Option<&str>) -> PolicyChecklistItem {
+        PolicyChecklistItem {
+            area: area.to_string(),
+            classification: classification.to_string(),
+            detail: detail.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn resolved_item_becomes_a_resolved_policy() {
+        let (resolved, open) = bucket_policy_checklist(vec![
+            item("uniqueness", "resolved", Some("name must be unique")),
+        ]).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].area, "uniqueness");
+        assert_eq!(resolved[0].resolution, "name must be unique");
+        assert!(open.is_empty());
+    }
+
+    #[test]
+    fn not_applicable_item_produces_no_output() {
+        let (resolved, open) = bucket_policy_checklist(vec![
+            item("consistency", "not_applicable", None),
+        ]).unwrap();
+        assert!(resolved.is_empty());
+        assert!(open.is_empty());
+    }
+
+    #[test]
+    fn unresolved_item_becomes_an_open_question() {
+        let (resolved, open) = bucket_policy_checklist(vec![
+            item("retention", "unresolved", Some("How long should records be kept?")),
+        ]).unwrap();
+        assert!(resolved.is_empty());
+        assert_eq!(open, vec!["How long should records be kept?".to_string()]);
+    }
+
+    #[test]
+    fn resolved_without_detail_fails_loudly_instead_of_fabricating_a_question() {
+        let err = bucket_policy_checklist(vec![
+            item("authorization", "resolved", None),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("authorization"));
+    }
+
+    #[test]
+    fn unrecognized_classification_with_detail_relays_the_models_own_text() {
+        // Live-verified regression: a run classified 3 of 6 items into an unsanctioned 4th
+        // bucket instead of one of the three the prompt offers. The model's own text is relayed
+        // unchanged into open_questions — this is legitimate bucketing, not compensation, since
+        // the model actually wrote this detail.
+        let (resolved, open) = bucket_policy_checklist(vec![
+            item("idempotency", "out_of_scope", Some("duplicate submissions are rare")),
+        ]).unwrap();
+        assert!(resolved.is_empty());
+        assert_eq!(open, vec!["duplicate submissions are rare".to_string()]);
+    }
+
+    #[test]
+    fn unrecognized_classification_without_detail_fails_loudly_instead_of_fabricating() {
+        let err = bucket_policy_checklist(vec![
+            item("idempotency", "out_of_scope", None),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("idempotency"));
+    }
+
+    #[test]
+    fn all_six_areas_are_accounted_for() {
+        let areas = ["uniqueness", "defaults", "retention", "authorization", "idempotency", "consistency"];
+        let items = areas.iter().map(|a| item(a, "unresolved", Some("?"))).collect();
+        let (resolved, open) = bucket_policy_checklist(items).unwrap();
+        assert!(resolved.is_empty());
+        assert_eq!(open.len(), 6);
+    }
 }
 
 fn openapi_prompt(
