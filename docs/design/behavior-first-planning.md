@@ -55,7 +55,7 @@ model to get wrong.
 ## Decision: Specification → Behaviors → Files
 
 ```
-Story → Behaviors → Clusters → Contracts/Files → Tests → Code
+Story → Behaviors → Decisions → Clusters → Contracts/Files → Tests → Code
 ```
 
 Files are the *last* thing decided, derived from grouping atomic behaviors — not the first
@@ -113,18 +113,91 @@ Tags: scope=integration, subject=ProductRegistration, kind=orchestration
 `ProductCreated contains eventId` and `ProductCreated is published on product-events` both
 mention the same event but land in different `(subject, kind)` pairs — one concerns the event's
 own data shape, the other concerns infrastructure topic-routing. Tagging by concern rather than
-by surface keyword keeps that distinction intact into Stage 2.
+by surface keyword keeps that distinction intact into Stage 3.
 
 `scope=integration` exists because some behaviors are properties of a workflow spanning
 multiple responsibilities, not of any single unit — "invalid registration persists nothing"
 can't be observed from inside a repository's own unit test, since the repository is never
 called. Forcing every behavior into exactly one unit cluster would recreate the same category
 of mistake this pipeline exists to eliminate, just relocated. Integration-scoped behaviors are
-set aside for Stage 3's integration-test contracts instead of being clustered as units.
+set aside for Stage 4's integration-test contracts instead of being clustered as units.
 
 **Human gate.**
 
-### Stage 2 — Mechanical Clustering
+### Stage 2 — Decision Extraction and Gating
+
+Added 2026-07-13, alongside Stage 0's checklist fix — the same session that showed Stage 0
+needed forcing into smaller mechanical steps surfaced a related gap one level up: an unresolved
+business question (`open_questions`, or something Stage 0 flagged as `unresolved_question`)
+gets *recorded* today, but nothing stops behavior extraction or clustering from proceeding
+around it. A small model asked to extract behaviors will not stop and ask what "duplicate
+product names" should do — it will silently pick an interpretation, and that interpretation
+becomes a hidden business decision baked into a behavior, then a cluster, then a contract, with
+no record that a choice was ever made.
+
+**New artifact: Decision Point.**
+
+```
+Decision ID: product-001-dec-001
+
+Question: How should duplicate product names be handled?
+
+Options:
+  - Allow duplicates
+  - Reject duplicates globally
+  - Reject duplicates per manufacturer
+
+Impacted Behaviors:
+  - Product registration succeeds
+  - Product registration fails
+  - Product persistence rules
+
+Impacted Contracts:
+  - ProductRepository
+  - RegisterProduct
+  - POST /products
+
+Status: Pending
+Gate: Human Decision Required
+```
+
+**Rules:**
+1. Every unresolved business question becomes a Decision Point — not a note left in
+   `open_questions` that planning quietly works around.
+2. Every Decision Point records the behaviors it affects.
+3. Every affected behavior records the Decision Point it depends on.
+4. Contract generation (Stage 4) may proceed only for fully resolved behaviors.
+5. Implementation may not begin for any contract that depends on an unresolved Decision Point.
+
+This creates a three-way distinction Stage 1 alone doesn't have: **known requirements**
+(ordinary behaviors), **behavior candidates** (behaviors whose exact shape depends on an
+unresolved question), and **pending decisions** (the questions themselves, tracked as
+first-class, gated artifacts) — rather than letting a model treat all three as equally settled
+facts.
+
+**Heuristic for what becomes a Decision Point**, not just a note: if answering the question
+would change a validation rule, a persistence rule, an API contract, an event contract, or a
+test expectation, it's a Decision Point. Recurring categories worth watching for: duplicate/
+uniqueness handling, default values, retention policies, event payload contents, ordering
+guarantees, authorization rules, error message semantics, idempotency, consistency expectations.
+
+**Resolution isn't limited to "answer it."** A Decision Point's gate can close by: resolving it
+(a human picks an option), explicitly accepting a stated option as a temporary assumption
+(tracked, not silently assumed), or leaving it open and blocking every behavior/contract that
+depends on it. What's not acceptable is the fourth, implicit path — proceeding as if the
+question never existed.
+
+**Human gate** — this is the "Human Gating" step in the pipeline diagram above; it is Stage 2's
+own gate, not a restatement of Stage 1's.
+
+**Not yet implemented, not yet reflected in Stage 0's code.** Stage 0's existing
+`unresolved_question` gap kind is a reasonable precursor (it already surfaces
+`How should the system handle duplicate productName entries?` as a live, real example — see
+"Evidence" below) but stops at flagging; it doesn't yet create a tracked Decision Point artifact,
+doesn't record impacted behaviors/contracts, and doesn't structurally block Stage 4. That
+wiring is future work.
+
+### Stage 3 — Mechanical Clustering
 
 **Input:** behaviors with `scope`/`subject`/`kind` metadata.
 
@@ -140,13 +213,14 @@ This is the stage most likely to fail if left as free-form LLM reasoning over a 
 "invent a grouping" is a materially harder and more novel task than "review a plausible
 pre-computed grouping and flag what's wrong with it." Pushing the `(subject, kind)` judgment
 into Stage 1, where it's a small decision made once per behavior with fresh context, converts
-Stage 2 from the pipeline's single largest risk into a mechanical fold plus a bounded review.
+Stage 3 from the pipeline's single largest risk into a mechanical fold plus a bounded review.
 
 **Output:** approved unit clusters and approved integration groupings.
 
-### Stage 3 — Contract Generation
+### Stage 4 — Contract Generation
 
-**Input:** approved clusters.
+**Input:** approved clusters, only for behaviors not blocked by an unresolved Decision Point
+(Stage 2).
 
 - Unit clusters → implementation contracts (one file/component each).
 - Integration groupings → integration-test contracts.
@@ -156,7 +230,7 @@ Each contract carries: owned behaviors, dependencies, forbidden imports, impleme
 **Structural constraint:** a contract may only contain behaviors from its own approved cluster.
 This is what makes the guarantee real — it isn't a rule telling the model "don't test
 validation in the repository," there is no path by which a validation behavior could ever reach
-the repository contract, because it was clustered elsewhere in Stage 2, before the repository
+the repository contract, because it was clustered elsewhere in Stage 3, before the repository
 contract was even generated.
 
 ## The recurring principle
@@ -170,11 +244,36 @@ file (`ProductRepository.ts`) and its test in one shot, reasoning freely over a 
 list to decide what applied. The fix was behaviors-first, files-derived — many small, explicit
 units of work instead of one large one carrying implicit judgment.
 
-Second, at the level of planning itself: the first draft of this pipeline still asked Stage 2 to
-discover structure by reading a complete, untagged behavior list — the same shape of problem,
-one level up. The fix was identical in kind: attach `scope`/`subject`/`kind` per behavior in
-Stage 1, while each behavior's origin is still known, so Stage 2 has almost nothing left to
-infer.
+Second, at the level of planning itself: the first draft of this pipeline still asked the
+clustering stage to discover structure by reading a complete, untagged behavior list — the same
+shape of problem, one level up. The fix was identical in kind: attach `scope`/`subject`/`kind`
+per behavior in Stage 1, while each behavior's origin is still known, so clustering has almost
+nothing left to infer.
+
+Third, at the level of Stage 0 itself: live-verified 2026-07-13. An initial holistic
+"review the schema and scenarios together, note what's missing" version of Stage 0 found 4 of 9
+real constraint gaps against the dogfooding project's `product-001` schema — correctly catching
+`manufacturer`, `model`, and `categories`' constraints, but silently missing the identical
+constraint shape (`max_length`) on `name`. Not a conceptual failure — the model plainly
+understood what a gap looked like, since it found the same shape elsewhere — a coverage
+failure: nothing forced it to visit every field × constraint pair. Restructuring the same
+prompt into three explicit, mechanically-enumerated checklists (one line per field-constraint
+pair, one per scenario, one per open question), walked item-by-item rather than reasoned about
+holistically, found 9 of 9 on the re-run with the same model and the same schema. This is the
+same principle again, stated as its own reusable rule:
+
+> Coverage-critical stages should operate through exhaustive enumeration rather than holistic
+> review. Whenever a stage can be reformulated as "iterate through every already-identified item
+> and verify one property" rather than "review the whole artifact and identify what's missing,"
+> prefer the enumeration — omission risk in a holistic pass has no reliable pattern to guard
+> against, while a checklist can only fail item-by-item, visibly.
+
+Expect this to reappear at Stage 1 (behavior extraction — has every scenario/constraint/ADR
+requirement produced at least one behavior?), Stage 3's review pass (has every behavior been
+assigned to some cluster?), and later contract-to-test coverage verification (does every
+behavior in a contract have a corresponding test?) — anywhere the question is "did we cover
+everything," prefer enumerating the everything mechanically over asking the model to notice
+gaps in an undifferentiated whole.
 
 ## What this replaces in the current implementation
 
@@ -185,7 +284,7 @@ infer.
   to filter.
 - The DDD/event-orientation architecture skill (`canopy-llm/src/skills/architecture.rs`), as
   prose reinjected at every execution call — replaced by architecture-derived behaviors flowing
-  through the identical Stage 1 → 2 → 3 pipeline as story-derived ones. "The system is
+  through the identical Stage 1 → 2 → 3 → 4 pipeline as story-derived ones. "The system is
   event-driven" stops being a sentence the model has to internalize and becomes concrete
   behaviors ("`ProductCreated` contains `eventId`", "...is published on `product-events`")
   tagged and clustered the same way as anything else. There is no longer a separate mechanism
@@ -255,9 +354,9 @@ which doesn't literally match any unit contract's subject, yet the behavior depe
 `ProductRepository`, `EventPublisher`, and `ProductCreated` all existing. There's no obvious
 mechanical mapping from an integration subject to the unit contracts it exercises.
 
-Current thinking: this is acceptable as a small, bounded Stage 3 review question — "given this
+Current thinking: this is acceptable as a small, bounded Stage 4 review question — "given this
 integration cluster, which existing unit contracts does it exercise?" — rather than something
-Stage 2's mechanical pass needs to resolve. Not yet fully specified.
+Stage 3's mechanical pass needs to resolve. Not yet fully specified.
 
 ## Evidence this is worth the restructuring cost
 
@@ -272,9 +371,24 @@ constructible and passable to it in the first place. Finer, behavior-derived str
 just a process preference — it independently removes the shape of object that let the recurring
 bug exist.
 
+Stage 0 itself, once actually built (see "Status" below), produced its own confirming data
+point: the checklist-driven rewrite found 9 of 9 real constraint gaps against `product-001`'s
+schema where the initial holistic version found 4 of 9 — see "The recurring principle" above
+for the full comparison. The same shape of problem (ask a small model to hold a large context
+and notice everything wrong with it, versus ask it to answer one narrow question at a time)
+reproduced and was fixed the same way, one level below where the original bug was found.
+
 ## Status and next steps
 
-Not yet implemented. Before building this out: work through `behaviors.yaml`'s schema in
-detail, specify the mechanical Stage 2 grouping algorithm precisely, and resolve the integration-
+**Stage 0 (Specification Completeness) is implemented** — `canopy behaviors <story-id>`
+(`canopy-cli/src/commands/behaviors.rs`, `canopy-llm/src/prompts/behaviors.rs`,
+`SpecificationCompleteness`/`CompletenessGap`/`GapKind`/`GapSeverity` in `canopy-core`).
+Live-verified against `product-001`. Stage 1 onward is not yet implemented — the command
+currently stops after Stage 0's gate.
+
+Before building further: work through `behaviors.yaml`'s schema in detail (including how a
+behavior records a Decision Point dependency per Stage 2's Rule 3), specify the mechanical
+Stage 3 grouping algorithm precisely, wire Stage 2's Decision Point artifact and its Stage 4
+implementation gate (currently only described, not built), and resolve the integration-
 contract-dependency question above. Migration path from the current `plan.yaml` shape to this
 one is also unresolved — out of scope for this document.
