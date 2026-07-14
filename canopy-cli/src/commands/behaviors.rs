@@ -114,7 +114,7 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
         }
     }
 
-    let behavior_audit = audit_behavior_coverage(&spec, &behaviors, &gaps);
+    let behavior_audit = audit_behavior_coverage(&spec, &adrs, &behaviors, &gaps);
     if !behavior_audit.findings.is_empty() {
         println!("\n{} behavior-audit finding(s):\n", behavior_audit.findings.len());
         for (i, f) in behavior_audit.findings.iter().enumerate() {

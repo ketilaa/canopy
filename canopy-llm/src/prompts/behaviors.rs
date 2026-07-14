@@ -595,13 +595,50 @@ pub fn extract_behaviors(
     Ok((BehaviorList { behaviors }, BehaviorGaps { blocked }))
 }
 
+/// Second invariant `audit_behavior_coverage` checks (see below): every ADR that names a domain
+/// event for this story's own entity must have produced at least one `EventShape` behavior —
+/// independent of whether the ADR's decision text follows the "<EventName> on topic <topic>"
+/// shape `mechanical_event_behaviors` requires to also derive a `Publication` behavior. Matching
+/// is deliberately looser than `mechanical_event_behaviors`'s own parse: it only needs the
+/// pre-topic event name (same `" on topic "` split), not a successfully-parsed topic, so this can
+/// flag the exact case where the stricter mechanical derivation silently produced nothing —
+/// e.g. an ADR whose decision text predates a project's Topic Naming Convention ADR, or one
+/// hand-edited after the fact. Contains-no-"-"/"-no-space" mirrors `spec.rs`'s own
+/// `find_existing_domain_event_for_story` matching, to avoid a false positive against an
+/// unrelated kebab-case decision (e.g. "widget-service") that happens to start with the entity
+/// name but isn't an event at all.
+fn adr_event_coverage_findings(spec: &IntentSpec, adrs: &[Adr], behaviors: &BehaviorList) -> Vec<BehaviorAuditFinding> {
+    let Some(schema) = &spec.entity_schema else { return Vec::new() };
+    let entity_lower = schema.entity.to_lowercase();
+    let mut findings = Vec::new();
+    for adr in adrs {
+        if !adr.title.to_lowercase().contains("event") { continue; }
+        let event_name = adr.decision.split(" on topic ").next().unwrap_or(&adr.decision).trim();
+        if event_name.is_empty() || event_name.contains('-') || event_name.contains(' ') { continue; }
+        if !event_name.to_lowercase().starts_with(&entity_lower) { continue; }
+        let has_behavior = behaviors.behaviors.iter()
+            .any(|b| b.kind == BehaviorKind::EventShape && b.subject == event_name);
+        if !has_behavior {
+            findings.push(BehaviorAuditFinding {
+                description: format!(
+                    "ADR '{}' names domain event '{event_name}' for this story's entity, but no EventShape behavior was produced for it — check whether its decision text follows the \"<EventName> on topic <topic>\" convention `mechanical_event_behaviors` requires.",
+                    adr.title
+                ),
+            });
+        }
+    }
+    findings
+}
+
 /// Stage 1's own mechanical audit — same shape as Stage 0/2's. Live-verified need: a scenario
 /// whose LLM-generated behaviors all failed per-item YAML validation (a `scope` field mistakenly
 /// set to the behavior's own `kind` value) produced zero surviving behaviors and wasn't recorded
-/// as blocked either — silently invisible without this check. The invariant: every scenario in
-/// `spec.scenarios` must have produced at least one surviving behavior OR appear in
-/// `gaps.blocked`; anything with neither is a real coverage loss, not a legitimate outcome.
-pub fn audit_behavior_coverage(spec: &IntentSpec, behaviors: &BehaviorList, gaps: &BehaviorGaps) -> BehaviorAudit {
+/// as blocked either — silently invisible without this check. Checks two invariants: every
+/// scenario in `spec.scenarios` must have produced at least one surviving behavior OR appear in
+/// `gaps.blocked` (anything with neither is a real coverage loss, not a legitimate outcome), and
+/// every domain-event ADR for this story's entity must have produced at least one `EventShape`
+/// behavior (see `adr_event_coverage_findings` above).
+pub fn audit_behavior_coverage(spec: &IntentSpec, adrs: &[Adr], behaviors: &BehaviorList, gaps: &BehaviorGaps) -> BehaviorAudit {
     let mut findings = Vec::new();
     for scenario in &spec.scenarios {
         let has_behavior = behaviors.behaviors.iter().any(|b| b.source_ref == scenario.id);
@@ -615,5 +652,86 @@ pub fn audit_behavior_coverage(spec: &IntentSpec, behaviors: &BehaviorList, gaps
             });
         }
     }
+    findings.extend(adr_event_coverage_findings(spec, adrs, behaviors));
     BehaviorAudit { findings }
+}
+
+#[cfg(test)]
+mod adr_event_coverage_tests {
+    use super::*;
+
+    fn spec_for(entity: &str) -> IntentSpec {
+        IntentSpec {
+            intent_ref: "story-001".to_string(),
+            entity_schema: Some(EntitySchema {
+                entity: entity.to_string(),
+                system_generated: vec![],
+                mandatory: vec![],
+                optional: vec![],
+            }),
+            scenarios: vec![],
+            resolved_policies: vec![],
+            out_of_scope: vec![],
+            open_questions: vec![],
+        }
+    }
+
+    fn adr(title: &str, decision: &str) -> Adr {
+        Adr {
+            title: title.to_string(),
+            decision: decision.to_string(),
+            reason: String::new(),
+            alternatives: vec![],
+        }
+    }
+
+    fn event_shape_behavior(subject: &str) -> Behavior {
+        Behavior {
+            id: "story-001-b099".to_string(),
+            source: BehaviorSource::Adr,
+            source_ref: "some-adr".to_string(),
+            scope: BehaviorScope::Unit,
+            subject: subject.to_string(),
+            kind: BehaviorKind::EventShape,
+            statement: format!("{subject} contains eventId."),
+            derivation: BehaviorDerivation::Mechanical,
+        }
+    }
+
+    #[test]
+    fn flags_a_domain_event_adr_with_no_topic_and_no_produced_behavior() {
+        let spec = spec_for("Manufacturer");
+        let adrs = vec![adr("Domain Event for Manufacturer Registration", "ManufacturerRegistered")];
+        let behaviors = BehaviorList { behaviors: vec![] };
+        let findings = adr_event_coverage_findings(&spec, &adrs, &behaviors);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].description.contains("ManufacturerRegistered"));
+    }
+
+    #[test]
+    fn does_not_flag_when_a_matching_event_shape_behavior_exists() {
+        let spec = spec_for("Manufacturer");
+        let adrs = vec![adr("Domain Event for Manufacturer Registration", "ManufacturerRegistered on topic manufacturer-events")];
+        let behaviors = BehaviorList { behaviors: vec![event_shape_behavior("ManufacturerRegistered")] };
+        let findings = adr_event_coverage_findings(&spec, &adrs, &behaviors);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn ignores_a_non_event_adr_even_if_it_starts_with_the_entity_name() {
+        let spec = spec_for("Manufacturer");
+        let adrs = vec![adr("Service Ownership for Manufacturer Registration", "manufacturer-service")];
+        let behaviors = BehaviorList { behaviors: vec![] };
+        let findings = adr_event_coverage_findings(&spec, &adrs, &behaviors);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn ignores_an_event_adr_for_a_different_entity() {
+        let spec = spec_for("Manufacturer");
+        let adrs = vec![adr("Domain Event for Product Registration", "ProductCreated on topic product-events")];
+        let behaviors = BehaviorList { behaviors: vec![] };
+        let findings = adr_event_coverage_findings(&spec, &adrs, &behaviors);
+        assert!(findings.is_empty());
+    }
 }
