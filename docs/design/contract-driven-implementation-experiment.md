@@ -1,7 +1,8 @@
 # Contract-Driven Implementation: Experiment Design
 
-Status: Stage 1 executed 2026-07-14 (see "Stage 1 Results" below). `canopy implement` remains
-unchanged — Stage 1 ran entirely as a standalone cargo example, never touching production code.
+Status: Stage 1 executed 2026-07-14 (see "Stage 1 Results" below); Stage 2 scoped, not yet
+implemented (see "Stage 2 Design" at the end). `canopy implement` remains unchanged throughout —
+every stage so far has run as a standalone cargo example, never touching production code.
 
 Date: 2026-07-14
 
@@ -318,3 +319,111 @@ Concretely:
   `Manufacturer.java`) and check whether ownership correctness improves when the model can see the
   file's full intended scope, rather than one partial slice of it. That is the next experiment
   this result actually points to.
+
+---
+
+## Stage 2 Design (scoped 2026-07-14, not yet implemented)
+
+Of Stage 1's three failure classes (skill guidance, model variance, ownership visibility), this
+scopes only the third — the one judged most architecturally significant and least understood.
+The other two (the `javax` slip and the `@NotBlank`/`@NotNull`/`@Size` skill gap) are independent
+of this question and are deliberately not addressed here.
+
+**Hypothesis being tested:** the unauthorized `@Entity`/`@Id`/`@GeneratedValue` invention seen in
+2 of 3 Stage 1 runs was caused by showing the model only *one* of several contracts that share a
+target file — not by a general unwillingness to respect scope. If true, showing the model every
+contract that targets the same file should eliminate the invention, because everything the model
+added without authorization in Stage 1 (an `id` field) is actually authorized by a *different*
+contract the model simply never saw.
+
+### 1. Contracts that target a shared file
+
+Using the real `manufacturer-001` `contracts.yaml` already generated for Stage 1 — no synthetic
+data needed, this case already exists. `resolve_implementation_target` places **six** contracts
+at the exact same file, `services/manufacturer-service/src/main/java/manufacturer_service/domain/
+Manufacturer.java`, because every `Validation` and `Construction` contract resolves to the
+`"model"` abstract layer:
+
+| Contract | `kind` | `member` | `mandatory` | `required_tests` |
+|---|---|---|---|---|
+| `ManufacturerNameValidation` | Validation | `name` | `true` | 2 (max/min length) |
+| `ManufacturerAddressValidation` | Validation | `address` | `true` | 2 (max/min length) |
+| `ManufacturerPhoneNumberValidation` | Validation | `phoneNumber` | `false` | 1 (max length) |
+| `ManufacturerEmailValidation` | Validation | `email` | `false` | 1 (max length) |
+| `ManufacturerWebsiteValidation` | Validation | `website` | `false` | 1 (max length) |
+| `ManufacturerConstruction` | Construction | *(none — whole entity)* | *(n/a)* | 3 (`id`, `createdAt`, `modifiedAt` assignment) |
+
+Ten `required_tests` in total across six contracts, all resolving to one file. This is precisely
+the shape Stage 1 exposed: Stage 1 showed the model only the first row and it invented pieces of
+the last row (`id`) unprompted.
+
+### 2. What context the model would receive
+
+Everything Stage 1 allowed, unchanged, plus one addition — the full set of contracts sharing this
+resolved target, not one:
+
+- All six contracts' `kind`/`entity`/`member`/`mandatory`/`required_tests` (the complete table
+  above), so the model can see the *combined* authorized scope of the file it's asked to write.
+- The single resolved target path (unchanged from Stage 1 — all six agree on it, which is itself
+  part of what's being shown: "these six, together, are this file").
+- The tech-stack skill for the `"model"` layer (unchanged, same `skill_for_technology` call).
+- Any contract *dependencies* among the six, if present (checked: all six currently have
+  `dependencies: []`, so this doesn't arise in this specific run, but the harness should still
+  read and render them, exactly as Stage 1 did, in case a future re-generation changes that).
+
+Still explicitly excluded, unchanged from Stage 1 §5: story, full scenario list, `entity_schema`,
+ADRs, OpenAPI, exploratory tool access. Only one variable changes between Stage 1 and Stage 2 —
+one contract's view vs. all six contracts sharing this file's view — so that a result can be
+attributed to that one change, not confounded with a second change at the same time.
+
+The generation shape also changes from Stage 1: instead of one contract → one file, this is
+six contracts → one file, in a single call (mirroring how `canopy implement` would eventually
+need to compose multiple contracts into one generation step for a shared target, not how Stage 1
+tested one contract at a time). A combined test file (covering all ten `required_tests`) is
+generated first, then the implementation against it — same Red/Green shape Stage 1 used, just
+scaled to the full file's authorized scope instead of one field's.
+
+### 3. Success criteria
+
+Reproducibility-tested the same way as every prior probe in this investigation — at least 3 runs:
+
+1. The generated file contains exactly what the six contracts, combined, authorize: five
+   validation-annotated fields (matching each contract's own message-bearing `required_tests`)
+   and the three system-generated fields `ManufacturerConstruction` authorizes (`id`, `createdAt`,
+   `modifiedAt`, with whatever construction-appropriate annotations/initialization that implies) —
+   **and nothing else.** `@Id`/`@GeneratedValue`-style annotations are *correct* here, since a
+   contract now explicitly authorizes them — the bar is not "no persistence annotations at all,"
+   it's "nothing beyond what these six contracts, together, license."
+2. The combined test file's assertions map 1:1 onto the union of all ten `required_tests` — no
+   fewer, no more.
+3. No field, method, or annotation appears in the implementation with no corresponding line in
+   any of the six contracts' `required_tests` (e.g. a `version` field for optimistic locking, a
+   `deletedAt` field, a `@Column` naming override never asked for) — checked explicitly, not
+   assumed clean by absence of an obvious violation.
+4. Reproducible across the 3 runs — not just true once.
+
+### 4. Failure criteria
+
+- **The model still invents a field/annotation with no corresponding contract among the six
+  shown.** This would directly falsify the hypothesis: if full visibility of everything
+  authorized for this file still isn't enough to stop invention, the cause isn't *incomplete*
+  visibility — it's a general tendency to "complete" what looks like an entity class regardless
+  of the scope it's given, which is a prompt-strength problem, not a visibility problem.
+- **Message-per-field fidelity is still wrong even with all six contracts visible together.**
+  Expected to persist regardless of this experiment's outcome — Stage 1 already traced this to a
+  Spring Boot skill gap, independent of ownership visibility. If it disappears here too, that's a
+  bonus data point, not something to read the hypothesis's validity into.
+- **The combined generation introduces cross-field errors that didn't exist per-field** (e.g. a
+  validation message from one field's contract leaking onto another field) — would indicate the
+  larger, combined prompt itself introduces new confusion, a cost worth weighing against whatever
+  ownership-correctness gain it produces.
+
+### 5. What conclusion justifies which fix
+
+| Outcome | Conclusion | Right response |
+|---|---|---|
+| Invention stops (3/3 clean runs) | Ownership violations were caused by incomplete visibility, not general unruliness. | **Process fix, not a schema change.** `Contract` already carries everything needed — formalize "assemble every contract sharing a resolved target before generating" as a required step in whatever eventually drives Stage 3+ generation (grouping contracts by `resolve_implementation_target` output before calling the model), not a new field. |
+| Invention persists despite full visibility | The cause is a strong training prior overriding an explicit scope instruction, not missing information. | **Prompt-strength escalation, still tier 2 (fix the prompt), not tier 3.** Per this project's own escalation order, try a stronger instruction shape next — e.g. an explicit WRONG/CORRECT worked example naming this exact failure — before concluding it's an unfixable compliance limitation. |
+| Invention persists even after a stronger prompt is tried and still fails | A real, structural compliance limitation — prompting alone can't hold the boundary. | **Only now does a redesign conversation become warranted** — not a `Contract` schema redesign, but a new *verification* mechanism: a deterministic, post-generation audit that checks a generated file's actual fields/annotations against the union of its owning contracts' `required_tests` and flags anything unauthorized. This matches `docs/design/behavior-first-planning.md`'s own already-anticipated future capability ("contract-to-test/OpenAPI verification") and this project's audit-not-compensation house rule — it would reject or flag, never silently rewrite, the model's output. |
+
+No implementation performed in this scoping pass, per the instruction to design before building.
