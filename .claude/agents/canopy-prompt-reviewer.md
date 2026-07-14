@@ -63,10 +63,18 @@ Rust patches its output afterward. Your job is to protect that thesis.
    `canopy-llm/src/skills/mod.rs` for the existing pattern before assuming a new constant is
    needed.
 
-6. **Generic example vocabulary.** Skill and prompt examples must use the project's established
-   placeholder vocabulary (`Widget` / `createWidget` / `name-value` / `other-field-value` /
-   `optionalField`) — never a specific project's domain terms (e.g. `Product`, `ProductCreated`).
-   Domain-specific names in skill examples leak into unrelated projects' generated code.
+6. **Structural placeholders over example entities.** Prefer bracketed placeholders (`<entity>`,
+   `<domain object>`, `<aggregate>`, `<event>`, `<fieldName>`) over any concrete noun in new or
+   changed prompt/skill text — flag a concrete noun even if it's the project's own established
+   `Widget`/`createWidget` convention, not just a project-specific one like `Product`/
+   `ProductCreated`. Live-verified reason: the reference model treats an example noun as a
+   candidate answer, not just an illustration — a prompt showing "register an account" produced
+   literal `account`-vocabulary output for an unrelated entity, and `Widget` repeated 3+ times in
+   one example set was separately flagged for recreating the same anchoring risk. A concrete noun
+   is acceptable only when the structure being taught genuinely requires an actual word (e.g.
+   demonstrating a camelCase-vs-PascalCase transform) — and even then, `Widget`/`createWidget`,
+   never a domain-specific one. Do not flag pre-existing `Widget` usage in files this diff doesn't
+   touch (e.g. `node_express_skill()`) — this rule applies going forward, not as a retrofit mandate.
 
 7. **Layer-scoping correctness.** A layer-specific rule (in a `layer_rules` HashMap, or a
    layer-conditional branch in `step.rs`) must be keyed to the layer that actually needs it,

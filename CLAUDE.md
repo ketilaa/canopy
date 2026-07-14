@@ -322,12 +322,22 @@ unless the story's acceptance criteria call for them. Architecture emerges story
 **Adding a new skill:** implement a builder function returning `TechStackSkill`, add a match arm
 in both `skill_for_technology` and `plan_skill_for_technology`, and document it in the table above.
 
-**Generic placeholders in skill examples.** All code examples in skills and prompts use `Widget` /
-`createWidget` as the canonical stand-in — never domain-specific names like `Product` /
-`createProduct`. Field names: `name`, `optionalField`, `name-value`, `other-field-value`. The
-pattern is established in the Models section of `node_express_skill()` — follow it everywhere.
-Domain-specific names in skill examples leak the current project's vocabulary into the LLM context
-and cause the model to mirror those names back incorrectly on other projects.
+**Prefer structural placeholders over example entities.** Default to bracketed placeholders —
+`<entity>`, `<domain object>`, `<aggregate>`, `<event>` — rather than any concrete noun, even the
+project's own established `Widget`/`createWidget` convention. Live-verified reason: the reference
+model treats an example noun as a candidate answer, not just an illustration — a prompt showing
+"register an account" produced literal `account`-vocabulary output for a story about registering
+a manufacturer, and a later fix that swapped in `Widget` repeated three times in one example set
+was flagged for recreating the same anchoring risk with a different noun. Any concrete noun is a
+potential output token; a bracketed placeholder can't be copied literally because it isn't a real
+word. Field names: prefer `<fieldName>` over `name`/`optionalField` for the same reason, unless
+the concrete name is itself demonstrating a naming *convention* (see below).
+Only use a concrete noun (`Widget`/`createWidget`, never a project-specific one like `Product`)
+when the structure being taught genuinely requires an actual word — e.g. demonstrating a
+camelCase-vs-PascalCase transformation, or a multi-field validation shape a bracket alone can't
+convey. When in doubt, remove the noun. The pattern is established in the Models section of
+`node_express_skill()` — that file predates this refinement and is a lower-priority candidate for
+a future pass, not a template to copy into new work.
 
 ---
 
