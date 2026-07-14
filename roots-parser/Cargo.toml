@@ -2,6 +2,8 @@
 name    = "roots-parser"
 version = "0.1.0"
 edition = "2021"
+description = "Language parsers (Java, Kotlin, TypeScript, Rust) that populate the Roots graph"
+license.workspace = true
 
 [dependencies]
 roots-core           = { path = "../roots-core" }

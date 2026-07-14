@@ -2,6 +2,8 @@
 name    = "roots-context"
 version = "0.1.0"
 edition = "2021"
+description = "Context packet assembly, impact analysis, and fact extraction for Roots"
+license.workspace = true
 
 [dependencies]
 roots-storage = { path = "../roots-storage" }

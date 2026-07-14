@@ -2,6 +2,8 @@
 name = "canopy-storage"
 version = "0.1.0"
 edition = "2021"
+description = "Save/load persistence layer for Canopy's .canopy/ project artifacts"
+license.workspace = true
 
 [dependencies]
 canopy-core = { path = "../canopy-core" }

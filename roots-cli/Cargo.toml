@@ -2,6 +2,8 @@
 name    = "roots-cli"
 version = "0.1.0"
 edition = "2021"
+description = "Roots CLI: index, query, discover, and impact-analyze a repository"
+license.workspace = true
 
 [[bin]]
 name = "roots"

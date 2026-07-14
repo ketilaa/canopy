@@ -2,6 +2,8 @@
 name = "canopy-cli"
 version = "0.1.0"
 edition = "2021"
+description = "Canopy CLI: the interactive planning and implementation REPL"
+license.workspace = true
 
 [[bin]]
 name = "canopy"

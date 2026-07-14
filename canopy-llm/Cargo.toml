@@ -2,6 +2,8 @@
 name = "canopy-llm"
 version = "0.1.0"
 edition = "2021"
+description = "LLM client, prompts, and generation functions for Canopy's planning pipeline"
+license.workspace = true
 
 [dependencies]
 canopy-core = { path = "../canopy-core" }

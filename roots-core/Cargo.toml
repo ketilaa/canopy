@@ -2,6 +2,8 @@
 name    = "roots-core"
 version = "0.1.0"
 edition = "2021"
+description = "Graph types (Workspace, Project, Module, File, Symbol, Relationship) for the Roots repository-intelligence engine"
+license.workspace = true
 
 [dependencies]
 serde      = { workspace = true }

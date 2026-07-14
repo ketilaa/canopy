@@ -2,6 +2,8 @@
 name    = "roots-storage"
 version = "0.1.0"
 edition = "2021"
+description = "SQLite-backed graph persistence for Roots"
+license.workspace = true
 
 [dependencies]
 roots-core = { path = "../roots-core" }
