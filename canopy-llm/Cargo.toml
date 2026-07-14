@@ -12,3 +12,9 @@ serde_json = "1"
 serde_yaml = "0.9"
 ureq = { version = "2", features = ["json"] }
 thiserror = "1"
+
+# Examples only (experiments) — the shipped canopy-llm library never depends on canopy-storage;
+# canopy-cli remains the only production consumer of both. See
+# canopy-llm/examples/contract_driven_stage1_experiment.rs.
+[dev-dependencies]
+canopy-storage = { path = "../canopy-storage" }

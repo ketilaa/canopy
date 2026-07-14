@@ -124,6 +124,7 @@ name = "canopy-llm"
 version = "0.1.0"
 dependencies = [
  "canopy-core",
+ "canopy-storage",
  "serde",
  "serde_json",
  "serde_yaml",
