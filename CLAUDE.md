@@ -712,3 +712,42 @@ as a self-modification risk: unsupervised commit-and-deploy at session end, deci
 background agent nobody was watching. Don't reintroduce that shape. The reminder-only design
 above is the deliberate replacement — supervised judgment stays with whichever session is
 active; the hook only makes sure that judgment gets exercised instead of silently skipped.
+
+---
+
+## Knowledge Capture Cadence
+
+`docs/{retrospectives,blog-drafts,principles,reports}/` (see Artifacts above) is not a one-time
+export — it's meant to stay current as the project evolves, across whichever developer or session
+is doing the work. Rather than a separate calendar-driven job, knowledge capture piggybacks on
+checkpoints this project already has a habit of noticing:
+
+**At the end of a retrospective-worthy day** (the existing daily-retrospective habit — see
+`docs/retrospectives/`), after writing the day's retrospective, ask two follow-up questions before
+closing the session:
+1. **Does this day's work contain a blog-worthy arc?** — a genuine belief → evidence → design-change
+   → principle story, not a progress update. Most days won't. When one exists, add a draft to
+   `docs/blog-drafts/` following the style in that directory's existing drafts (evidence-first,
+   prediction-driven, concrete numbers — see the drafts themselves for the bar).
+2. **Did this day's work validate, refine, or refute a principle?** — either a new one crossing the
+   bar in `docs/principles/` (generalizes beyond a single fix, evidence-backed, survives a stated
+   counter-example), or new evidence for/against an existing principle file, which should be added
+   to that file's Evidence or Counter-Evidence section rather than left undocumented.
+
+**At the close of a reproducibility sweep or dogfooding session against a specific story**, add or
+extend that story's file in `docs/reports/` — don't leave sweep results only in a scratchpad or a
+chat transcript. Scratchpad files are session-scoped and can be lost; `docs/reports/` is the
+durable home. Prefer one file per story, extended chronologically as new sessions run, over one
+file per sweep (see `docs/reports/manufacturer-001.md` for the shape).
+
+**This is a habit to apply proactively, the same way the daily retrospective already is** — not a
+step that requires the user to ask each time. Skip it honestly on days that only produced routine
+fixes; forcing a blog draft or a "principle" out of an ordinary bug fix defeats the purpose (see
+"Blog Post Candidates" and "Engineering Principles" evidence bars below).
+
+**Why this shape, not a bigger pipeline:** an earlier proposal considered automating draft
+generation and publishing end to end. Deliberately scoped down to draft-only, human-gated
+(publish/discard stays a human call), because the value being tested is whether the raw material
+is actually worth writing up — building a publishing pipeline before that's established would be
+solving a problem that might not exist. Revisit only after the draft-only step has produced
+consistently useful material over real time, not as the default next step.
