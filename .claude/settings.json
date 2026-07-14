@@ -11,6 +11,12 @@
           },
           {
             "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/push-reminder.sh\"",
+            "timeout": 15,
+            "statusMessage": "Checking for a publication checkpoint..."
+          },
+          {
+            "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/auto-install.sh\"",
             "timeout": 120,
             "statusMessage": "Installing canopy..."
