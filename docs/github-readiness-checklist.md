@@ -20,11 +20,21 @@ step. Status values: `not started` / `planned — awaiting approval` / `done`.
 
 | # | Item | Status |
 |---|---|---|
-| 4 | README (structure + status + discoverability) | in progress |
-| 5 | Project Status table | folded into README |
-| 6 | Discoverability recommendations | folded into README |
+| 4 | README (structure + status + discoverability) | done — `README.md` added, all links verified |
+| 5 | Project Status table | done — folded into README |
+| 6 | Discoverability recommendations | done — folded into README |
 
-## Phase 3-5 (not started)
+## Phase 3 — Public GitHub Launch
 
-Public GitHub Launch, Blog/Knowledge Site Launch, Community Onboarding — unchanged from the
-original assessment; not in scope for this pass.
+| # | Item | Status |
+|---|---|---|
+| 8 | Push to GitHub | blocked — needs target repo details (see below) |
+
+**Before this can execute:** which GitHub account/org, what repo name, and confirm visibility
+should be public. Also recommend a final re-run of the secret/hygiene scan against the exact
+commit about to be pushed, per the original assessment's Stage 3 guidance — not yet done.
+
+## Phase 4-5 (not started)
+
+Blog/Knowledge Site Launch, Community Onboarding — unchanged from the original assessment; not in
+scope for this pass.
