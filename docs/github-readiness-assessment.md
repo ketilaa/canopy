@@ -35,8 +35,8 @@ Ranked by how hard each is to fix *after* the repository goes public:
    own email-privacy features only protect *future* commits made through their web UI, not
    history that already exists. **This needs a deliberate decision before the first push, not a
    cleanup after.**
-3. **One personal-project-name leak**: `docs/retrospectives/2026-07-09.md` names the dogfooding
-   test project (`canopy-e-commerce`) directly, violating a convention established later in the
+3. **One personal-project-name leak**: `docs/retrospectives/2026-07-09.md` named the dogfooding
+   test project by its actual name directly, violating a convention established later in the
    project's own history and applied consistently everywhere else. Low severity (it's a project
    name, not a secret), but easy to miss in a skim and easy to fix.
 4. **No documentation written for a human reader.** CLAUDE.md is comprehensive, but it is
@@ -52,7 +52,7 @@ or not, within the first five minutes of someone looking at it" risks.
 Things fixable in under an hour each, with outsized effect on first impressions:
 
 - Add a LICENSE file (needs your decision on which license — see Section 7).
-- Reword the one `canopy-e-commerce` mention in `docs/retrospectives/2026-07-09.md` to match the
+- Reword the dogfooding-project-name mention in `docs/retrospectives/2026-07-09.md` to match the
   established "a dogfooding project" convention.
 - Add `description`, `license`, and `repository` fields to the workspace `Cargo.toml` and each
   member crate's `Cargo.toml`.
@@ -79,8 +79,8 @@ hardcoded personal file-system paths and email addresses.
 - No hardcoded `/Users/<name>/...` or `/home/<name>/...` paths in any tracked file.
 - No email addresses in tracked documentation content, except the one intentional
   `noreply@anthropic.com` co-author trailer convention already in use for commit messages.
-- One personal-project-name mention (`canopy-e-commerce` in `docs/retrospectives/2026-07-09.md`)
-  — see Top Risks #3.
+- One personal-project-name mention (the dogfooding project's actual name, in
+  `docs/retrospectives/2026-07-09.md`) — see Top Risks #3.
 - **Git authorship**: every one of the 255 commits carries `Ketil Aasarød
   <ketil.aasarod@no.experis.com>` as author. Not a leak in the traditional sense (you already
   know your own email), but a decision point: is a corporate work email something you want
@@ -366,7 +366,7 @@ priority:
 1. Decide on license; add LICENSE file and per-crate Cargo.toml metadata.
 2. Decide on commit-author identity for public history; rewrite history before first push if a
    change is wanted (this is the one item that becomes materially harder after publication).
-3. Fix the one `canopy-e-commerce` project-name mention.
+3. Fix the one dogfooding-project-name mention.
 4. Add defensive `.gitignore` entries for OS/editor junk.
 5. Write `README.md` (what Canopy is, problem solved, current status/maturity, quickstart, pointers
    to `docs/`).

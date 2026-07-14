@@ -9,12 +9,13 @@ step. Status values: `not started` / `planned — awaiting approval` / `done`.
 |---|---|---|
 | 1 | Commit identity rewrite (→ `ketil.aasarod@gmail.com`) | done — verified across all 263 commits |
 | 2 | License decision | done — Apache 2.0, `LICENSE` + per-crate metadata added |
-| 3 | Fix `canopy-e-commerce` reference | done |
+| 3 | Fix dogfooding-project-name reference | done |
 | 3 | Defensive `.gitignore` entries | done |
 
-**Open item surfaced during execution, not in the original assessment:** global git config
-(`~/.gitconfig`) still has the old `no.experis.com` email as `user.email` — not changed, per the
-"never touch git config unasked" rule. Needs your decision.
+**Open item surfaced during execution, resolved:** global git config was updated to
+`ketil.aasarod@gmail.com` on explicit request. Caught during the final pre-push scan: 3 commits
+made *after* the identity rewrite but *before* this config update still carried the old email —
+a second, smaller filter-repo pass is required to fully close this out before pushing.
 
 ## Phase 2 — Documentation Hardening
 
