@@ -393,3 +393,16 @@ same story — which would exist once the stale ADR-006 fixture is regenerated w
 Naming Convention ADR — has no mechanical target yet on Spring Boot. That's a real, separately-
 scoped follow-up (extending `spring_boot_skill`'s own documented layout to cover event-driven
 JVM services), not a defect in the kind→directory mapping itself.
+
+**Q3 revisited — the three original blockers, checked against what's landed:**
+
+1. *No file target.* **Resolved**, mechanically, for the layers each stack's skill already
+   documents (see the table above and the coverage note) — not yet resolved for the
+   undocumented (family, layer) pairs, which is now a visible, named gap instead of a silent one.
+2. *No canonical field identifier* (the `OrderLineItemQuantityValidation` ambiguity). **Resolved**
+   by Option 2 — `entity`/`member` are explicit fields now, never re-parsed from `name`/`subject`.
+3. *No mandatory/optional signal.* **Still open** — neither Option 2 nor this file-target work
+   touched it. A validation contract's `required_tests` prose still only implies mandatoriness
+   (e.g. `min_length: 1` reads as "can't be empty"); there's no explicit boolean anywhere on
+   `Contract`. Not in scope for either committed slice — worth flagging as the next concrete gap
+   if the isolated-implementation experiment (Q5) is run next and hits it.
