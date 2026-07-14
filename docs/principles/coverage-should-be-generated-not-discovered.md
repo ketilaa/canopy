@@ -44,11 +44,11 @@ place.
 
 # Evidence
 
-- Commit `1b295df`: the original completeness-audit stage, whose own initial version needed the
+- Commit `b2664c7`: the original completeness-audit stage, whose own initial version needed the
   enumeration fix described elsewhere (finding 4 of 9 real gaps holistically, 9 of 9 once rebuilt
   around an explicit checklist) — establishing that even the *audit* layer needed enumeration to be
   reliable, before the generation layer underneath it was addressed at all.
-- Commit `7553d07`: the follow-on change that moved coverage decisions upstream of generation
+- Commit `cef2c96`: the follow-on change that moved coverage decisions upstream of generation
   entirely. Instead of writing scenarios holistically and auditing them afterward, a mechanical,
   code-computed checklist (one item per field constraint, one for missing-mandatory-fields, one per
   resolved business rule) is now produced *before* any scenario is written, and the model's only job

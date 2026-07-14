@@ -47,15 +47,15 @@ visited.
 
 # Evidence
 
-- Commit `1b295df`: direct before/after result — "an initial holistic 'compare schema and
+- Commit `b2664c7`: direct before/after result — "an initial holistic 'compare schema and
   scenarios in one pass' prompt found 4 of 9 real constraint gaps, silently missing the exact same
   constraint shape (max_length) on one field after correctly catching it on three others...
   Restructuring into three explicit, mechanically-enumerated checklists... found all 9 of 9
   constraint gaps on the re-run."
-- Commit `e61043f`: the result was generalized into a named principle and used to predict where
+- Commit `415f7f8`: the result was generalized into a named principle and used to predict where
   else it should apply — a later behavior-extraction stage, a later cluster-review stage, and
   future contract-to-test coverage verification — before those confirmations happened.
-- Commit `7553d07`: independent reapplication to scenario generation itself. A mechanical,
+- Commit `cef2c96`: independent reapplication to scenario generation itself. A mechanical,
   code-computed checklist (one item per field constraint, one for missing-mandatory-fields, one per
   resolved business rule) now precedes scenario writing; the model writes exactly one scenario per
   listed item rather than inventing coverage holistically.
@@ -63,7 +63,7 @@ visited.
   after the enumeration-based rewrite, the number of scenarios generated matched the size of the
   independently-computed checklist exactly in every run — a level of coverage predictability the
   pre-enumeration holistic version never showed.
-- Commit `f0aaa74`: the pattern was formalized as a standing rule only after independently
+- Commit `4fc8d28`: the pattern was formalized as a standing rule only after independently
   reproducing across four separate parts of the same system — "Stage 0 constraint coverage, Stage
   1 behavior extraction, dependency review, clustering review" — which is what distinguishes this
   from a single lucky fix.
@@ -71,7 +71,7 @@ visited.
 # Counter-Evidence
 
 The principle has one documented boundary case, not a counter-example against the principle
-itself but a sharpening of its scope. Commit `0fd89d7` describes a policy-classification task that
+itself but a sharpening of its scope. Commit `dc2f0c2` describes a policy-classification task that
 was *already* fully enumerative — six named business-policy questions, each requiring a
 classification into one of three named buckets — and the model still invented an unlisted fourth
 output category for half the items in a live run. Enumerating the *input set* did not, by itself,

@@ -94,7 +94,7 @@ than architectural ones: an example noun in a prompt functions as a candidate an
 illustration (blog B); and — found during this reconstruction but not yet its own principle
 document — a rule's physical position in a prompt measurably affected whether the model complied
 with it, independent of the rule's own wording (`docs/retrospectives/2026-07-02-to-07-03-
-reconstructed.md`, commit `38eb415`). Both findings are about how the *literal construction* of a
+reconstructed.md`, commit `3da65d8`). Both findings are about how the *literal construction* of a
 prompt (word choice, physical placement) affects a small model's behavior in ways not obviously
 predictable from the instruction's content alone — genuinely distinct from the larger architectural
 question of *what* a prompt should ask the model to do at all (Clusters 1–4).

@@ -41,7 +41,7 @@ still-unresolved rather than implicitly settled by whatever the model happened t
 
 # Early Assumptions
 
-The working design note (`e61043f`, 2026-07-13) states the risk directly, as a prediction rather
+The working design note (`415f7f8`, 2026-07-13) states the risk directly, as a prediction rather
 than an observed bug: "a small model asked to extract [requirements] will not stop and ask what an
 unresolved question should mean, it will pick an interpretation, and that becomes a hidden business
 decision with no record it was ever made." The response was architectural: a new Stage 2 (Decision
@@ -63,7 +63,7 @@ for.
 
 # Contradictory Evidence
 
-The first attempted fix (`0fd89d7`) forced the policy checklist into a strict, per-item
+The first attempted fix (`dc2f0c2`) forced the policy checklist into a strict, per-item
 classification — resolved, not applicable, or unresolved, six named entries, no freeform bucket.
 This closed a related bug (the model had been dumping answers into an unlisted fourth bucket) but,
 on its own, did not stop the fabrication. Having an explicit "unresolved" option available did not
@@ -72,7 +72,7 @@ sufficient.
 
 # Evolution of Understanding
 
-The fix that actually worked (`c77f322`) added a requirement neither the original Stage 2 design nor
+The fix that actually worked (`3241e8f`) added a requirement neither the original Stage 2 design nor
 the first policy-checklist fix had included: every "resolved" (and, after a further review pass
 found the same gap from a different angle, every "not applicable") classification must name its
 exact source — the specific sentence in the story, ADR, or domain vocabulary that states the rule —
@@ -84,11 +84,11 @@ correctly routed to an open question.
 # Architecture Changes
 
 - Stage 2 (Decision Extraction and Gating) added to the behavior-first pipeline, `2026-07-13`
-  (`d9e8451`), gating Contract Generation on unresolved decisions.
+  (`2f68614`), gating Contract Generation on unresolved decisions.
 - Business Policy Discovery's classification forced into a fixed six-item, three-bucket shape,
-  `2026-07-14` (`0fd89d7`).
+  `2026-07-14` (`dc2f0c2`).
 - Evidence-grounding requirement added to both "resolved" and "not applicable" classifications, with
-  code-level citation enforcement, `2026-07-14` (`c77f322`).
+  code-level citation enforcement, `2026-07-14` (`3241e8f`).
 
 # Principles That Emerged
 

@@ -49,18 +49,18 @@ a duplicate anyway.
 
 # Evidence
 
-- Commit `4a728a6`: an earlier, narrower instance of the same realization — instead of asking the
+- Commit `2ff1ae3`: an earlier, narrower instance of the same realization — instead of asking the
   model to decide whether a given gap finding should block downstream work, severity is computed
   deterministically from the gap's own already-known category ("MissingScenario/UnresolvedQuestion
   are always blocking, AmbiguousOutcome is always non-blocking... one less degree of freedom [the
   model] can get wrong, consistent with computing anything that has a mechanical answer instead of
   asking for it").
-- Commit `a254b25`: a check comparing a generated entity name against already-established project
+- Commit `98c1783`: a check comparing a generated entity name against already-established project
   vocabulary, computed entirely outside the model, added specifically because a live run showed the
   model's own generated entity could silently diverge from vocabulary already shown to it in the
   same context.
-- Commit `0dd7073`: the sibling check for event names, same shape, same non-model computation.
-- Commit `390b7f6`: the most direct confirmation. "The prior instruction asked the model to scan a
+- Commit `ea3e1b9`: the sibling check for event names, same shape, same non-model computation.
+- Commit `9061e34`: the most direct confirmation. "The prior instruction asked the model to scan a
   list and judge a match itself — exactly the [enumeration-over-holistic-review] failure mode this
   pipeline's own house style now explicitly calls out... [a mechanical function] computes the
   answer mechanically instead... The result is injected as a single... fact." A controlled

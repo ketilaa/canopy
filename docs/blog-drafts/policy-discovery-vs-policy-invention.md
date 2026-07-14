@@ -117,10 +117,10 @@ uncertainty. It changed its default answer once confidence required a receipt.
   each carrying a specific, invented answer — a named role, a default value, a retention
   statement, a duplicate-handling rule, a no-dependency statement — none of them present anywhere
   in the request, prior decisions, or established project vocabulary shown to the model.
-- Commit `0fd89d7`: the first fix — forcing a fixed, named set of six classification entries so
+- Commit `dc2f0c2`: the first fix — forcing a fixed, named set of six classification entries so
   the model couldn't skip a question or invent a fourth output bucket. Closed a related bucketing
   bug. Did not, on its own, stop the fabrication.
-- Commit `c77f322`: the fix that changed outcomes — "resolved" and "not applicable" both now
+- Commit `3241e8f`: the fix that changed outcomes — "resolved" and "not applicable" both now
   require a named `evidence` field pointing at "the story, an ADR, or domain vocabulary," checked
   by code that fails the entire operation if either classification is missing its citation.
 - A controlled reproducibility comparison, three runs before and three runs after: before, two of

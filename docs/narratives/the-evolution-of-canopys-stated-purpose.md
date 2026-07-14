@@ -31,11 +31,11 @@ the project *described itself*, not why it exists.
 
 # Initial Vision
 
-Day one's CLAUDE.md (`32cf41e`, 2026-06-19) states: "Canopy is an AI software engineering system...
+Day one's CLAUDE.md (`b45b167`, 2026-06-19) states: "Canopy is an AI software engineering system...
 NOT a code completion tool... NOT a chat interface over a repository... a planning and
 implementation engine that operates on structured repository knowledge produced by Roots." Notably,
 Roots — a separate repository-intelligence tool — is already referenced as a dependency on day one,
-two days before it was merged into the same monorepo (`fb9ba3b`, 2026-06-21), meaning Roots existed
+two days before it was merged into the same monorepo (`170dddc`, 2026-06-21), meaning Roots existed
 or was being developed before or alongside Canopy itself, not as a later addition.
 
 The original architecture underneath this description was a single-shot pipeline: vague idea →
@@ -48,11 +48,11 @@ The earliest implicit assumption, visible in the original rigid `Architecture` s
 `frontend`/`backend`/`database`/`deployment` fields), was that a project's architecture could be
 captured once, upfront, as a fixed set of decisions. This assumption didn't survive its own first
 day — three patch commits widened individual fields the same day they shipped, and by day's end the
-schema was replaced entirely (`2805e03`).
+schema was replaced entirely (`0a20bf6`).
 
 # Turning Points
 
-The sharpest turning point in this narrative is `603364d` (2026-06-23), four days after launch:
+The sharpest turning point in this narrative is `e9b917c` (2026-06-23), four days after launch:
 "Redesign CLAUDE.md: accurate, concise, emergent-first." This added, for the first time, an explicit
 "Core Design Insight" table: "Everything emerges. Nothing is decided upfront," listing which
 artifact emerges from which command. It also added a new negative Canopy had not stated before: "NOT
@@ -63,7 +63,7 @@ specified before code is written, and architecture decisions are made story by s
 once."
 
 This wording — the entire "Project: Canopy" section, verbatim — has not changed since. A direct diff
-against the current file confirms this section is byte-identical to its `603364d` version, three
+against the current file confirms this section is byte-identical to its `e9b917c` version, three
 weeks and roughly 210 further commits later.
 
 # Contradictory Evidence
@@ -89,12 +89,12 @@ unchanged statement, not a change of direction.
 
 # Architecture Changes
 
-- Day 0: rigid single-shot schema → deferred, intent-time-derived types (`2805e03`).
-- 06-21/22: LLM-derived scaffold commands → deterministic static templates (`1c759bf`).
-- 06-23-25: upfront explore questions → emergent extraction from stories (`0e3fa34`, `2661da1`,
-  `85a7f1b`, `470ca03`).
+- Day 0: rigid single-shot schema → deferred, intent-time-derived types (`0a20bf6`).
+- 06-21/22: LLM-derived scaffold commands → deterministic static templates (`c4c7035`).
+- 06-23-25: upfront explore questions → emergent extraction from stories (`d0766ad`, `f0e8593`,
+  `9388a92`, `0cf44ed`).
 - 06-29-07-01: single-shot per-intent generation → per-service generation with tech-stack skills and
-  a TDD loop (`e0aedf9`, `8cfabf7`).
+  a TDD loop (`6bed3f6`, `f1d7d65`).
 - 07-13: ADR/architecture-skill-driven planning → the five-stage behavior-first pipeline (Story →
   Behaviors → Decisions → Clusters → Contracts), documented in
   `docs/design/behavior-first-planning.md`.

@@ -41,7 +41,7 @@ default — "make the test pass" is satisfied either way.
 
 # Evidence
 
-- `8cfabf7`: the test file is explicitly protected from edits during the Green phase (a `skip_files`
+- `f1d7d65`: the test file is explicitly protected from edits during the Green phase (a `skip_files`
   mechanism) — the fix loop can look at the test but cannot modify it while attempting to make the
   implementation satisfy it. This is a structural guarantee, not an instruction asking the model to
   leave the test alone.
@@ -57,7 +57,7 @@ default — "make the test pass" is satisfied either way.
 # Counter-Evidence
 
 The evidence base for this principle is thinner than the others in this set — it rests on one clear
-originating instance (`8cfabf7`'s test-file freezing) plus one later, structurally similar but not
+originating instance (`f1d7d65`'s test-file freezing) plus one later, structurally similar but not
 identical mechanism from a different period, rather than multiple independently-arrived-at instances
 across unrelated parts of the system. It's plausible the Red-phase sanity check was a deliberate,
 conscious extension of the test-freezing idea rather than an independent rediscovery of it — the

@@ -122,17 +122,17 @@ valid" are two separate questions. Enumeration alone only answers the first.
 - 4 of 9 constraint gaps found on the first holistic pass, with the model correctly catching the
   identical constraint type (a field-length limit) on three other fields in the same response
   before missing it on a fourth — ruling out a comprehension failure. Restructured into three
-  explicit, item-by-item checklists, the re-run found 9 of 9. (Commit `1b295df`.)
+  explicit, item-by-item checklists, the re-run found 9 of 9. (Commit `b2664c7`.)
 - The result was generalized into a named principle before its later confirmations happened — the
   design note predicted it should reapply to behavior extraction, cluster review, and coverage
-  verification, and it did. (Commit `e61043f`.)
+  verification, and it did. (Commit `415f7f8`.)
 - Scenario generation, rebuilt the same way: a mechanically-computed coverage checklist followed by
-  a one-scenario-per-item generation pass. (Commit `7553d07`.) In a controlled reproducibility test
+  a one-scenario-per-item generation pass. (Commit `cef2c96`.) In a controlled reproducibility test
   — three runs, identical starting state, only sampling varying — the number of scenarios generated
   matched the size of the independently-computed checklist exactly in every run.
 - The pattern was formalized as a standing rule only after it had already reproduced independently
   across four separate areas: constraint coverage, behavior extraction, dependency review, and
-  clustering review. (Commit `f0aaa74`.)
+  clustering review. (Commit `4fc8d28`.)
 - Counter-case: a policy-classification prompt that was already fully enumerative (six named items,
   three named buckets) still let a model invent an unlisted fourth bucket for half the items in one
   run — evidence that enumerating the input set doesn't, by itself, constrain the output shape.

@@ -111,7 +111,7 @@ convention, say — and even then, never a project-specific one.
 
 - Three identical runs of the same underlying request, only sampling varying: the worked-example
   phrase "register an account" appeared near-verbatim in the model's own output in all three,
-  regardless of the actual subject of the request. (Commit `a254b25`.)
+  regardless of the actual subject of the request. (Commit `98c1783`.)
 - One of those three runs produced a fully divergent generated schema — username, password, email
   fields — for an entity that both the story and the project's own established vocabulary already
   named "Manufacturer," with no textual basis for "Account" anywhere else in the prompt.
@@ -125,7 +125,7 @@ convention, say — and even then, never a project-specific one.
 - The conclusion, stated directly afterward: "the reference model treats an example noun as a
   candidate answer, not just an illustration... bracketed placeholders can't be copied literally
   because they aren't real words, which removes the attractor risk entirely rather than just
-  weakening it." (Commit `966fadf`.)
+  weakening it." (Commit `4185038`.)
 
 # Evolution of Understanding
 

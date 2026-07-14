@@ -9,10 +9,10 @@ invented beyond what those artifacts support.
 
 # What Changed
 
-The planning phase shipped in full (`1b68f87`): domain registry, intent specs, implementation
+The planning phase shipped in full (`947fd4f`): domain registry, intent specs, implementation
 plans, a scaffold command, an interactive REPL, and integration with Roots (a separate
-repository-intelligence tool, merged into the same monorepo the same day, `fb9ba3b`). The
-architecture schema itself became schema-free (`8d53abd`, `e900514`) — a deliberate continuation of
+repository-intelligence tool, merged into the same monorepo the same day, `170dddc`). The
+architecture schema itself became schema-free (`2191aab`, `57505ab`) — a deliberate continuation of
 day 0's pivot away from rigid typed fields.
 
 Scaffolding — turning a chosen architecture into an actual runnable project skeleton — was built as
@@ -22,7 +22,7 @@ non-existent Vite template, wrong flag ordering, an invented `npm init` scaffold
 incompatible Angular CLI invocations, wrong Maven archetype versions, incorrect Spring Boot
 initializer parameters, and more.
 
-That churn ended in `1c759bf`: "Scaffold commands are fully deterministic given component type — the
+That churn ended in `c4c7035`: "Scaffold commands are fully deterministic given component type — the
 LLM added latency, cost, and hallucination risk. Replace with static templates." LLM-based scaffold
 generation was removed and replaced with static, code-driven templates keyed on component type
 (`arch_needs_jvm`, `vite_template_for`).
@@ -51,7 +51,7 @@ prompt wording, was the problem.
 
 # What We Believe Now
 
-*(Reconstructed inference from what `1c759bf` states directly, not a verbatim broader belief
+*(Reconstructed inference from what `c4c7035` states directly, not a verbatim broader belief
 statement from the commits.)* Use the model where the mapping from input to output is genuinely
 underdetermined and needs judgment. Once a mapping becomes fully deterministic given already-decided
 inputs, replace generation with code — not because the model can't do it, but because there's no
@@ -60,7 +60,7 @@ value in accepting hallucination risk for something enumerable in advance.
 # Possible Next Steps
 
 *(Inferred from what the evidence suggests remained unresolved, not stated directly.)* Even after
-the static-template rewrite, residual scaffold bugs surfaced (`9dc84b7`) — the deterministic
+the static-template rewrite, residual scaffold bugs surfaced (`dfc05fe`) — the deterministic
 templates still needed their own debugging, suggesting "replace with code" traded one class of bug
 (hallucination) for another (template edge cases), which is a reasonable trade but not a free one.
 Whether the same enumerable-mapping test should be applied more broadly elsewhere in the pipeline is

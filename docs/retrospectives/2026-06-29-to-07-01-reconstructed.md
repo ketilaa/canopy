@@ -15,10 +15,10 @@ technology." No stack-specific rules, no expected file paths, no naming conventi
 test-driven discipline; tests were "included in a separate file when the plan has test tasks," with
 no compile gate or pass/fail loop at all.
 
-`e0aedf9` replaced this with per-service generation (one LLM call per service, merged and
+`6bed3f6` replaced this with per-service generation (one LLM call per service, merged and
 layer-ordered afterward) and introduced tech-stack "skills" — authoritative, stack-specific rule
 blocks for exact file paths, naming conventions, and forbidden patterns, dispatched by detected
-technology. `8cfabf7` then added a Red/Green TDD loop: a test stub is generated and compile-checked
+technology. `f1d7d65` then added a Red/Green TDD loop: a test stub is generated and compile-checked
 first (Red), and only once that's confirmed does implementation generation proceed (Green) — with
 the test file itself frozen (`skip_files`) so the fix loop cannot edit it while making the
 implementation pass.
@@ -28,9 +28,9 @@ implementation pass.
 The generic "follow idiomatic conventions" instruction produced real, structural failures, not just
 style inconsistencies. Java package paths were computed synthetically rather than detected from what
 had actually been scaffolded, and a stale-cleanup step was found to be deleting real generated
-files as a side effect (`e0aedf9`'s own commit message states this plainly). Validation annotations
+files as a side effect (`6bed3f6`'s own commit message states this plainly). Validation annotations
 were being applied to types they don't support (`@Positive`/`@Min`/`@Max` on non-numeric fields,
-`8cfabf7`) — evidence the generic instruction gave the model no grounding in what's actually valid
+`f1d7d65`) — evidence the generic instruction gave the model no grounding in what's actually valid
 for a given stack.
 
 # What Surprised Us
@@ -47,7 +47,7 @@ established artifact from being silently reinterpreted by a later step.
 
 # What We Believe Now
 
-*(Reconstructed inference from what `e0aedf9` and `8cfabf7` together establish, not a verbatim
+*(Reconstructed inference from what `6bed3f6` and `f1d7d65` together establish, not a verbatim
 belief statement.)* Tech-specific, narrow rule blocks reliably beat one generic "use idiomatic
 conventions" instruction. And once a test is established as the specification for a piece of
 behavior, that spec needs to be protected — structurally, not just by asking — from being redefined

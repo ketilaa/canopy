@@ -12,7 +12,7 @@ nothing here is invented beyond what those artifacts support.
 
 Through the preceding weeks, `canopy-llm/src/lib.rs` and `canopy-cli/src/main.rs` had grown into two
 large single files — the automated checkpoint commits leading up to this period show both files
-still gaining hundreds of lines each as feature work continued. On 2026-07-08, `2872c18` split both
+still gaining hundreds of lines each as feature work continued. On 2026-07-08, `1fa1ce8` split both
 apart: `canopy-llm/src/lib.rs` (roughly 3,741 lines before) became a thin module-declaration file,
 with prompt builders, skills, and repair logic moved into their own modules
 (`client.rs`, `repair.rs`, `tech.rs`, `skills/{mod,tech_stack,architecture,build_system,testing}.rs`,
@@ -20,7 +20,7 @@ with prompt builders, skills, and repair logic moved into their own modules
 (roughly 2,800 lines before) shrank to about 40, with command handling, the fix loop, and REPL
 plumbing split into dedicated files. Business logic that had been sitting in the wrong crate layer —
 tech-family classification, ADR merging, domain-entity/event/role types — moved down into
-`canopy-core`. Separately, `bf01dc8` added a Rust language parser to the Roots repository-
+`canopy-core`. Separately, `a9f4561` added a Rust language parser to the Roots repository-
 intelligence tool, mirroring the existing Java/Kotlin/TypeScript extractors.
 
 # What We Learned

@@ -59,12 +59,12 @@ invocation.
 
 # What Happened
 
-The bugs came fast and from every direction. `91cb0bc`: the model invented a Vite template name
-that doesn't exist and got the flag order wrong. `99a17ea`: it invented an `npm init` scaffolder —
-"express-auth-service" — that has never existed on the npm registry. `ae72758`: the Angular
-template it picked can't actually be scripted the way it assumed. `38831a0`: wrong Maven archetype
-version, wrong Spring Boot initializer source. `15484ab`, `eaa6212`, `5dddd78`, `254a5d4`,
-`7e5f237`, `aa04ecd`, `e4311d6`, `9dc84b7`, `78f51e5` — nine more, across the same two days, each a
+The bugs came fast and from every direction. `122ce37`: the model invented a Vite template name
+that doesn't exist and got the flag order wrong. `0ad9db2`: it invented an `npm init` scaffolder —
+"express-auth-service" — that has never existed on the npm registry. `b297035`: the Angular
+template it picked can't actually be scripted the way it assumed. `444a0e4`: wrong Maven archetype
+version, wrong Spring Boot initializer source. `f148cb2`, `49686f9`, `f6dc019`, `74e5946`,
+`41f8ad2`, `63d82d9`, `bf5c5a0`, `dfc05fe`, `bb1f2b1` — nine more, across the same two days, each a
 different flavor of the same thing: the model producing a plausible-looking but wrong invocation of
 a real external tool.
 
@@ -77,12 +77,12 @@ time. There was no decision left for a model to make — only an exact, external
 reproduce byte-for-byte, which is exactly the kind of task language models are worst at when the
 correct answer has to match a real tool's actual interface rather than a plausible one.
 
-We deleted the LLM call. `1c759bf`: "Scaffold commands are fully deterministic given component
+We deleted the LLM call. `c4c7035`: "Scaffold commands are fully deterministic given component
 type — the LLM added latency, cost, and hallucination risk. Replace with static templates." Static
 Rust functions (`arch_needs_jvm`, `vite_template_for`) now map a component type directly to its
 scaffold commands. No model call in that path at all.
 
-The fix didn't make scaffolding perfect — `9dc84b7`, right after the rewrite, fixed three more bugs
+The fix didn't make scaffolding perfect — `dfc05fe`, right after the rewrite, fixed three more bugs
 in the new deterministic templates themselves (a Vite prompt-handling issue, a Spring Boot
 line-continuation problem, incorrect Node `--prefix` usage). Trading hallucination risk for
 template bugs was a real trade, not a free win — but template bugs are the kind you fix once and
@@ -93,13 +93,13 @@ they stay fixed, not the kind that reappears in a new disguise on the next gener
 - 13 distinct scaffold-generation bug-fix commits across 2026-06-21 and 2026-06-22, each patching a
   different hallucinated or malformed external-tool invocation (Vite, Angular CLI, Spring
   Initializr, npm/Node) — no single fix addressed more than one specific case.
-- `1c759bf`'s own stated rationale: the mapping from component type to scaffold command is "fully
+- `c4c7035`'s own stated rationale: the mapping from component type to scaffold command is "fully
   deterministic," and the LLM call bought "latency, cost, and hallucination risk" with no
   offsetting benefit.
 - Architecture derivation itself — a task retained as LLM-driven throughout this same period, and
   even made more flexible (schema-free) rather than more constrained — was not implicated in any
   of these bug reports, consistent with it being a genuinely different kind of task.
-- 3 further bugs in the new deterministic templates (`9dc84b7`), confirming the rewrite traded one
+- 3 further bugs in the new deterministic templates (`dfc05fe`), confirming the rewrite traded one
   class of problem for a smaller, more tractable one rather than eliminating bugs outright.
 
 # Evolution of Understanding

@@ -46,14 +46,14 @@ anything had gone wrong.
 
 # Evidence
 
-- Commit `a254b25`: "one run's entity_schema fully diverged to 'Account'... despite the story's
+- Commit `98c1783`: "one run's entity_schema fully diverged to 'Account'... despite the story's
   as_a and the domain registry both already establishing Manufacturer as the entity." The fix
   added a mechanical, non-LLM check run immediately after generation: does the newly-generated
   entity name match an entity already known to the project? If established vocabulary exists and
   nothing matches, the operation fails loudly and nothing is saved — "a fully different domain can
   never silently persist as if accepted." Covered by dedicated tests including the exact observed
   divergence.
-- Commit `0dd7073`: the same pattern applied one stage later, to domain-event naming — checking
+- Commit `ea3e1b9`: the same pattern applied one stage later, to domain-event naming — checking
   whether a newly-accepted event's name shares the same entity prefix as an already-established
   entity, "since that's the same class of derailment Entity Continuity already guards against one
   stage earlier." Also deliberately scoped to avoid over-triggering: it checks only the entity

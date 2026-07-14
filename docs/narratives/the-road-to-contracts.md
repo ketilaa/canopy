@@ -52,7 +52,7 @@ collided directly with the existing, narrower `contract.yaml` naming, "entrenche
 sites" per the rename commit's own accounting.
 
 The project chose to rename the old concept out of the way rather than rewrite the new design around
-a different word: `e12bef6` renamed `contract.yaml`/`generate_story_contract` to
+a different word: `a1121e4` renamed `contract.yaml`/`generate_story_contract` to
 `openapi.yaml`/`generate_story_openapi` throughout canopy-storage, canopy-llm, and canopy-cli — "the
 OAS artifact is the older, narrower concept and the new pipeline's contracts are its central
 vocabulary." A pure rename, no behavior change, made specifically to free the word for what it was
@@ -60,7 +60,7 @@ about to mean instead.
 
 # Contradictory Evidence
 
-Stage 4's own implementation (`a9ac692`, same day) shows the new meaning of "contract" is
+Stage 4's own implementation (`40bde93`, same day) shows the new meaning of "contract" is
 considerably more structural than the old OpenAPI snapshot ever was: one contract per cluster,
 mechanically derived — name, owned behaviors, and required tests (the owned behaviors' own
 statements, verbatim) are pure derivations of the cluster, not a separate authoring step. Unit
@@ -82,8 +82,8 @@ specification artifacts." Traceability, not documentation, is now the artifact's
 
 # Architecture Changes
 
-- `e12bef6`: OpenAPI/HTTP contract renamed out of the way, freeing "Contract" as a term.
-- `a9ac692`: Contract Generation (Stage 4) implemented — `Contract`/`ContractSet`/
+- `a1121e4`: OpenAPI/HTTP contract renamed out of the way, freeing "Contract" as a term.
+- `40bde93`: Contract Generation (Stage 4) implemented — `Contract`/`ContractSet`/
   `ContractCoverage`/`DependencyReview`/`ContractAudit` types, one contract per cluster/grouping,
   mechanical unit-contract derivation, reviewed integration-contract dependencies.
 - The design doc's own "Role of tools during implementation" section reframes the coding model's

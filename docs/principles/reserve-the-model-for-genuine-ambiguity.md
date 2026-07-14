@@ -49,12 +49,12 @@ input — never had any real ambiguity in it to begin with.
 - 13+ distinct scaffold-command bug-fix commits across 2026-06-21 and 2026-06-22, spanning at least
   5 different scaffold targets (Vite, Angular CLI, Spring Initializr, Node/npm), each fixing a
   different specific hallucinated or malformed invocation.
-- The resolving commit's own stated rationale (`1c759bf`): "Scaffold commands are fully
+- The resolving commit's own stated rationale (`c4c7035`): "Scaffold commands are fully
   deterministic given component type — the LLM added latency, cost, and hallucination risk. Replace
   with static templates." Architecture derivation — a genuinely underdetermined task — was
   deliberately *not* touched by this change and, in the same period, was made more flexible
   (schema-free) rather than more constrained.
-- A second, independent instance of the same underlying test: `8cfabf7`'s TDD test-file freezing.
+- A second, independent instance of the same underlying test: `f1d7d65`'s TDD test-file freezing.
   Once a test file is established as the specification for a behavior, whether the implementation
   satisfies it is a deterministic, checkable fact (does the test pass), not something requiring the
   model's ongoing discretion — the fix protected the test from being edited during the fix loop
@@ -62,7 +62,7 @@ input — never had any real ambiguity in it to begin with.
 
 # Counter-Evidence
 
-The static-template replacement was not bug-free — `9dc84b7`, the commit immediately following the
+The static-template replacement was not bug-free — `dfc05fe`, the commit immediately following the
 rewrite, fixed three new bugs in the deterministic templates themselves (a Vite prompt-handling
 issue, a Spring Boot line-continuation problem, incorrect Node `--prefix` usage). This is not
 evidence against the principle — it shows the trade was real, not costless: replacing generation

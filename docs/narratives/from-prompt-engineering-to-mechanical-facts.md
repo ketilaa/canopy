@@ -42,7 +42,7 @@ computation and deterministic auditing as the default instead.
 
 The earliest instinct, visible from day one, was that a bad model output meant a prompt problem.
 Day 0's `Architecture` schema failures were patched three times by loosening field types
-(`795676a`, `7884aea`, `c419d19`) before the schema itself was replaced — each patch an attempt to
+(`60f6f12`, `6dd50cf`, `c4b8fc8`) before the schema itself was replaced — each patch an attempt to
 let the prompt's output fit better, not a question of whether the model should be answering that
 question at all.
 
@@ -58,30 +58,30 @@ problems that turned out not to be about wording at all.
 
 **Turning point one (2026-06-21/22): scaffold generation.** At least 13 hallucinated or malformed
 scaffold-command bugs accumulated over two days — invented package names, wrong CLI flags, mismatched
-tool versions — each patched individually, until `1c759bf` stopped patching and asked a different
+tool versions — each patched individually, until `c4c7035` stopped patching and asked a different
 question: is this mapping actually ambiguous, or is it a lookup table the model is being asked to
 approximate? It was the latter. Scaffold generation was deleted and replaced with static templates.
 This is the earliest clear instance of the pattern, though it wasn't yet named as one.
 
 **Turning point two (2026-07-02): frontend ordering.** A prompt-only fix for frontend/backend file
-ordering (`fbe3fa0`) didn't hold; the actual ordering logic needed to be enforced in code the same
-morning (`0cabf3d`). This commit states the emerging methodology directly, for the first time, in
+ordering (`e3ca836`) didn't hold; the actual ordering logic needed to be enforced in code the same
+morning (`9281a2a`). This commit states the emerging methodology directly, for the first time, in
 its own message: "prompt guidance for humans, code enforcement for machines." At the time, this read
 as a note about one ordering bug, not a manifesto.
 
 **Turning point three (2026-07-13): Entity Continuity.** A reproducibility sweep found a generated
 data schema fully diverged onto an unrelated entity, despite the correct entity name being stated
-twice, verbatim, in the same prompt. The fix (`a254b25`) wasn't a better prompt — it was a plain
+twice, verbatim, in the same prompt. The fix (`98c1783`) wasn't a better prompt — it was a plain
 string comparison between the generated entity and already-known project vocabulary, run after
 generation, failing the whole operation on mismatch. The same day, this pattern was named directly
-as a standing rule (`f0aaa74`): prefer exhaustive enumeration and mechanical fact-computation over
+as a standing rule (`4fc8d28`): prefer exhaustive enumeration and mechanical fact-computation over
 holistic model judgment, and treat a deterministic audit (compare and reject) as encouraged, while
 silently rewriting model output stays forbidden.
 
 **Turning point four (2026-07-14): domain-event-ADR detection.** A duplicate architecture-decision
 bug, quantified at roughly 2 of 3 reproducibility-sweep runs, got the identical treatment: instead of
 asking the model to scan a list of existing decisions and judge a match, a mechanical function
-computes the answer and states it as a fact the model just acts on (`390b7f6`).
+computes the answer and states it as a fact the model just acts on (`9061e34`).
 
 # Contradictory Evidence
 
@@ -108,17 +108,17 @@ stop asking.
 
 # Architecture Changes
 
-- Scaffold command generation removed entirely, replaced by static templates (`1c759bf`,
+- Scaffold command generation removed entirely, replaced by static templates (`c4c7035`,
   2026-06-22).
-- Frontend/backend step ordering enforced in code after generation (`0cabf3d`, 2026-07-02).
+- Frontend/backend step ordering enforced in code after generation (`9281a2a`, 2026-07-02).
 - `check_entity_continuity` and `check_event_continuity` added as mechanical, non-LLM gates in
-  `cmd_spec`, run immediately after generation, failing loudly on mismatch (`a254b25`, `0dd7073`,
+  `cmd_spec`, run immediately after generation, failing loudly on mismatch (`98c1783`, `ea3e1b9`,
   2026-07-13).
 - `find_existing_domain_event_for_story` computes domain-event-ADR existence mechanically and
-  injects it as a stated fact (`390b7f6`, 2026-07-14).
+  injects it as a stated fact (`9061e34`, 2026-07-14).
 - The methodology itself codified into house style: "prefer exhaustive enumeration over holistic
   review," and an explicit distinction between deterministic audits (encouraged) and Rust-side
-  compensation — silently rewriting model output (forbidden) (`f0aaa74`, 2026-07-13).
+  compensation — silently rewriting model output (forbidden) (`4fc8d28`, 2026-07-13).
 
 # Principles That Emerged
 

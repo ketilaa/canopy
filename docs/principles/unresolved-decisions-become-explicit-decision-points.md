@@ -53,7 +53,7 @@ making the decision unasked.
 
 # Evidence
 
-- Commit `e61043f`: the original design rationale, written before any of the later confirming
+- Commit `415f7f8`: the original design rationale, written before any of the later confirming
   evidence existed — "Elevates unresolved business questions... to a first-class, gated Decision
   Point artifact instead of a note that planning can silently work around... [a model] will not
   stop and ask what an unresolved question should mean, it will pick an interpretation, and that
@@ -61,10 +61,10 @@ making the decision unasked.
 - A live-generated specification showing the predicted failure concretely: five of six policy
   questions "resolved" with specific, unsupported answers, in a step whose own instructions already
   offered an explicit "unresolved" classification.
-- Commit `0fd89d7`: the first fix attempt — forcing the model to classify every named question
+- Commit `dc2f0c2`: the first fix attempt — forcing the model to classify every named question
   explicitly rather than allowing a freeform response — closed a related bucketing bug but, on its
   own, did not stop the underlying fabrication.
-- Commit `c77f322`: the fix that actually changed outcomes — requiring every "resolved" (and
+- Commit `3241e8f`: the fix that actually changed outcomes — requiring every "resolved" (and
   "not applicable") answer to cite a specific, checkable source, and treating an answer with no
   citation as invalid output rather than an acceptable low-confidence guess.
 - A controlled reproducibility comparison before and after this fix: before, most runs resolved 5

@@ -57,18 +57,18 @@ crossing into compensation.
 
 # Evidence
 
-- Commit `f0aaa74`: explicitly rewrote the governing rule after noticing the tension — "Rust-side
+- Commit `4fc8d28`: explicitly rewrote the governing rule after noticing the tension — "Rust-side
   compensation is forbidden. Deterministic audits are encouraged," with worked examples on each
   side: replacing an invalid value, rewriting generated content, or silently defaulting a missing
   field are compensation (forbidden); checking consistency between artifacts, verifying coverage,
   validating an already-known fact are audits (encouraged) — because "Entity/Event Continuity are
   exactly the audit shape and the old wording risked the reviewer flagging its own project's best
   pattern as a violation."
-- Commit `a254b25` / `0dd7073`: two live examples of the audit shape working exactly as intended —
+- Commit `98c1783` / `ea3e1b9`: two live examples of the audit shape working exactly as intended —
   each check compares a generated value against already-known project vocabulary and fails the
   whole operation on mismatch, never altering what the model produced, and each was verified via
   dedicated regression tests built from the exact failure case that motivated it.
-- Commit `c77f322`: a live example of the *compensation* failure mode being caught and corrected in
+- Commit `3241e8f`: a live example of the *compensation* failure mode being caught and corrected in
   the same codebase. Code meant to sort a model's own classifications into two lists was, in two
   specific branches, silently generating placeholder text the model never wrote when a required
   citation was missing. Independent review flagged this directly as crossing from audit into

@@ -48,31 +48,31 @@ behavioral statements typed later.
 
 # Evidence
 
-- `2805e03` (day 0): a rigid, upfront-specified architecture schema replaced by deferred,
+- `0a20bf6` (day 0): a rigid, upfront-specified architecture schema replaced by deferred,
   intent-time-derived types, on the same day the rigid version was first shipped and immediately
   needed three patches to accommodate model output it hadn't anticipated.
-- `8d53abd`/`e900514` (2 days later): architecture derivation itself made schema-free, continuing
+- `2191aab`/`57505ab` (2 days later): architecture derivation itself made schema-free, continuing
   the same direction rather than reverting it.
-- `0e3fa34`: "Let user roles emerge from intent, not from explore" — roles moved from an upfront
+- `d0766ad`: "Let user roles emerge from intent, not from explore" — roles moved from an upfront
   question to accumulating from story `as_a` fields.
-- `2661da1`: "Drop boundaries from explore questions; allow zero questions" — boundaries deferred to
+- `f0e8593`: "Drop boundaries from explore questions; allow zero questions" — boundaries deferred to
   later stages; explore may now ask nothing at all.
-- `85a7f1b`: clarifying questions removed from explore entirely, stated as adding "friction without
+- `9388a92`: clarifying questions removed from explore entirely, stated as adding "friction without
   value."
-- `470ca03`: explore renamed to `init`; the vision document dropped completely — `init` now performs
+- `0cf44ed`: explore renamed to `init`; the vision document dropped completely — `init` now performs
   no LLM call at all.
 - Concrete failure evidence for *why* upfront elicitation was actively harmful, not just
-  unnecessary: `30b656b` found domain extraction pulling from a story's stated benefit rather than
+  unnecessary: `d4ec54b` found domain extraction pulling from a story's stated benefit rather than
   its actual action, and stories naming implementation details ("in the catalog," "via the API")
   before any architecture had been decided — premature specification leaking into places it hadn't
-  been decided yet. `7f5efe6` found event extraction adding a speculative `Updated` event alongside
+  been decided yet. `5cfe54b` found event extraction adding a speculative `Updated` event alongside
   a described `Created` event with no textual basis — anticipating structure not yet described.
 
 # Counter-Evidence
 
 The shift away from upfront elicitation was not unconditional, and evidence of a real limit exists
 in the same period. Two days after boundaries and questions were being stripped from `init`, a
-bootstrap step was reintroduced (`3eaebed`, `5d664be`): LLM-suggested candidate entities and roles,
+bootstrap step was reintroduced (`0293570`, `9813334`): LLM-suggested candidate entities and roles,
 presented as a pre-selected, human-editable multi-select at `init` time. Fully emergent,
 ask-nothing-upfront elicitation was tried and found to have its own cost — starting completely cold,
 with nothing to react to or correct, was worse than a seeded-but-editable starting point. The

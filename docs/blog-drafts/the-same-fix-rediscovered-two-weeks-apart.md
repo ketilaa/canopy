@@ -71,7 +71,7 @@ Each of these read, going in, as "here's what's wrong with this one prompt."
 
 # What Happened
 
-The 07-02 fix (`0cabf3d`) is the earliest clearly-stated version: "prompt guidance for humans, code
+The 07-02 fix (`9281a2a`) is the earliest clearly-stated version: "prompt guidance for humans, code
 enforcement for machines." At the time, this sat inside a single commit about frontend/backend
 ordering — a specific bug, not a stated methodology. The same day's broader pattern (documented
 separately) was that YAML list-shaped output kept breaking in new ways no matter how the prompt was
@@ -81,7 +81,7 @@ handling — never prompt wording alone.
 Eleven days passed. A reproducibility sweep on 2026-07-13 found a generated entity schema that had
 fully diverged into an unrelated domain — the correct entity name was present, verbatim, in two
 separate places in the same prompt, and the model still produced something else entirely. The fix
-(`a254b25`) added `check_entity_continuity`: a plain string comparison between the generated entity
+(`98c1783`) added `check_entity_continuity`: a plain string comparison between the generated entity
 and already-established project vocabulary, run immediately after generation, failing the whole
 operation on mismatch. Nothing here referenced the 07-02 ordering fix. It didn't need to — the shape
 was identical: something the system already knew was being re-derived by the model instead of
@@ -89,12 +89,12 @@ checked against, and the fix was to stop asking and start comparing.
 
 The next day, 2026-07-14, a reproducibility sweep found a domain-event architecture decision being
 proposed twice for the same story, even with the existing decision shown to the model verbatim. The
-fix (`390b7f6`) computed the answer mechanically — does a decision like this already exist for this
+fix (`9061e34`) computed the answer mechanically — does a decision like this already exist for this
 entity and operation — and injected it as a single stated fact the model just had to act on, instead
 of asking it to scan a list and judge a match itself.
 
 By this point, the pattern had shown up often enough, across different bugs solved by different
-people at different times, to state directly rather than rediscover again: `f0aaa74`, the same day,
+people at different times, to state directly rather than rediscover again: `4fc8d28`, the same day,
 formalized it as a standing rule — prefer exhaustive enumeration and mechanical fact-computation over
 holistic model judgment, and explicitly distinguish a deterministic audit (compare and reject,
 encouraged) from silently rewriting a model's output (forbidden). The rule cites its own evidence:
@@ -103,16 +103,16 @@ of the system.
 
 # Evidence
 
-- `0cabf3d` (2026-07-02): frontend step ordering enforced in code after a prompt-only fix didn't
+- `9281a2a` (2026-07-02): frontend step ordering enforced in code after a prompt-only fix didn't
   hold; commit message states the governing idea directly — "prompt guidance for humans, code
   enforcement for machines."
-- `a254b25` (2026-07-13): a live reproducibility sweep found an entity schema fully diverged from
+- `98c1783` (2026-07-13): a live reproducibility sweep found an entity schema fully diverged from
   correctly-stated context; fixed with a mechanical string comparison against known vocabulary,
   not a better prompt.
-- `390b7f6` (2026-07-14): a live reproducibility sweep quantified a duplicate-decision bug at
+- `9061e34` (2026-07-14): a live reproducibility sweep quantified a duplicate-decision bug at
   roughly 2 of 3 runs, even with the existing decision shown verbatim in context; fixed by
   computing the answer in code and stating it as a fact.
-- `f0aaa74` (2026-07-13, same day as the entity-continuity fix): formalizes the pattern as a
+- `4fc8d28` (2026-07-13, same day as the entity-continuity fix): formalizes the pattern as a
   standing rule, citing that it had "already reproduced across Stage 0 constraint coverage, Stage 1
   behavior extraction, dependency review, clustering review" by the time it was written down.
 - No commit in the 07-13/07-14 work references the 07-02 ordering fix. The connection is
@@ -131,7 +131,7 @@ had the answer to a question, and was asking the model to reproduce that answer 
 of being told it directly.
 
 What changed as a result of noticing this wasn't the fixes themselves — each already worked on its
-own terms — but the decision to write the pattern down as a standing rule (`f0aaa74`) once enough
+own terms — but the decision to write the pattern down as a standing rule (`4fc8d28`) once enough
 independent instances existed to make it recognizable, rather than waiting to rediscover it a fourth
 time.
 

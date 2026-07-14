@@ -14,17 +14,17 @@ meant to be captured through those questions.
 
 By the end of the period, nearly every one of those upfront elements had been removed or replaced
 with something derived from actual behavioral statements: user roles now emerge from `as_a` fields
-in stories, not from explore questions (`0e3fa34`); boundaries were dropped from explore entirely,
-with explore now allowed to ask zero questions (`2661da1`); clarifying questions were removed from
-explore altogether, stated as adding "friction without value" (`85a7f1b`); and finally explore was
+in stories, not from explore questions (`d0766ad`); boundaries were dropped from explore entirely,
+with explore now allowed to ask zero questions (`f0e8593`); clarifying questions were removed from
+explore altogether, stated as adding "friction without value" (`9388a92`); and finally explore was
 renamed to `init` and the vision document was dropped completely — `init` now does one thing (save
-the idea), with no LLM call at all (`470ca03`).
+the idea), with no LLM call at all (`0cf44ed`).
 
-In parallel, domain vocabulary extraction was automated from intent statements (`ba26b83`), and
+In parallel, domain vocabulary extraction was automated from intent statements (`6d97012`), and
 CLAUDE.md itself was rewritten around this shift — "Redesign CLAUDE.md: accurate, concise,
-emergent-first" (`603364d`) — turning what had been an implicit direction into explicit doctrine.
+emergent-first" (`e9b917c`) — turning what had been an implicit direction into explicit doctrine.
 
-A real bug cluster also surfaced and got fixed mid-period (`03e6ac0`): duplicate ADRs being proposed
+A real bug cluster also surfaced and got fixed mid-period (`a99c284`): duplicate ADRs being proposed
 for categories already decided, infrastructure ADRs (database, event broker) overwriting the owning
 service's own technology field instead of adding a separate entry, and event names coming out
 kebab-case because a blanket naming rule was misapplied to events.
@@ -34,9 +34,9 @@ kebab-case because a blanket naming rule was misapplied to events.
 Upfront questions produced premature, speculative, or leaked answers. Domain extraction was
 observed pulling from the `so_that` (beneficiary) field rather than the actual action, and stories
 were naming implementation details ("in the catalog", "via the API") before any architecture had
-been decided (`30b656b`). Event extraction was found adding speculative events alongside the one
+been decided (`d4ec54b`). Event extraction was found adding speculative events alongside the one
 actually described — an `Updated` event proposed next to a `Created` event with no textual basis for
-it (`7f5efe6`).
+it (`5cfe54b`).
 
 The pattern across roles, boundaries, vocabulary, and tech stack was the same each time: information
 solicited abstractly and early tended to be wrong, premature, or over-generated, while the same
@@ -46,16 +46,16 @@ information derived from a specific described behavior was more accurate and bet
 
 The shift wasn't total. A bootstrap step was reintroduced two days after boundaries and questions
 were being stripped out — `init` gained LLM-suggested candidate entities/roles as a pre-selected,
-editable multi-select (`3eaebed`, `5d664be`). Pure emergence-from-behavior-only wasn't the final
+editable multi-select (`0293570`, `9813334`). Pure emergence-from-behavior-only wasn't the final
 answer; a seeded-but-correctable starting point survived alongside incremental accumulation. This
 reads as the project discovering the limits of "ask nothing upfront," not just committing further to
 it.
 
-The bug cluster in `03e6ac0` also showed a specific and non-obvious failure mode: infrastructure
+The bug cluster in `a99c284` also showed a specific and non-obvious failure mode: infrastructure
 ADRs (database, broker) and structural ADRs both wrote into the same `technology`/`component_type`
 fields on a service record, so whichever proposal landed second could silently overwrite the first
 rather than adding independent information — several more field-ownership races surfaced in the days
-following (`2167060`, `2782f23`, `82c6b20`, `ef66214`).
+following (`63e292b`, `6ed1be7`, `461a0cb`, `3d9e058`).
 
 # What We Believe Now
 
@@ -71,6 +71,6 @@ state."
 *(Inferred from what the evidence suggests remained open, not stated directly.)* The field-ownership
 races (multiple ADR categories writing into the same service record fields) suggest the underlying
 services registry needed a more careful merge/ownership model than "later proposal overwrites
-earlier one" — later commits in this same window (`2167060`, `2782f23`) look like incremental patches
+earlier one" — later commits in this same window (`63e292b`, `6ed1be7`) look like incremental patches
 to this, not a structural fix; whether a more principled reconciliation approach was needed is a
 natural open question from this period's evidence.
