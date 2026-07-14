@@ -57,6 +57,7 @@ fn mechanical_unit_contracts(
             .collect();
         let entity = owned.iter().find_map(|b| b.entity.clone());
         let member = owned.iter().find_map(|b| b.member.clone());
+        let mandatory = owned.iter().find_map(|b| b.mandatory);
         Contract {
             id: next_id(),
             name: format!("{}{}", c.subject, pascal_case(c.kind.label())),
@@ -64,6 +65,7 @@ fn mechanical_unit_contracts(
             kind: Some(c.kind.clone()),
             entity,
             member,
+            mandatory,
             source_cluster: c.id.clone(),
             owned_behaviors: c.behavior_ids.clone(),
             required_tests,
@@ -116,6 +118,7 @@ fn mechanical_integration_contract_baseline(
             kind: None,
             entity: None,
             member: None,
+            mandatory: None,
             source_cluster: g.id.clone(),
             owned_behaviors: g.behavior_ids.clone(),
             required_tests,
@@ -319,7 +322,7 @@ pub fn generate_contracts(
 mod contract_grounding_tests {
     use super::*;
 
-    fn validation_behavior(id: &str, entity: &str, member: &str, subject: &str, statement: &str) -> Behavior {
+    fn validation_behavior(id: &str, entity: &str, member: &str, subject: &str, statement: &str, mandatory: bool) -> Behavior {
         Behavior {
             id: id.to_string(),
             source: BehaviorSource::EntitySchema,
@@ -331,6 +334,7 @@ mod contract_grounding_tests {
             derivation: BehaviorDerivation::Mechanical,
             entity: Some(entity.to_string()),
             member: Some(member.to_string()),
+            mandatory: Some(mandatory),
         }
     }
 
@@ -346,6 +350,7 @@ mod contract_grounding_tests {
             derivation: BehaviorDerivation::Mechanical,
             entity: Some(entity.to_string()),
             member: None,
+            mandatory: None,
         }
     }
 
@@ -356,8 +361,8 @@ mod contract_grounding_tests {
 
     #[test]
     fn unit_validation_contract_carries_kind_entity_and_member() {
-        let b1 = validation_behavior("b001", "Manufacturer", "name", "ManufacturerName", "Name longer than 200 characters is rejected.");
-        let b2 = validation_behavior("b002", "Manufacturer", "name", "ManufacturerName", "Name shorter than 1 characters is rejected.");
+        let b1 = validation_behavior("b001", "Manufacturer", "name", "ManufacturerName", "Name longer than 200 characters is rejected.", true);
+        let b2 = validation_behavior("b002", "Manufacturer", "name", "ManufacturerName", "Name shorter than 1 characters is rejected.", true);
         let clustering = ClusteringResult {
             unit_clusters: vec![UnitCluster {
                 id: "cluster-001".to_string(),
@@ -375,6 +380,26 @@ mod contract_grounding_tests {
         assert_eq!(c.kind, Some(BehaviorKind::Validation));
         assert_eq!(c.entity.as_deref(), Some("Manufacturer"));
         assert_eq!(c.member.as_deref(), Some("name"));
+        assert_eq!(c.mandatory, Some(true));
+    }
+
+    #[test]
+    fn unit_validation_contract_carries_mandatory_false_for_an_optional_field() {
+        let b = validation_behavior("b003", "Manufacturer", "phoneNumber", "ManufacturerPhoneNumber", "Phone number longer than 20 characters is rejected.", false);
+        let clustering = ClusteringResult {
+            unit_clusters: vec![UnitCluster {
+                id: "cluster-003".to_string(),
+                subject: "ManufacturerPhoneNumber".to_string(),
+                kind: BehaviorKind::Validation,
+                behavior_ids: vec!["b003".to_string()],
+            }],
+            integration_groupings: vec![],
+        };
+        let behaviors = BehaviorList { behaviors: vec![b] };
+        let contracts = mechanical_unit_contracts(&clustering, &behaviors, &mut counter());
+
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(contracts[0].mandatory, Some(false));
     }
 
     #[test]
@@ -398,6 +423,7 @@ mod contract_grounding_tests {
         assert_eq!(c.kind, Some(BehaviorKind::Construction));
         assert_eq!(c.entity.as_deref(), Some("Manufacturer"));
         assert_eq!(c.member, None);
+        assert_eq!(c.mandatory, None);
     }
 
     #[test]
@@ -419,5 +445,6 @@ mod contract_grounding_tests {
         assert_eq!(c.kind, None);
         assert_eq!(c.entity, None);
         assert_eq!(c.member, None);
+        assert_eq!(c.mandatory, None);
     }
 }

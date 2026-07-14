@@ -451,5 +451,22 @@ already a known local variable in `mechanical_validation_behaviors` (`behaviors.
 for a `schema.mandatory` field, `Some(false)` for `schema.optional`, `None` for every non-
 Validation kind (mandatory/optional isn't a meaningful concept for construction, event-shape, or
 publication). Zero LLM involvement, same mechanical-propagation shape already proven for `entity`/
-`member`. Not yet implemented — proposing this as the next concrete step, pending confirmation,
-consistent with aligning on schema shape before building it (as with Option 2).
+`member`.
+
+**Implemented.** `Behavior.mandatory`/`Contract.mandatory` landed exactly as scoped above —
+`Some(is_mandatory)` for every validation behavior, `None` for construction/event-shape/
+publication and for scenario-derived behaviors, propagated to `Contract` via the same
+first-`Some`-found lookup already used for `entity`/`member`. Deliberately scoped to a plain
+boolean, nothing richer (no separate "why," no default-value semantics) — matching the explicit
+decision to avoid introducing presence semantics beyond what this one experiment's evidence
+actually demanded. Covered by two new/updated unit tests: a mandatory validation contract
+(`name`) asserts `mandatory: Some(true)`, an optional one (`phoneNumber`) asserts
+`Some(false)`; the construction and integration contract tests assert `None`.
+
+**What this result says about the contract model overall:** the finding was not "contracts are
+insufficient" — it was "contracts were almost sufficient, and the one missing fact was
+identifiable through a reproducible experiment, then closed with a small, mechanical,
+zero-LLM addition." Three fields added across this whole investigation (`kind`, `entity`/
+`member`, `mandatory`), each one demonstrably necessary (Q3's blockers, then this probe) and
+none speculative — a materially different outcome than either "contracts need a ground-up
+redesign" or "contracts were already complete."

@@ -256,6 +256,17 @@ pub struct Behavior {
     /// system-generated fields under one contract) and for scenario-derived behaviors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
+    /// Whether `member` is a mandatory or optional field on `entity`, for a Validation behavior
+    /// only — `None` for every other kind (mandatory/optional isn't a meaningful concept for a
+    /// whole-entity construction, an event's payload, or its publication) and for scenario-derived
+    /// behaviors. Added after a live, reproducibility-tested probe
+    /// (`canopy-llm/examples/contract_isolation_probe.rs`,
+    /// docs/contract-readiness-assessment.md Addendum 3) showed a model given only
+    /// `required_tests` prose and no explicit signal produced a different, and in two of three
+    /// runs wrong, answer each time — confirming this was a genuine missing fact, not a prompt
+    /// wording problem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -496,6 +507,12 @@ pub struct Contract {
     /// event-shape, publication) or an integration contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
+    /// Whether `member` is a mandatory or optional field, for a validation contract only — `None`
+    /// otherwise. See `Behavior.mandatory`'s doc comment for why this exists: a live probe showed
+    /// `required_tests` prose alone isn't a reliable signal for this, even though it often looks
+    /// like it should be.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory: Option<bool>,
     /// The `UnitCluster.id` or `IntegrationGrouping.id` this contract was generated from —
     /// exactly one contract per cluster, never more, never fewer (see `ContractAudit`).
     pub source_cluster: String,
