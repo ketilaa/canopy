@@ -96,9 +96,12 @@ pub struct ResolvedPolicy {
     /// One of the Business policy checklist's own categories: uniqueness, defaults, retention,
     /// authorization, idempotency, consistency.
     pub area: String,
-    /// The policy as a stated rule, e.g. "Manufacturer name must be unique across all
-    /// manufacturers."
+    /// The policy as a stated rule, e.g. "Widget name must be unique across all widgets."
     pub resolution: String,
+    /// The exact upstream source this rule was grounded in (the story, an ADR, or domain
+    /// vocabulary) — required precisely because "resolved" must never be a guess. See
+    /// Policy Discovery Enumeration in canopy-llm/src/prompts/spec.rs.
+    pub evidence: String,
 }
 
 /// Stage 0 of the behavior-first planning pipeline (see docs/design/behavior-first-planning.md):

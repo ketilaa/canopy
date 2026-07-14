@@ -286,10 +286,20 @@ order, using this exact area name for each. Do not skip an area. Do not add an e
 6. area "consistency" — does creating this entity depend on, or affect, the state of any other
    entity?
 
-For EACH item, set classification to exactly one of these three values — NEVER any other value:
-- "resolved" — detail states the rule as a concrete constraint.
-- "not_applicable" — detail may be omitted.
-- "unresolved" — detail states a concrete question. NEVER silently pick an interpretation.
+Policy Discovery finds decisions that already exist — it never makes new ones. For EACH item,
+set classification to exactly one of these three values — NEVER any other value:
+- "resolved" — ONLY if the story, an Architecture Decision above, or the Domain Entities/Events
+  above EXPLICITLY states this rule. detail states the rule; evidence quotes or names the exact
+  source (e.g. "ADR: Domain Event for Widget Registration", "story: as_a widget administrator",
+  or "domain vocabulary: Widget — the entity this story registers").
+- "not_applicable" — ONLY if the domain model above structurally rules this out (e.g. no other
+  entities exist at all, so consistency cannot apply). detail states the structural reason;
+  evidence names the source, same as for "resolved" — this is not a free pass from grounding.
+- "unresolved" — the default whenever no explicit evidence exists either way. detail states the
+  question for a human to answer; omit evidence.
+NEVER invent a plausible-sounding rule to avoid "unresolved" — a business rule with no textual
+support above is a guess, not a resolution. When uncertain between resolved and unresolved,
+ALWAYS choose unresolved.
 
 Return ONLY valid YAML — no prose, no code fences.
 YAML string rules — you MUST follow these to avoid parse errors:
@@ -327,22 +337,28 @@ entity_schema:                    # omit entirely if not a creation story
 policy_checklist:
   - area: "uniqueness"
     classification: "resolved | not_applicable | unresolved"
-    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+    detail: "<concrete rule, structural reason, or concrete question>"
+    evidence: "<exact source quoted/named — omit only if unresolved>"
   - area: "defaults"
     classification: "resolved | not_applicable | unresolved"
-    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+    detail: "<concrete rule, structural reason, or concrete question>"
+    evidence: "<exact source quoted/named — omit only if unresolved>"
   - area: "retention"
     classification: "resolved | not_applicable | unresolved"
-    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+    detail: "<concrete rule, structural reason, or concrete question>"
+    evidence: "<exact source quoted/named — omit only if unresolved>"
   - area: "authorization"
     classification: "resolved | not_applicable | unresolved"
-    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+    detail: "<concrete rule, structural reason, or concrete question>"
+    evidence: "<exact source quoted/named — omit only if unresolved>"
   - area: "idempotency"
     classification: "resolved | not_applicable | unresolved"
-    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+    detail: "<concrete rule, structural reason, or concrete question>"
+    evidence: "<exact source quoted/named — omit only if unresolved>"
   - area: "consistency"
     classification: "resolved | not_applicable | unresolved"
-    detail: "<concrete rule, concrete question, or omit if not_applicable>"
+    detail: "<concrete rule, structural reason, or concrete question>"
+    evidence: "<exact source quoted/named — omit only if unresolved>"
 out_of_scope:
   - "<explicitly excluded concern>"
 "#,
@@ -363,6 +379,8 @@ struct PolicyChecklistItem {
     classification: String,
     #[serde(default)]
     detail: Option<String>,
+    #[serde(default)]
+    evidence: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -378,30 +396,55 @@ struct SchemaAndPolicyDraft {
 /// Mechanically buckets Call 1's forced per-item policy classification into the two downstream
 /// `IntentSpec` fields — a deterministic transform of the model's own explicit output, not a
 /// correction of it (the audit/compensation distinction in CLAUDE.md's Prompt House Style).
-/// Live-verified need: even with a per-item resolved/not_applicable/unresolved classification
+/// Live-verified need #1: even with a per-item resolved/not_applicable/unresolved classification
 /// already asked for, a run put 3 of 6 items in a 4th, unsanctioned bucket (`out_of_scope`)
 /// instead — that case has a `detail` the model actually wrote, so relaying it into
 /// open_questions unchanged is legitimate bucketing, not compensation.
 ///
-/// A "resolved" or unrecognized-classification item with NO `detail` at all is a different,
-/// stricter case: there is no model-authored text to relay. Rather than fabricate a question the
-/// model never asked (compensation — the exact thing this house rule forbids), fail loudly, the
-/// same shape as `check_entity_continuity`/`check_event_continuity`: nothing is saved, and the
-/// caller re-runs `canopy spec`.
+/// Live-verified need #2: a later run showed "resolved" being used for plausible-sounding
+/// business rules with no grounding anywhere upstream (a role name, a default value, a retention
+/// policy, none stated in the story/ADRs/domain vocabulary) — the model was answering business
+/// questions instead of surfacing them, exactly the failure mode Entity/Event Continuity and
+/// Decision Points elsewhere in this pipeline exist to prevent. `entity_schema_prompt` now
+/// requires an `evidence` field alongside `detail` for "resolved" — this function enforces that
+/// requirement is actually met rather than trusting the classification alone: "resolved" with a
+/// `detail` but no `evidence` has nothing grounding it, so it fails loudly and asks for a re-run
+/// rather than accepting an ungrounded resolution.
+///
+/// A "resolved" or "not_applicable" item missing `detail` or `evidence` is ungrounded either
+/// way — the prompt now demands the same grounding bar for both, precisely so a model looking
+/// for the path of least resistance can't dodge the "resolved" audit by mislabeling a fabricated
+/// item as "not_applicable" instead. An unrecognized-classification item with NO `detail` at all
+/// is the same shape too: there is no model-authored text to relay. Rather than fabricate a
+/// question the model never asked (compensation — the exact thing this house rule forbids), fail
+/// loudly, the same shape as `check_entity_continuity`/`check_event_continuity`: nothing is
+/// saved, and the caller re-runs `canopy spec`.
 fn bucket_policy_checklist(items: Vec<PolicyChecklistItem>) -> Result<(Vec<ResolvedPolicy>, Vec<String>), LlmError> {
     let mut resolved = Vec::new();
     let mut open_questions = Vec::new();
     for item in items {
         match item.classification.trim().to_lowercase().as_str() {
-            "resolved" => match item.detail {
-                Some(detail) => resolved.push(ResolvedPolicy { area: item.area, resolution: detail }),
-                None => return Err(LlmError::UnexpectedShape(format!(
-                    "policy checklist item '{}' was classified 'resolved' but no detail was \
-                     provided — nothing to resolve it to. Re-run `canopy spec`.",
+            "resolved" => match (item.detail, item.evidence) {
+                (Some(resolution), Some(evidence)) => {
+                    resolved.push(ResolvedPolicy { area: item.area, resolution, evidence })
+                }
+                _ => return Err(LlmError::UnexpectedShape(format!(
+                    "policy checklist item '{}' was classified 'resolved' but no detail and/or \
+                     no evidence was provided — a resolution with no grounding is a guess, not a \
+                     resolution. Re-run `canopy spec`.",
                     item.area
                 ))),
             },
-            "not_applicable" | "not applicable" => {}
+            "not_applicable" | "not applicable" => {
+                if item.detail.is_none() || item.evidence.is_none() {
+                    return Err(LlmError::UnexpectedShape(format!(
+                        "policy checklist item '{}' was classified 'not_applicable' but no \
+                         detail and/or no evidence was provided — a structural exemption with no \
+                         grounding is a guess, not a resolution. Re-run `canopy spec`.",
+                        item.area
+                    )));
+                }
+            }
             _ => match item.detail {
                 Some(detail) => open_questions.push(detail),
                 None => return Err(LlmError::UnexpectedShape(format!(
@@ -688,38 +731,67 @@ pub fn generate_story_spec(
 mod policy_checklist_tests {
     use super::{bucket_policy_checklist, PolicyChecklistItem};
 
-    fn item(area: &str, classification: &str, detail: Option<&str>) -> PolicyChecklistItem {
+    fn item(area: &str, classification: &str, detail: Option<&str>, evidence: Option<&str>) -> PolicyChecklistItem {
         PolicyChecklistItem {
             area: area.to_string(),
             classification: classification.to_string(),
             detail: detail.map(str::to_string),
+            evidence: evidence.map(str::to_string),
         }
     }
 
     #[test]
-    fn resolved_item_becomes_a_resolved_policy() {
+    fn resolved_item_with_evidence_becomes_a_resolved_policy() {
         let (resolved, open) = bucket_policy_checklist(vec![
-            item("uniqueness", "resolved", Some("name must be unique")),
+            item("uniqueness", "resolved", Some("name must be unique"), Some("ADR: Service Ownership")),
         ]).unwrap();
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].area, "uniqueness");
         assert_eq!(resolved[0].resolution, "name must be unique");
+        assert_eq!(resolved[0].evidence, "ADR: Service Ownership");
         assert!(open.is_empty());
     }
 
     #[test]
-    fn not_applicable_item_produces_no_output() {
+    fn not_applicable_item_with_grounding_produces_no_output() {
         let (resolved, open) = bucket_policy_checklist(vec![
-            item("consistency", "not_applicable", None),
+            item("consistency", "not_applicable", Some("no other entities exist"), Some("domain vocabulary: none")),
         ]).unwrap();
         assert!(resolved.is_empty());
         assert!(open.is_empty());
     }
 
     #[test]
+    fn not_applicable_without_grounding_fails_loudly_instead_of_accepting_a_guess() {
+        // Live-verified need: "not_applicable" must be audited exactly as strictly as "resolved"
+        // — otherwise a model avoiding the "unresolved" default can dodge the resolved-branch
+        // audit by mislabeling a fabricated exemption as "not_applicable" instead.
+        let err = bucket_policy_checklist(vec![
+            item("consistency", "not_applicable", None, None),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("consistency"));
+    }
+
+    #[test]
+    fn not_applicable_with_detail_but_no_evidence_fails_loudly() {
+        let err = bucket_policy_checklist(vec![
+            item("consistency", "not_applicable", Some("no other entities exist"), None),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("consistency"));
+    }
+
+    #[test]
+    fn not_applicable_with_evidence_but_no_detail_fails_loudly() {
+        let err = bucket_policy_checklist(vec![
+            item("consistency", "not_applicable", None, Some("domain vocabulary: none")),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("consistency"));
+    }
+
+    #[test]
     fn unresolved_item_becomes_an_open_question() {
         let (resolved, open) = bucket_policy_checklist(vec![
-            item("retention", "unresolved", Some("How long should records be kept?")),
+            item("retention", "unresolved", Some("How long should records be kept?"), None),
         ]).unwrap();
         assert!(resolved.is_empty());
         assert_eq!(open, vec!["How long should records be kept?".to_string()]);
@@ -728,9 +800,22 @@ mod policy_checklist_tests {
     #[test]
     fn resolved_without_detail_fails_loudly_instead_of_fabricating_a_question() {
         let err = bucket_policy_checklist(vec![
-            item("authorization", "resolved", None),
+            item("authorization", "resolved", None, Some("story: as_a widget administrator")),
         ]).unwrap_err();
         assert!(err.to_string().contains("authorization"));
+    }
+
+    #[test]
+    fn resolved_without_evidence_fails_loudly_instead_of_accepting_a_guess() {
+        // Live-verified need: the model classified several policy areas "resolved" with a
+        // plausible-sounding rule (a role name, a default value, a retention window) that had no
+        // support anywhere in the story/ADRs/domain vocabulary. Requiring evidence forces the
+        // model to ground the rule instead of guessing — a "resolved" with no evidence at all is
+        // exactly the guess this exists to catch.
+        let err = bucket_policy_checklist(vec![
+            item("retention", "resolved", Some("records persist indefinitely"), None),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("retention"));
     }
 
     #[test]
@@ -740,7 +825,7 @@ mod policy_checklist_tests {
         // unchanged into open_questions — this is legitimate bucketing, not compensation, since
         // the model actually wrote this detail.
         let (resolved, open) = bucket_policy_checklist(vec![
-            item("idempotency", "out_of_scope", Some("duplicate submissions are rare")),
+            item("idempotency", "out_of_scope", Some("duplicate submissions are rare"), None),
         ]).unwrap();
         assert!(resolved.is_empty());
         assert_eq!(open, vec!["duplicate submissions are rare".to_string()]);
@@ -749,7 +834,7 @@ mod policy_checklist_tests {
     #[test]
     fn unrecognized_classification_without_detail_fails_loudly_instead_of_fabricating() {
         let err = bucket_policy_checklist(vec![
-            item("idempotency", "out_of_scope", None),
+            item("idempotency", "out_of_scope", None, None),
         ]).unwrap_err();
         assert!(err.to_string().contains("idempotency"));
     }
@@ -757,7 +842,7 @@ mod policy_checklist_tests {
     #[test]
     fn all_six_areas_are_accounted_for() {
         let areas = ["uniqueness", "defaults", "retention", "authorization", "idempotency", "consistency"];
-        let items = areas.iter().map(|a| item(a, "unresolved", Some("?"))).collect();
+        let items = areas.iter().map(|a| item(a, "unresolved", Some("?"), None)).collect();
         let (resolved, open) = bucket_policy_checklist(items).unwrap();
         assert!(resolved.is_empty());
         assert_eq!(open.len(), 6);
