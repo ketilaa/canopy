@@ -1,10 +1,12 @@
 mod architecture;
 mod build_system;
+mod file_targets;
 mod tech_stack;
 mod testing;
 
 pub use architecture::skills_for_architecture;
 pub use build_system::skill_for_build_system;
+pub use file_targets::{abstract_layer_for_kind, resolve_implementation_target};
 pub use tech_stack::{skill_for_technology, skill_for_technology_all_layers};
 pub use testing::testing_skill_for_file_with_adrs;
 

@@ -349,3 +349,47 @@ Deliberately deferred, per the agreed sequencing: no consumer reads these new fi
 target computation still needs the structured kind→directory mapping (the shared prerequisite
 noted above) before `canopy implement` could use any of this, and that reassessment of whether a
 contract is sufficient implementation input comes only after that prerequisite lands.
+
+## Addendum 2 — kind→directory mapping implemented and verified (2026-07-14)
+
+The shared prerequisite is done: `canopy-llm/src/skills/file_targets.rs` adds
+`abstract_layer_for_kind(kind) -> &str` (a fixed, tech-agnostic table — Validation/Construction→
+"model", Persistence→"repository", EventShape→"event", Publication→"infrastructure",
+Orchestration→"service", HttpRequest/HttpResponse→"route", ErrorTranslation→"middleware") and
+`resolve_implementation_target(tech, pkg_path, service_name, layer, entity, event_name)`, a
+per-tech-family match transcribing each stack's already-documented directory convention from
+`tech_stack.rs`'s prose skills into queryable Rust — no LLM call anywhere in it. 8 unit tests.
+
+**Verification against real `manufacturer-001` data** (services.yaml: `manufacturer-service` =
+Spring Boot, `manufacturer-registration-portal` = React), using the two contracts hand-traced in
+Q3 above:
+
+| Contract | kind | entity | resolved target |
+|---|---|---|---|
+| `ManufacturerNameValidation` | Validation | Manufacturer | `services/manufacturer-service/src/main/java/.../domain/Manufacturer.java` |
+| `ManufacturerConstruction` | Construction | Manufacturer | `services/manufacturer-service/src/main/java/.../domain/Manufacturer.java` (same file — correct: a JPA `@Entity` class carries both validation annotations and its constructor) |
+
+Confirms the core claim: **yes, a file target is mechanically derivable from `contract.kind` +
+`contract.entity` + tech-stack conventions**, with `pkg_path` supplied the same way `plan.rs`
+already computes it today (scaffold-detected or a documented fallback) — no new input invented.
+
+Two real limits surfaced while building this, not smoothed over:
+- **`entity` alone doesn't cover every kind.** An event-shape contract's file is named after the
+  *event* (`Contract.subject`, e.g. `ManufacturerRegistered.ts`), not the entity — `subject` had
+  to stay in the loop for this one case. A publication contract's file (`EventPublisher.ts`) is
+  fixed and entity-independent — neither `entity` nor `subject` matters there.
+- **Coverage is uneven across stacks, by design, not by bug.** Node/Express (the stack most of
+  this project's skill prose was written against) resolves every layer. Spring Boot resolves
+  model/repository/service/route but not event/infrastructure/middleware — `spring_boot_skill`
+  itself doesn't document those yet, so returning `None` is accurate, not a gap in this new
+  module. React resolves only its api-client layer (a form-only frontend story has nothing
+  behind it). Angular's orchestration and http-request/response contracts resolve to the *same*
+  file (`<feature>.service.ts`) — a real architectural difference (Angular doesn't split the two
+  concerns the way Node/React do), not a resolution failure.
+
+This means the manufacturer-001 story's real stack (Spring Boot + React) can mechanically place
+its validation/construction contracts today, but an event-shape/publication contract for that
+same story — which would exist once the stale ADR-006 fixture is regenerated with a real Topic
+Naming Convention ADR — has no mechanical target yet on Spring Boot. That's a real, separately-
+scoped follow-up (extending `spring_boot_skill`'s own documented layout to cover event-driven
+JVM services), not a defect in the kind→directory mapping itself.
