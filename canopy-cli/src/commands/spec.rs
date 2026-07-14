@@ -99,7 +99,7 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     let client = build_client("architect", debug)?;
 
     println!("\nIdentifying architectural questions...");
-    let mut proposed = identify_architectural_questions(&client, story, &existing_adrs, &services)
+    let mut proposed = identify_architectural_questions(&client, story, &existing_adrs, &services, &domain)
         .context("failed to identify architectural questions")?;
 
     // Marks where THIS call's own newly-accepted ADRs start — `existing_adrs` began as the

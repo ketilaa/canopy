@@ -3,6 +3,117 @@ use crate::prompts::yaml_util::{parse_lenient_sequence, strip_code_fence};
 use crate::repair::fix_yaml_colon_in_scalars;
 use canopy_core::*;
 
+#[derive(PartialEq, Eq, Debug)]
+enum EventOperation {
+    Creation,
+    Update,
+    Deletion,
+    Other,
+}
+
+/// Classifies a story's `want` by whole-word match against fixed verb inflection lists — never a
+/// substring/prefix check, which a prior version of this function used and which misfired on
+/// ordinary words that happen to contain a short verb root (e.g. "add" inside "address", "edit"
+/// inside "credit", "chang" inside "exchange" — each would have misclassified an unrelated story).
+fn classify_operation_from_want(words: &[String]) -> EventOperation {
+    const CREATION: &[&str] = &[
+        "register", "registers", "registered", "registering",
+        "create", "creates", "created", "creating",
+        "add", "adds", "added", "adding",
+        "onboard", "onboards", "onboarded", "onboarding",
+        "submit", "submits", "submitted", "submitting",
+        "publish", "publishes", "published", "publishing",
+    ];
+    const UPDATE: &[&str] = &[
+        "update", "updates", "updated", "updating",
+        "edit", "edits", "edited", "editing",
+        "modify", "modifies", "modified", "modifying",
+        "change", "changes", "changed", "changing",
+        "revise", "revises", "revised", "revising",
+    ];
+    const DELETION: &[&str] = &[
+        "delete", "deletes", "deleted", "deleting",
+        "remove", "removes", "removed", "removing",
+        "deactivate", "deactivates", "deactivated", "deactivating",
+        "cancel", "cancels", "cancelled", "canceled", "cancelling", "canceling",
+        "archive", "archives", "archived", "archiving",
+    ];
+    if words.iter().any(|w| CREATION.contains(&w.as_str())) {
+        EventOperation::Creation
+    } else if words.iter().any(|w| UPDATE.contains(&w.as_str())) {
+        EventOperation::Update
+    } else if words.iter().any(|w| DELETION.contains(&w.as_str())) {
+        EventOperation::Deletion
+    } else {
+        EventOperation::Other
+    }
+}
+
+/// Classifies an event name by its exact canonical suffix — the naming rules elsewhere in this
+/// same prompt only ever allow an event to end in one of these four words, so this is an exact
+/// check against a closed set, not a heuristic guess the way a verb-substring match would be.
+fn classify_operation_from_event_name(event_name: &str) -> EventOperation {
+    if event_name.ends_with("Created") || event_name.ends_with("Registered") {
+        EventOperation::Creation
+    } else if event_name.ends_with("Updated") {
+        EventOperation::Update
+    } else if event_name.ends_with("Deleted") {
+        EventOperation::Deletion
+    } else {
+        EventOperation::Other
+    }
+}
+
+/// Mechanically pre-computes whether a domain-event ADR for THIS story's entity AND operation
+/// already exists, replacing a holistic "scan the ADR list and judge" instruction with a stated
+/// fact the model can't misjudge — the same "enumeration over holistic review" shift already
+/// proven across this pipeline. Live-verified need: `architectural_questions_prompt`'s previous
+/// "skip only if a domain-event ADR for THIS story's entity and operation already exists...
+/// check precisely" instruction reproduced a duplicate domain-event ADR in 2 of 3 runs in a
+/// reproducibility sweep, even with the existing ADR shown verbatim in context.
+///
+/// Matching requires ALL of: the story's own `want` text names a known domain entity as a whole
+/// word (not a substring inside an unrelated word, e.g. "Order" inside "reorder" — though a real
+/// English word that happens to equal an entity name, e.g. "order" appearing as its own word in
+/// an unrelated idiom, is a deeper semantic ambiguity this can't resolve; accepted as a residual,
+/// low-likelihood limitation); an ADR whose title mentions "event"; whose decision text (the part
+/// before " on topic ", if present) starts with that entity's name case-insensitively; contains
+/// no "-" or " " (excludes a false-positive match against a kebab-case service-ownership decision
+/// like "widget-service", which also starts with the entity name but is not an event); AND whose
+/// own operation classification (via its exact `Created`/`Registered`/`Updated`/`Deleted` suffix)
+/// matches the story's own classified operation, AND that classification is not `Other` on
+/// either side — this last condition is what stops an existing `WidgetRegistered` ADR from
+/// suppressing a genuinely-needed `WidgetUpdated` proposal for a later, different story about the
+/// same entity, and stops two operations this function can't confidently classify from wrongly
+/// comparing equal to each other just because both fell through to `Other`. `likely_entity` is
+/// only found when the story's own `want` text names a known domain entity — on a story whose
+/// entity has no vocabulary yet, or one whose `want` mentions more than one known entity
+/// (ambiguous — picks the first match), this returns `None` and the model keeps full discretion,
+/// same as before this fix.
+fn find_existing_domain_event_for_story<'a>(
+    story: &UserStory,
+    existing_adrs: &'a [Adr],
+    domain: &DomainRegistry,
+) -> Option<(&'a str, &'a str)> {
+    let want_words: Vec<String> = story.want.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect();
+    let likely_entity = domain.entities.iter()
+        .find(|e| want_words.contains(&e.name().to_lowercase()))?;
+    let entity_lower = likely_entity.name().to_lowercase();
+    let story_operation = classify_operation_from_want(&want_words);
+    if story_operation == EventOperation::Other {
+        return None;
+    }
+    existing_adrs.iter().find(|adr| {
+        let event_part = adr.decision.split(" on topic ").next().unwrap_or(&adr.decision).trim();
+        adr.title.to_lowercase().contains("event")
+            && event_part.to_lowercase().starts_with(&entity_lower)
+            && !event_part.contains('-')
+            && !event_part.contains(' ')
+            && classify_operation_from_event_name(event_part) == story_operation
+    }).map(|adr| (adr.decision.as_str(), adr.title.as_str()))
+}
+
 /// Category 1's domain-event ADR sub-item (added 2026-07-13) replaces a single generic "event
 /// design" bullet with an explicit creation|update|deletion classification. Live-verified need:
 /// two structurally identical creation stories (register a product, register a manufacturer),
@@ -17,6 +128,7 @@ fn architectural_questions_prompt(
     story: &UserStory,
     existing_adrs: &[Adr],
     services: &ServicesRegistry,
+    domain: &DomainRegistry,
 ) -> String {
     let adrs_summary = if existing_adrs.is_empty() {
         "None yet.".to_string()
@@ -41,6 +153,19 @@ fn architectural_questions_prompt(
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let domain_event_status = match find_existing_domain_event_for_story(story, existing_adrs, domain) {
+        Some((decision, title)) => format!(
+            "Existing ADR: \"{decision}\" ({title}).\nNEVER propose another domain-event ADR for \
+             this story."
+        ),
+        None => format!(
+            "No domain-event ADR exists yet.\nIf the Architecture Style ADR above is \
+             event-driven and this story's action creates, updates, or deletes an aggregate, \
+             ALWAYS propose exactly one: classify the action (want: \"{want}\") as exactly one of \
+             creation | update | deletion | other, then name it per the Naming rules below.",
+            want = story.want,
+        ),
+    };
     format!(
         r#"You are an experienced software architect.
 
@@ -53,6 +178,8 @@ Existing Architecture Decisions:
 Known Services and Responsibilities:
 {services_summary}
 
+Domain Event Status: {domain_event_status}
+
 SKIP a question entirely if its answer is already captured above. Check precisely before proposing:
 - Service ownership: skip if the specific service that should own THIS story's domain is already in Known Services.
 - UI/frontend: skip if a frontend that serves THIS actor's interaction for THIS capability is already in Known Services.
@@ -61,20 +188,12 @@ SKIP a question entirely if its answer is already captured above. Check precisel
 - Database infrastructure: skip if the specific data-owning service already has a database in Known Services.
   Do NOT skip just because some other service already has a database.
 - Event broker infrastructure: skip if an event broker entry already exists in Known Services.
-- Domain event ADR: skip only if a domain-event ADR for THIS story's entity and operation already
-  exists in Existing Architecture Decisions above — never skip just because the story's own
-  wording never uses the word "event."
 Propose ONLY questions where the decision is genuinely absent from the above context.
 If all decisions are already made, return an empty proposals list.
 
 Include ALL of:
 1. Structural questions — service ownership, data responsibility, integration contracts, API boundaries.
-   - Domain event ADR — MANDATORY whenever the Architecture Style ADR above is event-driven and
-     this story's action creates, updates, or deletes an aggregate. Classify the story's own
-     action (want: "{want}") as exactly one of creation | update | deletion | other, then propose
-     exactly ONE domain event ADR naming exactly one event: "<Entity>Created" or
-     "<Entity>Registered" for creation, "<Entity>Updated" for update, "<Entity>Deleted" for
-     deletion.
+   - Domain event ADR — follow Domain Event Status above exactly.
 2. UI questions — if the story has a human actor performing an action, there must be a frontend component
    through which they act. Ask what UI delivers this capability and propose it as a new service if not yet decided.
    - Set service to the kebab-case frontend component name (e.g. admin-portal) for BOTH the component proposal AND its tech stack proposal.
@@ -94,12 +213,12 @@ Naming rules — strictly enforced:
 - Service, frontend, and infrastructure component names: kebab-case only (user-service, booking-service, admin-portal, client-portal, redpanda, postgresql)
   Never use PascalCase or camelCase for component names.
   Never append "Service", "DB", or "Database" as a suffix to service names.
-- Domain event names: PascalCase past tense, prefixed with the entity name (InvoiceCreated, AppointmentScheduled, AccountActivated)
+- Domain event names: PascalCase past tense, prefixed with the entity name (<Entity>Created, <Entity>Updated, <Entity>Deleted)
   Never use kebab-case for event names.
 - Domain event ADR decisions: when a Topic Naming Convention ADR exists in Existing Architecture Decisions,
   derive the topic name from it and format the decision as "<EventName> on topic <topic-name>".
-  Example: "ProductCreated on topic product-events"
-  The topic name is the aggregate name in kebab-case with an "-events" suffix (product → product-events).
+  Example: "<Entity>Created on topic <entity>-events"
+  The topic name is the entity name in kebab-case with an "-events" suffix.
   If no Topic Naming Convention ADR exists, name the event only (no topic).
 
 For tech stack proposals:
@@ -132,6 +251,7 @@ proposals:
         so_that = story.so_that,
         adrs_summary = adrs_summary,
         services_summary = services_summary,
+        domain_event_status = domain_event_status,
     )
 }
 
@@ -140,8 +260,9 @@ pub fn identify_architectural_questions(
     story: &UserStory,
     existing_adrs: &[Adr],
     services: &ServicesRegistry,
+    domain: &DomainRegistry,
 ) -> Result<ProposedAdrs, LlmError> {
-    let raw = client.complete_large(&architectural_questions_prompt(story, existing_adrs, services))?;
+    let raw = client.complete_large(&architectural_questions_prompt(story, existing_adrs, services, domain))?;
     let stripped = raw
         .trim()
         .trim_start_matches("```yaml")
@@ -154,6 +275,157 @@ pub fn identify_architectural_questions(
     // Stage 0-4's own LLM-output parsing.
     let proposals = parse_lenient_sequence::<ProposedAdr>(stripped, "proposals")?;
     Ok(ProposedAdrs { proposals })
+}
+
+#[cfg(test)]
+mod domain_event_status_tests {
+    use super::find_existing_domain_event_for_story;
+    use canopy_core::{Adr, DomainEntity, DomainRegistry, UserStory};
+
+    fn story(want: &str) -> UserStory {
+        UserStory {
+            id: "widget-001".to_string(),
+            as_a: "actor".to_string(),
+            want: want.to_string(),
+            so_that: "reason".to_string(),
+            depends_on: vec![],
+            status: Default::default(),
+        }
+    }
+
+    fn adr(title: &str, decision: &str) -> Adr {
+        Adr {
+            title: title.to_string(),
+            decision: decision.to_string(),
+            reason: "reason".to_string(),
+            alternatives: vec![],
+        }
+    }
+
+    fn domain_with(entities: &[&str]) -> DomainRegistry {
+        DomainRegistry {
+            entities: entities.iter().map(|e| DomainEntity::Simple(e.to_string())).collect(),
+            events: vec![],
+        }
+    }
+
+    #[test]
+    fn finds_an_existing_domain_event_with_a_topic() {
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered on topic widget-events")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(&story("register a widget"), &adrs, &domain);
+        assert_eq!(found, Some(("WidgetRegistered on topic widget-events", "Domain Event for Widget Registration")));
+    }
+
+    #[test]
+    fn finds_an_existing_domain_event_with_no_topic() {
+        // Live-verified need: the actual dogfooding project's domain-event ADR had no topic at
+        // all (no Topic Naming Convention ADR existed), which `parse_event_adr` alone can't
+        // detect since it requires " on topic " to match — this function must not depend on
+        // that split succeeding.
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(&story("register a widget"), &adrs, &domain);
+        assert_eq!(found, Some(("WidgetRegistered", "Domain Event for Widget Registration")));
+    }
+
+    #[test]
+    fn does_not_false_positive_on_a_kebab_case_service_decision() {
+        // Live-verified need: "Service Ownership for Widget Registration: widget-service" starts
+        // with the entity name too (case-insensitively) but is not a domain event.
+        let adrs = vec![adr("Service Ownership for Widget Registration", "widget-service")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(&story("register a widget"), &adrs, &domain);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn returns_none_when_no_domain_event_adr_exists_yet() {
+        let adrs = vec![adr("Service Ownership for Widget Registration", "widget-service")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(&story("register a widget"), &adrs, &domain);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn returns_none_when_the_story_names_no_known_entity() {
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(&story("register a gadget"), &adrs, &domain);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn returns_none_when_domain_vocabulary_is_empty() {
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered")];
+        let domain = domain_with(&[]);
+        let found = find_existing_domain_event_for_story(&story("register a widget"), &adrs, &domain);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn a_creation_event_adr_does_not_suppress_a_later_update_story_for_the_same_entity() {
+        // Regression the reviewer caught: matching on entity alone (ignoring operation) would
+        // wrongly suppress a genuinely-needed WidgetUpdated ADR just because WidgetRegistered
+        // already exists for the same entity.
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(&story("update a widget"), &adrs, &domain);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn matches_case_insensitively_against_a_lowercase_edited_domain_entity() {
+        // domain_registry.yaml is documented as human-edit-freely, so entity casing isn't
+        // guaranteed to stay PascalCase.
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered")];
+        let domain = domain_with(&["widget"]);
+        let found = find_existing_domain_event_for_story(&story("register a widget"), &adrs, &domain);
+        assert_eq!(found, Some(("WidgetRegistered", "Domain Event for Widget Registration")));
+    }
+
+    #[test]
+    fn does_not_match_an_entity_name_as_a_substring_inside_an_unrelated_word() {
+        // "Order" must not match inside "reorder" — only a whole-word occurrence of the entity
+        // name in the story's want counts. (A real English word that happens to equal an entity
+        // name, e.g. "order" appearing as its own word in an unrelated idiom, is a deeper
+        // semantic ambiguity word-boundary tokenization can't resolve — accepted as a residual,
+        // low-likelihood limitation rather than something this fix claims to solve.)
+        let adrs = vec![adr("Domain Event for Order Registration", "OrderRegistered")];
+        let domain = domain_with(&["Order"]);
+        let found = find_existing_domain_event_for_story(
+            &story("reorder low-stock warehouse items"), &adrs, &domain,
+        );
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn does_not_misclassify_an_update_story_as_creation_via_a_verb_substring() {
+        // Regression: an earlier version classified operations via raw substring match, so
+        // "update the widget's shipping address" was misclassified Creation because it contains
+        // "add" (as a substring of "address") before ever reaching the "updat" check.
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetRegistered")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(
+            &story("update the widget's shipping address"), &adrs, &domain,
+        );
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn does_not_match_two_unclassifiable_operations_via_an_other_equals_other_blind_spot() {
+        // Regression: comparing EventOperation::Other == EventOperation::Other would wrongly
+        // treat two operations neither classifier recognizes as "the same operation" — a story
+        // whose want matches none of the known verbs must never assert a match against an
+        // existing ADR, even one whose own event name is equally unclassifiable ("WidgetSynced"
+        // ends in neither Created/Registered/Updated/Deleted).
+        let adrs = vec![adr("Domain Event for Widget Registration", "WidgetSynced")];
+        let domain = domain_with(&["Widget"]);
+        let found = find_existing_domain_event_for_story(
+            &story("resize the widget thumbnail"), &adrs, &domain,
+        );
+        assert_eq!(found, None);
+    }
 }
 
 fn context_sections(adrs: &[Adr], services: &ServicesRegistry, domain: &DomainRegistry) -> (String, String, String, String) {
