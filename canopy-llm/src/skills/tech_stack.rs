@@ -113,7 +113,8 @@ fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> TechStack
              @SpringBootApplication lives in {p} directly — never inside a sub-package.",
             sn = service_name, pp = pkg_path, p = pkg
         ),
-        namespace_rules: format!(
+        namespace_rules: String::new(),
+        common_rules: format!(
             "  jakarta.* everywhere — NEVER import javax.* (will not compile under Jakarta EE 9+)\n\
              - jakarta.servlet.http.HttpServletRequest  (NOT javax.servlet.http.HttpServletRequest)\n\
              - jakarta.validation.constraints.*  (@NotBlank, @NotNull, @Positive, ...)\n\
@@ -122,8 +123,36 @@ fn spring_boot_skill(pkg: &str, pkg_path: &str, service_name: &str) -> TechStack
              Every package declaration must be exactly {p} or a sub-package of it.",
             p = pkg
         ),
-        common_rules: String::new(),
-        layer_rules: std::collections::HashMap::new(),
+        layer_rules: std::collections::HashMap::from([
+            ("domain",
+             "  ### Domain entity construction and validation\n\
+             ALWAYS validate imperatively in the constructor and throw directly — Bean Validation\n\
+             annotations alone (@NotBlank, @Size, ...) never enforce anything on a plain\n\
+             `new Entity(...)` call; nothing triggers them outside a Validator, @Valid at a\n\
+             controller boundary, or a JPA lifecycle callback, none of which run in a unit test:\n\
+               public Widget(String name) {\n\
+                 if (name == null || name.isBlank() || name.length() > 200) {\n\
+                   throw new IllegalArgumentException(\"name must be 1-200 characters\");\n\
+                 }\n\
+                 this.name = name;\n\
+               }\n\
+             WRONG — `new Widget(longName)` never throws; nothing enforces the annotation:\n\
+               @NotBlank @Size(max = 200) private String name;\n\
+               public Widget(String name) { this.name = name; }\n\
+             Annotations may still be added alongside the constructor check (JPA/framework\n\
+             metadata) — never in place of it.\n\
+             \n\
+             ALWAYS assign a system-generated `id` eagerly in the constructor, via a\n\
+             manually-generated value — NEVER rely on `@GeneratedValue` alone: it only fires when\n\
+             JPA persists the entity through a real EntityManager, never on a plain constructor\n\
+             call, so a unit test asserting the id is set immediately after construction sees\n\
+             `null`.\n\
+               @Id private UUID id;\n\
+               public Widget(String name) { this.id = UUID.randomUUID(); this.name = name; }\n\
+             WRONG — id stays null until (if ever) a real persistence call happens:\n\
+               @Id @GeneratedValue private Long id;  // never assigned by this constructor"
+             .to_string()),
+        ]),
         layer_order: format!(
             "  1. services/{sn}/pom.xml     — complete Maven POM; must end with </project>\n\
              2. {pp}/domain/         — @Entity classes with @Id and @GeneratedValue\n\
@@ -716,5 +745,42 @@ mod tests {
              ### Import rules\ncommon-body\n\nmodel-body\n\nroute-body\n\n\
              ### Layer order\norder-body"
         );
+    }
+
+    /// Live-verified need: `detect_layer()` (`skills/mod.rs`) didn't recognize any JVM singular
+    /// package directory before this fix — every Spring Boot file fell through to the generic
+    /// "module" fallback at the real Green-phase call site (`step_prompt` in `step.rs`), while
+    /// Red-phase test-stub generation computed its own, different, correct layer string locally
+    /// (`unit_test_stub_prompt`'s own "domain"/"controller"/"service"/"dto"/"class" closure). A
+    /// prompt-reviewer catch: keying new domain-specific content under "model" (a string neither
+    /// call site ever produces) made it silently inert; a first fix keyed it under "module" too,
+    /// which a second review round caught as leaking into every other JVM layer, since ALL of
+    /// them fell through to "module" the same way. The real fix is `detect_layer()` recognizing
+    /// JVM's own singular directories, so both call sites finally agree.
+    #[test]
+    fn detect_layer_recognizes_jvm_singular_directories() {
+        assert_eq!(crate::skills::detect_layer("services/widget-service/src/main/java/com/example/domain/Widget.java"), "domain");
+        assert_eq!(crate::skills::detect_layer("services/widget-service/src/main/java/com/example/repository/WidgetRepository.java"), "repository");
+        assert_eq!(crate::skills::detect_layer("services/widget-service/src/main/java/com/example/dto/WidgetRequest.java"), "dto");
+        assert_eq!(crate::skills::detect_layer("services/widget-service/src/main/java/com/example/service/WidgetService.java"), "service");
+        assert_eq!(crate::skills::detect_layer("services/widget-service/src/main/java/com/example/controller/WidgetController.java"), "controller");
+    }
+
+    #[test]
+    fn spring_boot_domain_rules_reach_the_real_green_phase_layer_string() {
+        // "domain" is what detect_layer() now produces for a real `/domain/` path (see above) —
+        // the same string Red-phase's own local closure already used. Both call sites agree.
+        let domain = skill_for_technology("Spring Boot", "com.example.app", "com/example/app", "widget-service", "domain");
+        assert!(domain.contains("ALWAYS validate imperatively in the constructor"));
+        assert!(domain.contains("ALWAYS assign a system-generated `id` eagerly"));
+    }
+
+    #[test]
+    fn spring_boot_domain_rules_do_not_leak_into_an_unrelated_layer() {
+        // "controller" is what detect_layer() now produces for a real `/controller/` path — a
+        // string genuinely distinct from "domain", not a fixture-only value the real call site
+        // never produces (which is what the pre-detect_layer-fix version of this test asserted).
+        let controller = skill_for_technology("Spring Boot", "com.example.app", "com/example/app", "widget-service", "controller");
+        assert!(!controller.contains("ALWAYS validate imperatively in the constructor"));
     }
 }

@@ -515,8 +515,63 @@ contracts are involved at all.
    and state it explicitly rather than leaving the model to guess; (b) document that `id`
    assignment for a not-yet-persisted aggregate needs an eager, construction-time value (e.g. a
    manually generated `UUID`), the same convention the Node/Express skill already states for its
-   own stack. Neither is implemented here, per not folding "diagnosed" and "fixed" into the same
-   pass without confirmation.
+   own stack.
+
+   **Done (2026-07-14).** `spring_boot_skill` (`canopy-llm/src/skills/tech_stack.rs`) migrated to
+   the layer-partitioned shape and gained a `"domain"`-layer rule for both: imperative
+   constructor validation is now required alongside (not instead of) Bean Validation annotations,
+   and `id` must be assigned eagerly via a manually-generated value, mirroring Node/Express's own
+   `randomUUID()` convention. Landed a real, independent bug along the way: `detect_layer()`
+   (`canopy-llm/src/skills/mod.rs`) had no recognition of any JVM singular package directory
+   (`/domain/`, `/repository/`, `/dto/`, `/service/`, `/controller/`) at all — every real
+   Green-phase generation call for a Spring Boot file fell through to the generic `"module"`
+   fallback, silently different from what Red-phase's own separate Java layer closure computed
+   for the same file. Two earlier keying attempts for this fix were caught and corrected across
+   two prompt-review rounds before landing (see the commit history) — first inert (keyed under a
+   string neither call site produces), then over-broad (a `"module"` key would have leaked into
+   every JVM layer, not just domain files, given `detect_layer()`'s blind spot). Fixing
+   `detect_layer()` itself, not working around it, is what closed this correctly. 5 new unit
+   tests (2 in `tech_stack.rs`, plus `detect_layer_recognizes_jvm_singular_directories`).
 3. **No redesign conversation is warranted.** Both remaining failure modes are nameable and
    traced to a specific, addressable skill gap — the stop condition for escalating to a
    verification-mechanism/redesign discussion (row 3 of §5's table) was not reached.
+
+---
+
+## Design Decision: Group Contracts by Resolved Target Before Generating
+
+Status: **Decided** (2026-07-14), formalizing Stage 2's outcome. Not yet implemented in any
+production code path — `canopy implement` still doesn't consume contracts at all (Stage 4 of the
+migration plan, §6). This decision governs how a future contract-driven generation step must
+behave once that wiring is undertaken; it does not change anything today.
+
+**Decision:** whenever a future implementation step generates a file from `contracts.yaml`, it
+must first assemble *every* contract whose `resolve_implementation_target` output resolves to
+that same file, and generate from the complete set — never from one contract in isolation once
+more than one targets the same place.
+
+**Rationale.** Stage 1 showed that generating from a single contract, even with an explicit
+scope-limiting instruction, produces unauthorized invention 2 of 3 runs (`@Entity`/`@Id`/
+`@GeneratedValue` with no supporting contract). Stage 2 changed exactly one variable — full
+visibility of every contract sharing the target — and eliminated it, 3 of 3 runs, with no other
+input changed. See [[implementation-ownership-requires-full-file-scope-visibility]] for the
+generalized principle this decision instantiates.
+
+**What this does and doesn't require.**
+- Does **not** require a `Contract` schema change. `kind` and `entity` (Option 2, already landed)
+  are exactly what `resolve_implementation_target` needs to group contracts by output — the
+  grouping is a query over data `Contract` already carries, not a new field.
+- Does **not** require deciding *how* to compose the model call yet (one combined prompt, as
+  Stage 2's example did; or an incremental accretion where later contracts see the file already
+  written by earlier ones — both are open implementation questions for whoever builds Stage 3/4,
+  not resolved by this decision).
+- **Does** require that whatever eventually drives Stage 3/4 generation group contracts by
+  resolved target as a precondition — a contract must never be handed to a generation call alone
+  when others share its file. This is a real constraint on the *calling convention*, not on the
+  contract data model.
+
+**Scope boundary, honestly stated:** this decision rests on one entity, one file, six contracts,
+one story (per the principle's own Confidence Assessment, rated `medium`, not `high`). It should
+be treated as the working assumption for Stage 3/4's design, not as closed the way Option 2's
+schema change is — a second confirming case (a different entity, a different-sized contract
+group) would move it from a working decision to a validated one.

@@ -29,6 +29,18 @@ pub fn detect_layer(file_path: &str) -> &'static str {
     else if file_path.contains("/repositories/") { "repository" }
     else if file_path.contains("/infrastructure/") { "infrastructure" }
     else if file_path.contains("/middleware/") { "middleware" }
+    // JVM/Spring package names are singular, never the Node/TS plural directories checked above
+    // (/domain/, /repository/, /dto/, /service/, /controller/, not /models/, /services/, ...) —
+    // without these, every JVM file fell through to the generic "module" fallback below,
+    // indistinguishable from an actually-unclassified file. This silently made a layer-scoped
+    // tech-stack rule unreachable for real Spring Boot generation calls (`step_prompt` here vs.
+    // `unit_test_stub_prompt`'s own separate, correct "domain"/"controller"/"service"/"dto"/
+    // "class" closure in step.rs) — a live prompt-review catch, not a hypothetical.
+    else if file_path.contains("/domain/") { "domain" }
+    else if file_path.contains("/repository/") { "repository" }
+    else if file_path.contains("/dto/") { "dto" }
+    else if file_path.contains("/service/") { "service" }
+    else if file_path.contains("/controller/") { "controller" }
     // Angular names the layer in the file's own suffix instead of a plural directory
     // (src/app/<feature>/<feature>.service.ts, never src/services/...) — without this, every
     // Angular file fell through to the generic "module" branch below, silently disabling every
