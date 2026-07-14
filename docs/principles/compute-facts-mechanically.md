@@ -24,6 +24,7 @@ related_principles:
   - deterministic-audits-vs-compensation
   - cross-artifact-consistency-audits-prevent-drift
   - exhaustive-enumeration-over-holistic-review
+cluster: "Compute, Don't Ask"
 ---
 
 # Principle

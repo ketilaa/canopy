@@ -24,6 +24,7 @@ source_artifacts:
 related_principles:
   - coverage-should-be-generated-not-discovered
   - compute-facts-mechanically
+cluster: "Enumeration Over Holistic Review"
 ---
 
 # Principle

@@ -21,6 +21,7 @@ source_artifacts:
 related_principles:
   - exhaustive-enumeration-over-holistic-review
   - compute-facts-mechanically
+cluster: "Enumeration Over Holistic Review"
 ---
 
 # Principle

@@ -22,6 +22,7 @@ source_artifacts:
 related_principles:
   - compute-facts-mechanically
   - cross-artifact-consistency-audits-prevent-drift
+cluster: "Compute, Don't Ask"
 ---
 
 # Principle

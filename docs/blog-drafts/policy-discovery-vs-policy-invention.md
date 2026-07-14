@@ -41,6 +41,7 @@ final_understanding: >
   treating "resolved with no citation" as a hard failure rather than accepting it — measurably
   shifted the model's actual behavior toward defaulting to "unresolved," not just toward correctly
   labeling its guesses.
+cluster: "Protecting What's Already Decided"
 ---
 
 # Summary

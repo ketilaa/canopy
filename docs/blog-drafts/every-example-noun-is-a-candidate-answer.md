@@ -41,6 +41,7 @@ final_understanding: >
   answer." Any concrete noun in a prompt — domain-specific or deliberately generic — is a candidate
   the model can copy forward into unrelated output. Only a placeholder that isn't a real word at
   all removes the risk rather than just relocating it.
+cluster: "Prompt Crafting Idiosyncrasies of Small Models"
 ---
 
 # Summary

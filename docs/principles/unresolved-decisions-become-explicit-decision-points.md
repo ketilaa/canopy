@@ -22,6 +22,7 @@ source_artifacts:
 related_principles:
   - compute-facts-mechanically
   - exhaustive-enumeration-over-holistic-review
+cluster: "Protecting What's Already Decided"
 ---
 
 # Principle

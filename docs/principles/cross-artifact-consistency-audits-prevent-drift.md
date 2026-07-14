@@ -21,6 +21,7 @@ source_artifacts:
 related_principles:
   - compute-facts-mechanically
   - deterministic-audits-vs-compensation
+cluster: "Compute, Don't Ask"
 ---
 
 # Principle
