@@ -226,6 +226,79 @@ derailment Sweep 1 found two days earlier.
 
 ---
 
+## Contract-Driven Implementation, Stage 1 (2026-07-14) — Single-Contract Parallel Implementation Trial
+
+First evidence in this report generated *after* the behavior-first planning pipeline's Stages 0–4
+were confirmed stable (Sweep 4, above) — the question shifted from "is planning reliable" to
+"can the resulting contracts actually drive implementation." Full design in
+`docs/design/contract-driven-implementation-experiment.md`; full assessment of what a contract
+carries in `docs/contract-readiness-assessment.md`. Neither `canopy implement` nor any production
+code path was touched by this or the Stage 2 session below — both ran as standalone cargo
+examples.
+
+No real `contracts.yaml` existed for this story before this session. Running
+`canopy behaviors manufacturer-001` for real hit Stage 0's completeness gate — the story's own
+`spec.yaml` had no scenario testing any field's boundary constraint. Fixed directly in the YAML
+(7 added boundary scenarios, 3 orthogonal open questions cleared), then Stages 0–4 ran clean and
+produced six real contracts: five single-field validation contracts (`name`, `address`,
+`phoneNumber`, `email`, `website`) and one construction contract (`id`/`createdAt`/`modifiedAt`).
+
+Selected `ManufacturerNameValidation` — one field, two behaviors, zero dependencies — and gave a
+model *only* that one contract plus the resolved file target and the Spring Boot skill. Three
+runs, same reproducibility standard as the earlier sweeps:
+
+- **Every run produced a real, distinct defect — none passed clean.** Run 1: correctly scoped but
+  used a non-idiomatic manual validation method. Run 2: imported `javax.validation` despite the
+  skill's explicit "never javax" rule, and invented an unauthorized `@Entity`/`@Id`/
+  `@GeneratedValue` the single given contract never licensed. Run 3: correct imports, same
+  unauthorized entity invention, a different message-fidelity break.
+- **The unauthorized-field invention (2 of 3 runs) was the headline finding** — traced not to a
+  missing contract fact but to a live hypothesis: the model was shown only one of several
+  contracts that would eventually share this file, and defaulted to "completing" what looked like
+  a whole JPA entity regardless of the explicit scope instruction.
+- The other two defects (a `javax` import despite an explicit rule, and a `@Size` annotation that
+  can only carry one message for two distinct required behaviors) were diagnosed as a model-
+  variance slip and a genuine Spring Boot skill documentation gap, respectively — neither traced
+  to the contract schema.
+
+**Conclusion:** the contract boundary itself held up under this trial; every failure traced
+outside it. No new `Contract` field was proposed. Directly motivated Stage 2 below — testing
+whether showing a model every contract sharing a file, not one, stops the unauthorized invention.
+
+## Contract-Driven Implementation, Stage 2 (2026-07-14) — Full-File Contract Visibility Trial
+
+Used the same real `contracts.yaml` from Stage 1 — no synthetic data needed. `resolve_
+implementation_target` places all six of the story's unit contracts (five validation, one
+construction) at the same file, `Manufacturer.java` — exactly the multi-contract-per-file case
+Stage 1's failure pointed at. Gave a model all six contracts' combined scope at once (still
+withholding story, scenarios, entity_schema, ADRs, OpenAPI, and any exploratory tool), asked for
+one combined test file and one combined implementation. Three runs:
+
+- **Ownership correctness: 3/3 clean — the Stage 1 hypothesis confirmed, not just plausible.**
+  Every run produced exactly the eight authorized fields (five validated, three constructed) and
+  nothing beyond them. `@Entity`/`@Id`/`@GeneratedValue` appeared in all three runs and correctly
+  so this time, since `ManufacturerConstruction` now explicitly licensed them — zero unauthorized
+  fields, zero unrelated methods, across all three runs.
+- **A second, more severe failure mode surfaced, exactly where Stage 1 predicted one would
+  persist regardless of ownership visibility.** 2 of 3 runs produced a `Manufacturer` class whose
+  only enforcement was declarative Bean Validation annotations with no triggering mechanism at
+  all — a plain `new Manufacturer(...)` call never throws, so every one of that run's 7 boundary
+  tests would fail. A broader version of Stage 1's `@NotBlank`/`@NotNull` message finding: the
+  Spring Boot skill never explains whether or how Bean Validation fires outside a full
+  persistence/`@Valid` context, so the model guesses inconsistently.
+- **A third, fully reproducible (3/3) defect: `id` is never actually assigned at construction
+  time.** Every run relied solely on `@GeneratedValue`, which only fires at JPA persist time, not
+  on a plain constructor call used in a unit test — the JVM-side analogue of a convention the
+  Node/Express skill already states explicitly (eager id assignment via `randomUUID()`) that
+  Spring Boot's skill has no equivalent for.
+
+**Conclusion:** ownership visibility was confirmed as the cause of Stage 1's invention — a
+process fix (group contracts by resolved target before generating), not a schema change, per the
+decision table scoped before this ran. The other two findings are real, reproducible, separately-
+scoped Spring Boot skill gaps, independent of the contract-driven hypothesis and unaffected by
+ownership visibility, exactly as predicted going in. No redesign conversation was warranted —
+every defect in both sessions traced to a specific, nameable, addressable cause.
+
 ## Current open items for this story
 
 - The domain-event-ADR fix's operation-classification logic (whole-word verb matching, exact
@@ -237,3 +310,14 @@ derailment Sweep 1 found two days earlier.
 - Entity-schema field-naming variance (which optional fields appear, what they're called) remains
   unaddressed and untouched by either enumeration fix, since it's produced by an earlier stage
   (schema generation) than either fix targeted.
+- **New from Stage 2:** `spring_boot_skill` doesn't document how Bean Validation actually gets
+  triggered outside a full persistence/`@Valid` context — 2 of 3 Stage 2 runs produced a class
+  whose annotations never fire on plain construction, so every boundary test would fail. Not yet
+  fixed; a specific, reproducible skill gap, independent of contracts.
+- **New from Stage 2:** `spring_boot_skill` has no equivalent to Node/Express's "factory assigns
+  id eagerly at construction" convention — every run relied solely on `@GeneratedValue`, which
+  never fires on a plain constructor call. 3/3 reproducible. Not yet fixed.
+- **New from Stage 2:** the ownership-visibility process fix (group contracts by
+  `resolve_implementation_target` output before generating, rather than one contract at a time)
+  is confirmed necessary but not yet formalized anywhere — still only exercised inside a
+  standalone example, not any production code path.
