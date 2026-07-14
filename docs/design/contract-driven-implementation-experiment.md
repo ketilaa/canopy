@@ -575,3 +575,57 @@ one story (per the principle's own Confidence Assessment, rated `medium`, not `h
 be treated as the working assumption for Stage 3/4's design, not as closed the way Option 2's
 schema change is — a second confirming case (a different entity, a different-sized contract
 group) would move it from a working decision to a validated one.
+
+---
+
+## Stage 3 Results (2026-07-15): real compile + test, not eyeballed
+
+**Setup.** `canopy-llm/examples/contract_driven_stage3_experiment.rs` — same non-negotiables as
+Stages 1-2 (standalone example, `canopy implement`/`plan.rs`/`execute.rs`/`step.rs` untouched).
+"Reuse execute.rs's test-run/fix-loop machinery" (this document's own Stage 3 description) is
+satisfied by calling `canopy_llm::fix_file` directly — the actual production fix-loop function,
+not a copy of it — and by compiling/running the generated code for real in a standalone Maven
+project (this experiment's own scratch harness; not the dogfooding project's real service tree,
+not part of this repo). Reused unmodified: `load_contracts`, `resolve_implementation_target`,
+`abstract_layer_for_kind`, `skill_for_technology`, `fix_file`. Same six-contract group as Stage 2.
+
+**A methodology bug caught mid-run, disclosed rather than quietly patched:** the first version of
+this experiment passed `abstract_layer_for_kind`'s output ("model") directly to
+`skill_for_technology`. That's correct for resolving the file *target*, but wrong for the *skill
+lookup* — the Spring Boot skill's new content (this session's own fix, above) is keyed under
+`"domain"`, the string `detect_layer()` actually produces for this path, not the tech-agnostic
+abstract name. The bug made the first run's generated code look exactly like Stage 2's *pre-fix*
+behavior (no imperative validation, `@GeneratedValue`-only id) even though the fix was already
+committed — because the fix was never actually reaching the prompt. Corrected to
+`detect_layer(&target_path)`; re-ran from a clean baseline afterward. (Stage 2's own example has
+the same latent bug but is unaffected by it retroactively: at the time Stage 2 ran, the skill had
+no layer-partitioned content at all, so no layer string could have changed what it saw.)
+
+**Three runs, real `mvn clean test`, not eyeballed:**
+
+| Run | Attempt 1 | Root cause if failed |
+|---|---|---|
+| A | **PASS** — all 10 tests compiled and passed | — |
+| B | FAIL, fix attempt also FAIL | Missing `assertNotNull` static import in the **test file** — an ordinary test-generation slip, unrelated to contracts or the Spring Boot skill fix. This harness's one bounded `fix_file` call only targets the implementation (matching `fix_file`'s own real production scope), so a broken test file is outside what this specific harness attempts to repair — a disclosed limitation of this experiment, not a finding about contracts or the skill. |
+| C | **PASS** — all 10 tests compiled and passed | — |
+
+**2 of 3 runs: real, compiled, executed, zero-iteration success**, both showing exactly the
+pattern the Spring Boot skill fix was meant to produce — imperative validation for all five
+fields (correctly distinguishing mandatory from optional), `id` assigned eagerly via
+`UUID.randomUUID()` in the constructor, no unauthorized fields beyond the six contracts' combined
+scope. This is the first point in this whole investigation where "the generated code works" is an
+objective, tool-verified fact rather than a manual read of LLM output.
+
+**The one failure doesn't implicate contracts, ownership visibility, or the skill fix** — it's a
+routine test-generation import bug, the same category of noise any LLM-driven test-writing step
+can produce, caught here only because this stage finally checks for real. Distinguishing this
+from a contract-driven-implementation-specific finding matters: conflating "any bug that shows up
+during a real compile" with "a problem with this approach" would overstate what Stage 3 found.
+
+**Conclusion:** the Spring Boot skill fix works, confirmed by real compilation and test
+execution, not by re-reading LLM output and guessing. The contract boundary + full-file
+visibility + fixed skill combination produced working code without any fix-loop iteration in 2 of
+3 runs. The remaining gap is an ordinary test-generation reliability question this harness wasn't
+built to address (it would need to extend `fix_file`-style repair to test files too, matching the
+real fix loop's actual scope) — a natural refinement for a future Stage 3 run, not a finding about
+this investigation's central question.

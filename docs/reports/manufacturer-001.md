@@ -299,6 +299,45 @@ scoped Spring Boot skill gaps, independent of the contract-driven hypothesis and
 ownership visibility, exactly as predicted going in. No redesign conversation was warranted —
 every defect in both sessions traced to a specific, nameable, addressable cause.
 
+## Contract-Driven Implementation, Stage 3 (2026-07-15) — Real Compile + Test, Not Eyeballed
+
+Both Spring Boot skill gaps from Stage 2 were fixed (imperative constructor validation required
+alongside Bean Validation annotations; eager `id` assignment via a manual `UUID` rather than
+`@GeneratedValue` alone) — landing a real, independent bug along the way: `detect_layer()` had no
+recognition of any JVM singular package directory at all, so every real Green-phase Spring Boot
+generation call silently fell through to a generic fallback, disagreeing with what Red-phase's
+own separate layer logic computed for the same file. Fixed at the root (`detect_layer()` itself),
+not worked around, after two keying attempts were each caught and corrected by prompt review.
+
+Stage 3 then tested the fixed skill for real: generate the same six-contract group from Stage 2,
+write the result into a real, standalone Maven project (this experiment's own scratch harness,
+not part of this repo or the dogfooding project's real service tree), and run `mvn clean test` —
+actual compilation and execution, not a read of the LLM's own output. `canopy_llm::fix_file` (the
+real production fix-loop function) is called directly on a first-attempt failure, satisfying
+"reuse execute.rs's fix-loop machinery" without touching `execute.rs` itself.
+
+A methodology bug was caught and fixed mid-session, disclosed rather than quietly patched: the
+first version of this harness passed the tech-agnostic abstract layer name directly to the skill
+lookup, instead of the real `detect_layer()`-derived string the fixed skill is keyed under — so
+the very first run silently never received the fix at all, and reproduced Stage 2's *pre-fix*
+behavior exactly. Corrected, then re-run from a clean baseline.
+
+- **2 of 3 runs: real, compiled, executed, zero-iteration success.** Both passing runs showed
+  exactly the intended pattern — imperative validation correctly distinguishing mandatory from
+  optional fields, `id` assigned eagerly via `UUID.randomUUID()`, nothing beyond the six
+  contracts' combined scope. The first point in this whole investigation where "the generated
+  code works" is an objective, tool-verified fact rather than a manual read of the model's output.
+- **The one failure was an ordinary test-generation import bug** (a missing `assertNotNull`
+  static import in the generated test file) — unrelated to contracts, ownership visibility, or
+  the skill fix, and outside this harness's repair scope (its one bounded `fix_file` call only
+  targets the implementation, matching `fix_file`'s own real production scope, so a broken test
+  file goes unrepaired here). Named explicitly as a harness limitation, not conflated with a
+  finding about the contract-driven approach itself.
+
+**Conclusion:** the Spring Boot skill fix works, confirmed by real compilation and test execution.
+The remaining gap (test-file repair) is a natural refinement for a future Stage 3 run, not a
+finding about contracts, ownership visibility, or this story's schema.
+
 ## Current open items for this story
 
 - The domain-event-ADR fix's operation-classification logic (whole-word verb matching, exact
@@ -310,14 +349,18 @@ every defect in both sessions traced to a specific, nameable, addressable cause.
 - Entity-schema field-naming variance (which optional fields appear, what they're called) remains
   unaddressed and untouched by either enumeration fix, since it's produced by an earlier stage
   (schema generation) than either fix targeted.
-- **New from Stage 2:** `spring_boot_skill` doesn't document how Bean Validation actually gets
-  triggered outside a full persistence/`@Valid` context — 2 of 3 Stage 2 runs produced a class
-  whose annotations never fire on plain construction, so every boundary test would fail. Not yet
-  fixed; a specific, reproducible skill gap, independent of contracts.
-- **New from Stage 2:** `spring_boot_skill` has no equivalent to Node/Express's "factory assigns
-  id eagerly at construction" convention — every run relied solely on `@GeneratedValue`, which
-  never fires on a plain constructor call. 3/3 reproducible. Not yet fixed.
-- **New from Stage 2:** the ownership-visibility process fix (group contracts by
-  `resolve_implementation_target` output before generating, rather than one contract at a time)
-  is confirmed necessary but not yet formalized anywhere — still only exercised inside a
-  standalone example, not any production code path.
+- **Both Stage 2 Spring Boot skill gaps: fixed and confirmed by real compilation in Stage 3**
+  (imperative validation, eager `id` assignment). No longer open.
+- **The ownership-visibility grouping decision is formalized** (design doc) but still not
+  implemented in any production code path — still only exercised inside standalone examples.
+  Remains open until `canopy implement` is actually wired to consume `contracts.yaml` at all.
+- **New from Stage 3:** this experiment's own harness only repairs the implementation file on a
+  failed run, not the test file — a broken test (e.g. a missing static import) goes unrepaired
+  and the run reports FAIL even when the implementation itself may be fine. A future Stage 3 run
+  would need `fix_file`-style repair extended to test files too, matching the real fix loop's
+  actual scope, to close this gap.
+- **New from Stage 3:** `detect_layer()` previously had no recognition of any JVM singular
+  package directory (`/domain/`, `/repository/`, `/dto/`, `/service/`, `/controller/`) — fixed;
+  every real Spring Boot Green-phase generation call was silently getting a generic fallback
+  layer instead of its real one. Worth checking whether any other JVM-specific skill content,
+  added before this fix, was similarly inert for the same reason.
