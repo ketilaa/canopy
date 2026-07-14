@@ -48,10 +48,22 @@ fn mechanical_unit_contracts(
             .filter_map(|id| by_id.get(id.as_str()))
             .map(|b| b.statement.clone())
             .collect();
+        // `entity`/`member` come straight from the owned behaviors' own fields — never re-parsed
+        // out of `c.subject` — so they stay unambiguous even for a compound entity/field name.
+        // Every behavior in a unit cluster shares the same entity (and, for a Validation cluster,
+        // the same member) by construction, so taking the first `Some` found is safe, not a guess.
+        let owned: Vec<&Behavior> = c.behavior_ids.iter()
+            .filter_map(|id| by_id.get(id.as_str()).copied())
+            .collect();
+        let entity = owned.iter().find_map(|b| b.entity.clone());
+        let member = owned.iter().find_map(|b| b.member.clone());
         Contract {
             id: next_id(),
             name: format!("{}{}", c.subject, pascal_case(c.kind.label())),
             scope: BehaviorScope::Unit,
+            kind: Some(c.kind.clone()),
+            entity,
+            member,
             source_cluster: c.id.clone(),
             owned_behaviors: c.behavior_ids.clone(),
             required_tests,
@@ -99,6 +111,11 @@ fn mechanical_integration_contract_baseline(
             id: next_id(),
             name: format!("{}Workflow", g.subject),
             scope: BehaviorScope::Integration,
+            // An integration contract spans a workflow, not one layer/entity/field — these stay
+            // unpopulated rather than guessed at from `g.subject`.
+            kind: None,
+            entity: None,
+            member: None,
             source_cluster: g.id.clone(),
             owned_behaviors: g.behavior_ids.clone(),
             required_tests,
@@ -296,4 +313,111 @@ pub fn generate_contracts(
     contracts.extend(integration_contracts);
 
     Ok((ContractSet { contracts }, review))
+}
+
+#[cfg(test)]
+mod contract_grounding_tests {
+    use super::*;
+
+    fn validation_behavior(id: &str, entity: &str, member: &str, subject: &str, statement: &str) -> Behavior {
+        Behavior {
+            id: id.to_string(),
+            source: BehaviorSource::EntitySchema,
+            source_ref: format!("{entity}.{member}.max_length"),
+            scope: BehaviorScope::Unit,
+            subject: subject.to_string(),
+            kind: BehaviorKind::Validation,
+            statement: statement.to_string(),
+            derivation: BehaviorDerivation::Mechanical,
+            entity: Some(entity.to_string()),
+            member: Some(member.to_string()),
+        }
+    }
+
+    fn construction_behavior(id: &str, entity: &str, field: &str) -> Behavior {
+        Behavior {
+            id: id.to_string(),
+            source: BehaviorSource::EntitySchema,
+            source_ref: format!("{entity}.{field}.system_generated"),
+            scope: BehaviorScope::Unit,
+            subject: entity.to_string(),
+            kind: BehaviorKind::Construction,
+            statement: format!("{entity} construction assigns {field}."),
+            derivation: BehaviorDerivation::Mechanical,
+            entity: Some(entity.to_string()),
+            member: None,
+        }
+    }
+
+    fn counter() -> impl FnMut() -> String {
+        let mut n = 0usize;
+        move || { n += 1; format!("test-contract-{n:03}") }
+    }
+
+    #[test]
+    fn unit_validation_contract_carries_kind_entity_and_member() {
+        let b1 = validation_behavior("b001", "Manufacturer", "name", "ManufacturerName", "Name longer than 200 characters is rejected.");
+        let b2 = validation_behavior("b002", "Manufacturer", "name", "ManufacturerName", "Name shorter than 1 characters is rejected.");
+        let clustering = ClusteringResult {
+            unit_clusters: vec![UnitCluster {
+                id: "cluster-001".to_string(),
+                subject: "ManufacturerName".to_string(),
+                kind: BehaviorKind::Validation,
+                behavior_ids: vec!["b001".to_string(), "b002".to_string()],
+            }],
+            integration_groupings: vec![],
+        };
+        let behaviors = BehaviorList { behaviors: vec![b1, b2] };
+        let contracts = mechanical_unit_contracts(&clustering, &behaviors, &mut counter());
+
+        assert_eq!(contracts.len(), 1);
+        let c = &contracts[0];
+        assert_eq!(c.kind, Some(BehaviorKind::Validation));
+        assert_eq!(c.entity.as_deref(), Some("Manufacturer"));
+        assert_eq!(c.member.as_deref(), Some("name"));
+    }
+
+    #[test]
+    fn unit_construction_contract_carries_entity_but_no_single_member() {
+        let b1 = construction_behavior("b010", "Manufacturer", "id");
+        let b2 = construction_behavior("b011", "Manufacturer", "createdAt");
+        let clustering = ClusteringResult {
+            unit_clusters: vec![UnitCluster {
+                id: "cluster-002".to_string(),
+                subject: "Manufacturer".to_string(),
+                kind: BehaviorKind::Construction,
+                behavior_ids: vec!["b010".to_string(), "b011".to_string()],
+            }],
+            integration_groupings: vec![],
+        };
+        let behaviors = BehaviorList { behaviors: vec![b1, b2] };
+        let contracts = mechanical_unit_contracts(&clustering, &behaviors, &mut counter());
+
+        assert_eq!(contracts.len(), 1);
+        let c = &contracts[0];
+        assert_eq!(c.kind, Some(BehaviorKind::Construction));
+        assert_eq!(c.entity.as_deref(), Some("Manufacturer"));
+        assert_eq!(c.member, None);
+    }
+
+    #[test]
+    fn integration_contract_leaves_kind_entity_and_member_unset() {
+        let clustering = ClusteringResult {
+            unit_clusters: vec![],
+            integration_groupings: vec![IntegrationGrouping {
+                id: "group-001".to_string(),
+                subject: "ManufacturerRegistration".to_string(),
+                behavior_ids: vec![],
+            }],
+        };
+        let behaviors = BehaviorList { behaviors: vec![] };
+        let unit_contracts: Vec<Contract> = vec![];
+        let contracts = mechanical_integration_contract_baseline(&clustering, &unit_contracts, &behaviors, &mut counter());
+
+        assert_eq!(contracts.len(), 1);
+        let c = &contracts[0];
+        assert_eq!(c.kind, None);
+        assert_eq!(c.entity, None);
+        assert_eq!(c.member, None);
+    }
 }

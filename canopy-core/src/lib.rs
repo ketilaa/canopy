@@ -242,6 +242,20 @@ pub struct Behavior {
     pub statement: String,
     #[serde(default)]
     pub derivation: BehaviorDerivation,
+    /// The domain entity this behavior concerns, when mechanically known (validation,
+    /// construction, event-shape, publication all set it directly from `EntitySchema`/the
+    /// story's own entity — never parsed back out of `subject`). `None` for scenario-derived
+    /// behaviors: the model is only asked for a single `subject` string, not an entity/field
+    /// split, and inventing one by parsing `subject` would reintroduce the exact
+    /// compound-name ambiguity this field exists to avoid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    /// The specific field/property this behavior concerns, when it's about exactly one field
+    /// (validation only). `None` for construction/event-shape/publication (each concerns the
+    /// whole entity or event, not a single field — construction in particular covers several
+    /// system-generated fields under one contract) and for scenario-derived behaviors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -461,6 +475,27 @@ pub struct Contract {
     /// (integration) — e.g. "ProductNameValidation", "ProductRegistrationWorkflow".
     pub name: String,
     pub scope: BehaviorScope,
+    /// The owned behaviors' shared kind, when this is a unit contract — every behavior in a unit
+    /// cluster shares one `(subject, kind)` by construction, so this is a direct copy of
+    /// `UnitCluster.kind`, never a re-derivation. `None` for an integration contract, which spans
+    /// a workflow rather than one layer. This is this contract's language-independent "layer":
+    /// consumption resolves it into a concrete file target via a fixed kind→directory mapping in
+    /// each tech-stack skill, without ever re-parsing `name` or `subject`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<BehaviorKind>,
+    /// The domain entity this contract concerns, taken directly from its owned behaviors' own
+    /// `entity` field — never re-parsed out of `name`/`subject`, so it stays correct even for a
+    /// compound entity/field name where PascalCase concatenation alone would be ambiguous (e.g.
+    /// distinguishing entity `OrderLineItem` from entity `Order` for a field named `lineItem...`).
+    /// `None` when the owned behaviors don't carry one — an integration contract, or a unit
+    /// contract built entirely from scenario-derived behaviors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    /// The specific field this contract concerns, when its owned behaviors are about exactly one
+    /// field (a validation contract). `None` for a whole-entity contract (construction,
+    /// event-shape, publication) or an integration contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
     /// The `UnitCluster.id` or `IntegrationGrouping.id` this contract was generated from —
     /// exactly one contract per cluster, never more, never fewer (see `ContractAudit`).
     pub source_cluster: String,

@@ -297,6 +297,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     source_ref: format!("{}.{}.max_length", schema.entity, field.name),
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement, derivation: BehaviorDerivation::Mechanical,
+                    entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
                 });
             }
             if let Some(n) = v.min_length {
@@ -321,6 +322,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                         source_ref: format!("{}.{}.min_length", schema.entity, field.name),
                         scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                         statement, derivation: BehaviorDerivation::Mechanical,
+                        entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
                     });
                 }
             }
@@ -331,6 +333,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("{} below {n} is rejected.", capitalize(&field.name)),
                     derivation: BehaviorDerivation::Mechanical,
+                    entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
                 });
             }
             if let Some(n) = v.max {
@@ -340,6 +343,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("{} above {n} is rejected.", capitalize(&field.name)),
                     derivation: BehaviorDerivation::Mechanical,
+                    entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
                 });
             }
             if v.pattern.is_some() {
@@ -349,6 +353,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("{} violating the required pattern is rejected.", capitalize(&field.name)),
                     derivation: BehaviorDerivation::Mechanical,
+                    entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
                 });
             }
             if let Some(n) = v.max_items {
@@ -358,6 +363,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                     scope: BehaviorScope::Unit, subject: subject.clone(), kind: BehaviorKind::Validation,
                     statement: format!("More than {n} {} is rejected.", field.name),
                     derivation: BehaviorDerivation::Mechanical,
+                    entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
                 });
             }
         }
@@ -368,6 +374,7 @@ fn mechanical_validation_behaviors(schema: &EntitySchema, next_id: &mut impl FnM
                 scope: BehaviorScope::Unit, subject, kind: BehaviorKind::Validation,
                 statement: format!("Missing {} is rejected.", field.name),
                 derivation: BehaviorDerivation::Mechanical,
+                entity: Some(schema.entity.clone()), member: Some(field.name.clone()),
             });
         }
     }
@@ -385,6 +392,11 @@ fn mechanical_construction_behaviors(schema: &EntitySchema, next_id: &mut impl F
         kind: BehaviorKind::Construction,
         statement: format!("{} construction assigns {}.", schema.entity, field.name),
         derivation: BehaviorDerivation::Mechanical,
+        entity: Some(schema.entity.clone()),
+        // Not `Some(field.name)` — every system-generated field's construction behavior shares
+        // one cluster/contract for the whole entity (grouped by subject=entity, kind=Construction),
+        // so no single field represents the contract; see the `member` field's own doc comment.
+        member: None,
     }).collect()
 }
 
@@ -417,6 +429,10 @@ fn mechanical_event_behaviors(entity: &str, adrs: &[Adr], next_id: &mut impl FnM
                 scope: BehaviorScope::Unit, subject: event_name.clone(), kind: BehaviorKind::EventShape,
                 statement: format!("{event_name} contains {field}."),
                 derivation: BehaviorDerivation::Mechanical,
+                // `entity` is the function's own parameter, not parsed back out of `event_name` —
+                // the naming convention (event name prefixed with entity name) already made this
+                // safe to parse, but there's no reason to when the true value is already in scope.
+                entity: Some(entity.to_string()), member: None,
             });
         }
         out.push(Behavior {
@@ -424,12 +440,14 @@ fn mechanical_event_behaviors(entity: &str, adrs: &[Adr], next_id: &mut impl FnM
             scope: BehaviorScope::Unit, subject: event_name.clone(), kind: BehaviorKind::EventShape,
             statement: format!("{event_name} contains {aggregate_ref}."),
             derivation: BehaviorDerivation::Mechanical,
+            entity: Some(entity.to_string()), member: None,
         });
         out.push(Behavior {
             id: next_id(), source: BehaviorSource::Adr, source_ref: adr.title.clone(),
             scope: BehaviorScope::Unit, subject: "EventPublisher".to_string(), kind: BehaviorKind::Publication,
             statement: format!("{event_name} is published on {topic}."),
             derivation: BehaviorDerivation::Mechanical,
+            entity: Some(entity.to_string()), member: None,
         });
     }
     out
@@ -583,6 +601,10 @@ pub fn extract_behaviors(
             kind: rb.kind,
             statement: rb.statement,
             derivation: BehaviorDerivation::Inferred,
+            // The model is only asked for a single `subject` string (see `scenario_behavior_prompt`
+            // above), not an entity/field split — leaving these `None` rather than parsing `subject`
+            // avoids reintroducing the compound-name ambiguity this field exists to avoid.
+            entity: None, member: None,
         });
     }
 
@@ -695,6 +717,7 @@ mod adr_event_coverage_tests {
             kind: BehaviorKind::EventShape,
             statement: format!("{subject} contains eventId."),
             derivation: BehaviorDerivation::Mechanical,
+            entity: None, member: None,
         }
     }
 

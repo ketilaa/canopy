@@ -328,7 +328,24 @@ Reasoning, grounded in what was actually found above, not intuition:
 
 After the initial write-up above, closer inspection of `canopy-cli/src/commands/init.rs` showed
 the ADR-006 case is a stale-fixture artifact, not a reachable defect in current code (see Q6 #2's
-revised text and the audit note just above). The audit fix is implemented and tested; next steps
-per the agreed direction (recommendation B) are: add the three missing grounding fields to
-contract generation, re-run this assessment against a freshly-generated real contract, then run
-the Q5 experiment.
+revised text and the audit note just above). The audit fix is implemented and tested.
+
+Of the three schema options weighed for the grounding gap (Q3) — minimal (relabel `subject`,
+still ambiguous for compound names), recommended (split `subject` into explicit `entity`/`member`
+at the point of origin, no LLM), most explicit (also lift constraint values into typed data) —
+**recommended (Option 2) was chosen and is now implemented**: `Contract` gained
+`kind: Option<BehaviorKind>` (a direct copy of `UnitCluster.kind` — this doubles as the
+contract's language-independent "layer"), `entity: Option<String>`, and `member: Option<String>`;
+`Behavior` gained the same `entity`/`member` pair, populated at the exact point `entity`/
+`field.name` were previously being concatenated into `subject` (`mechanical_validation_behaviors`,
+`mechanical_construction_behaviors`, `mechanical_event_behaviors` in `behaviors.rs`), never by
+re-parsing `subject` afterward. `subject`/`name` are unchanged. Scenario-derived (LLM) behaviors
+leave both `None` — the model was never asked for a structured split, and inventing one by
+parsing its `subject` output would reintroduce the same ambiguity. Covered by 3 new unit tests
+in `contracts.rs` exercising a validation contract, a construction contract, and an integration
+contract. No prompt or skill text was touched by this change.
+
+Deliberately deferred, per the agreed sequencing: no consumer reads these new fields yet — file-
+target computation still needs the structured kind→directory mapping (the shared prerequisite
+noted above) before `canopy implement` could use any of this, and that reassessment of whether a
+contract is sufficient implementation input comes only after that prerequisite lands.
