@@ -32,6 +32,17 @@ echo "$CURRENT_HASH" > "$MARKER"
 
 CHANGED_FILES=$(git status --porcelain -- $CRATES 2>/dev/null | awk '{print $2}' | tr '\n' ' ')
 
-cat <<EOF
+# Prompt/skill files are gated by CLAUDE.md's Prompt House Style: canopy-prompt-reviewer must
+# pass before a change to canopy-llm/src/prompts/*.rs or canopy-llm/src/skills/*.rs is installed.
+# An in-flight, not-yet-returned review is a legitimate reason to hold off committing — the
+# unconditional "commit it now" wording below previously read as contradicting that rule instead
+# of accounting for it, since this script has no visibility into whether a review is pending.
+if echo "$CHANGED_FILES" | grep -qE 'canopy-llm/src/(prompts|skills)/'; then
+  cat <<EOF
+{"decision": "block", "reason": "Checkpoint reminder: uncommitted changes in $CHANGED_FILES. These touch prompts/skills — per CLAUDE.md's Prompt House Style, commit only after canopy-prompt-reviewer has actually passed on this diff. If a review is already in flight, this is expected; commit once it clears. If no review has been requested yet, run one now."}
+EOF
+else
+  cat <<EOF
 {"decision": "block", "reason": "Checkpoint reminder: uncommitted changes in $CHANGED_FILES. Per CLAUDE.md's Commit Discipline section, if build/test are green and this is a natural checkpoint, commit it now with a real message before ending the turn."}
 EOF
+fi
