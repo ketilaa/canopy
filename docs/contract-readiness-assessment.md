@@ -406,3 +406,50 @@ JVM services), not a defect in the kind→directory mapping itself.
    (e.g. `min_length: 1` reads as "can't be empty"); there's no explicit boolean anywhere on
    `Contract`. Not in scope for either committed slice — worth flagging as the next concrete gap
    if the isolated-implementation experiment (Q5) is run next and hits it.
+
+## Addendum 3 — Q5 executed: mandatory/optional signal sufficiency probe (2026-07-14)
+
+**Experiment name:** Mandatory/optional signal sufficiency probe (`canopy-llm/examples/
+contract_isolation_probe.rs`) — a narrower, targeted version of Q5's original probe, aimed
+specifically at the one open blocker from Q3 revisited above.
+
+**Inputs:** two real, mechanically-derivable unit contracts from `manufacturer-001`'s actual
+entity schema — `ManufacturerNameValidation` (mandatory field, `min_length: 1`) and
+`ManufacturerPhoneNumberValidation` (optional field, `min_length: 0` — vacuous, so *no*
+lower-bound behavior exists in the contract at all). Each `Contract`/`Behavior` value was
+hand-constructed to exactly match verified mechanical output (same shape as this project's own
+`unit_validation_contract_carries_kind_entity_and_member` test), not re-derived — the point was
+to isolate what the model sees, not to re-test derivation. Given to the model: `entity`,
+`member`, `kind`, `required_tests` verbatim, and the Spring Boot skill's `model`-layer rules via
+`skill_for_technology`. No story, no spec, no ADRs, no other fields. Run against the local
+Qwen2.5-Coder-14B server this project already dogfoods against.
+
+**Success criteria:** the model infers `name` requires a non-blank value (the only signal is the
+"shorter than 1 characters" prose) AND leaves `phoneNumber` nullable (no lower-bound behavior
+exists to imply otherwise).
+
+**Result — 3 runs, identical prompts, matching this project's own reproducibility-sweep standard:**
+
+| Run | `name` (mandatory) | `phoneNumber` (optional) |
+|---|---|---|
+| 1 | `@NotBlank` + `@Size(min=1,max=200)` — correct | `@Size(max=20)` only — correct |
+| 2 | `@NotBlank` + `@Size(min=1,max=200)` — correct | `@NotBlank` + `@Size(max=20)` — **wrong, over-constrained** |
+| 3 | `@Size(min=1,max=200)` only, no `@NotBlank` — **wrong**: `@Size` alone does not reject `null` in Jakarta Bean Validation, only a blank/empty string — a missing `name` would silently pass | `@Size(max=20)` only — correct |
+
+**Every run got at least one of the two fields wrong**, and no two runs agreed on which one.
+This is not a close call: the same prompt, unchanged, produced three different outcomes. The
+originally-hypothesized failure mode (over-constraining the optional field) *did* occur (run 2),
+but so did an under-constraining failure on the *mandatory* field that hadn't been anticipated
+going in (run 3) — a real miss the prose-only signal doesn't protect against either direction.
+
+**Conclusion: the mandatory/optional gap is genuinely load-bearing, not a theoretical nicety.**
+Confirmed live, not assumed — this settles Q3's third blocker as a real, not speculative, gap.
+
+**Smallest contract extension implied by this result:** a `mandatory: Option<bool>` field,
+symmetric with `entity`/`member`'s Option-2 shape — populated exactly where `is_mandatory` is
+already a known local variable in `mechanical_validation_behaviors` (`behaviors.rs`), `Some(true)`
+for a `schema.mandatory` field, `Some(false)` for `schema.optional`, `None` for every non-
+Validation kind (mandatory/optional isn't a meaningful concept for construction, event-shape, or
+publication). Zero LLM involvement, same mechanical-propagation shape already proven for `entity`/
+`member`. Not yet implemented — proposing this as the next concrete step, pending confirmation,
+consistent with aligning on schema shape before building it (as with Option 2).
