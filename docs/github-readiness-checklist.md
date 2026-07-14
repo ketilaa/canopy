@@ -14,8 +14,10 @@ step. Status values: `not started` / `planned — awaiting approval` / `done`.
 
 **Open item surfaced during execution, resolved:** global git config was updated to
 `ketil.aasarod@gmail.com` on explicit request. Caught during the final pre-push scan: 3 commits
-made *after* the identity rewrite but *before* this config update still carried the old email —
-a second, smaller filter-repo pass is required to fully close this out before pushing.
+made *after* the identity rewrite but *before* this config update still carried the old email, and
+2 readiness docs re-introduced the dogfooding project's real name while documenting the earlier
+fix. Both closed with a second, smaller filter-repo pass and a doc edit, re-verified before
+pushing.
 
 ## Phase 2 — Documentation Hardening
 
@@ -29,11 +31,11 @@ a second, smaller filter-repo pass is required to fully close this out before pu
 
 | # | Item | Status |
 |---|---|---|
-| 8 | Push to GitHub | blocked — needs target repo details (see below) |
+| 8 | Push to GitHub | **done** — https://github.com/ketilaa/canopy, public, 267 commits, single verified author identity, Apache-2.0 auto-detected |
 
-**Before this can execute:** which GitHub account/org, what repo name, and confirm visibility
-should be public. Also recommend a final re-run of the secret/hygiene scan against the exact
-commit about to be pushed, per the original assessment's Stage 3 guidance — not yet done.
+Final pre-push scan (secrets, project-name leak, author identity, tree-content integrity, build)
+re-run against the exact commit pushed — all clean. `canopy-backup-2/` kept on disk as a safety net
+until the pushed repo has been spot-checked in a browser; safe to delete after that.
 
 ## Phase 4-5 (not started)
 
