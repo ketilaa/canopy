@@ -717,10 +717,27 @@ active; the hook only makes sure that judgment gets exercised instead of silentl
 
 ## Knowledge Capture Cadence
 
-`docs/{retrospectives,blog-drafts,principles,reports}/` (see Artifacts above) is not a one-time
-export — it's meant to stay current as the project evolves, across whichever developer or session
-is doing the work. Rather than a separate calendar-driven job, knowledge capture piggybacks on
-checkpoints this project already has a habit of noticing:
+`docs/{retrospectives,blog-drafts,principles,reports,narratives}/` is not a one-time export — it's
+meant to stay current as the project evolves, across whichever developer or session is doing the
+work. Four distinct artifact types, each answering a different question, discovered in that order:
+
+| Directory | Answers | Scope |
+|---|---|---|
+| `retrospectives/` | What happened during a period? | One day (or, for reconstructed ones, one era) |
+| `principles/` | What reusable lesson generalizes across many events? | Cross-cutting, evidence-graded, includes counter-evidence |
+| `blog-drafts/` | What's one story worth telling? | A single bounded incident with a full belief→evidence→change arc |
+| `narratives/` | How did our thinking on one thread evolve across months? | Weeks-to-months, connects multiple retrospectives/principles/blog posts into one arc — see `docs/narrative-analysis.md` for how these get compared and ordered |
+
+Don't force a finding into the wrong type. A recurring pattern across many small commits is a
+principle, not a blog post (a blog post needs one dramatizable scene to open on, which a diffuse
+pattern usually doesn't have). A single-incident story that's genuinely bounded is a blog post, not
+a narrative. A thread that only makes sense read across several retrospectives and principles
+together — "how did X evolve" — is a narrative, and narratives require a dedicated top-down pass
+(pick one thread, trace it end to end) rather than emerging automatically from the bottom-up
+retrospective/principle/blog-post cadence below.
+
+Rather than a separate calendar-driven job, day-to-day knowledge capture piggybacks on checkpoints
+this project already has a habit of noticing:
 
 **At the end of a retrospective-worthy day** (the existing daily-retrospective habit — see
 `docs/retrospectives/`), after writing the day's retrospective, ask two follow-up questions before
@@ -739,6 +756,14 @@ extend that story's file in `docs/reports/` — don't leave sweep results only i
 chat transcript. Scratchpad files are session-scoped and can be lost; `docs/reports/` is the
 durable home. Prefer one file per story, extended chronologically as new sessions run, over one
 file per sweep (see `docs/reports/manufacturer-001.md` for the shape).
+
+**Narratives don't fit this daily cadence and shouldn't be forced into it.** Revisit
+`docs/narratives/` periodically (a natural trigger: after a major architecture pivot lands, or
+whenever enough new retrospectives/principles have accumulated that an existing narrative's "Current
+View" or "Open Questions" section looks stale) rather than at every checkpoint. When starting a new
+narrative pass, review retrospectives, principles, blog drafts, commit history, and design-doc/
+CLAUDE.md history together, looking specifically for a thread that spans weeks — not for what
+happened on any single day.
 
 **This is a habit to apply proactively, the same way the daily retrospective already is** — not a
 step that requires the user to ask each time. Skip it honestly on days that only produced routine
