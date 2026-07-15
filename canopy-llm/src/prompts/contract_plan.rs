@@ -154,7 +154,23 @@ pub fn generate_story_plan_from_contracts(
             return Err(format!("contract '{}' has no entity — cannot resolve a file target", c.id));
         };
         let layer = abstract_layer_for_kind(kind);
-        let Some(target) = resolve_implementation_target(tech, &pkg_path, &backend_service.name, layer, entity, None) else {
+        // `Contract` carries no distinct `subject` field for the event's own name (unlike
+        // `UnitCluster`/`Behavior`) — `file_targets.rs`'s own module doc still refers to a
+        // "Contract.subject" that doesn't exist, a stale reference from before that field was
+        // dropped. Recovered here instead of reintroducing the field: `mechanical_unit_contracts`
+        // always names an event-shape contract `{subject}{"EventShape"}` (the fixed
+        // `{subject}{PascalCase(kind.label())}` convention every unit contract's `name` follows),
+        // so stripping that fixed suffix recovers the event's own name exactly. Without this,
+        // `event_name` was always `None` below, so `resolve_implementation_target`'s "event"
+        // layer could never resolve for *any* tech family, not just JVM — found and fixed
+        // 2026-07-15 alongside the JVM event/infrastructure convention itself
+        // (docs/design/contract-composition-assessment.md §8).
+        let event_name = if matches!(kind, BehaviorKind::EventShape) {
+            c.name.strip_suffix("EventShape").map(|s| s.to_string())
+        } else {
+            None
+        };
+        let Some(target) = resolve_implementation_target(tech, &pkg_path, &backend_service.name, layer, entity, event_name.as_deref()) else {
             return Err(format!(
                 "no mechanical file-target convention exists yet for tech='{tech}' layer='{layer}' (contract '{}')",
                 c.id

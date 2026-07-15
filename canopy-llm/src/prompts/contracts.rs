@@ -35,13 +35,50 @@ fn mechanical_unit_contracts(
     let by_id: std::collections::HashMap<&str, &Behavior> =
         behaviors.behaviors.iter().map(|b| (b.id.as_str(), b)).collect();
 
-    clustering.unit_clusters.iter().map(|c| {
-        let dependencies = if c.kind == BehaviorKind::Construction {
+    // Contract ids are assigned to every cluster up front, in the same order the final
+    // `Contract`s are built below, so a dependency computed further down can reference the
+    // *contract* id another cluster will get — never that cluster's own `UnitCluster.id`, a
+    // completely different id namespace (`manufacturer-001-cluster-NNN` vs.
+    // `manufacturer-001-contract-NNN`). Storing a cluster id into `Contract.dependencies` would
+    // silently never resolve downstream, since `dependency_targets` in `contract_plan.rs` looks
+    // dependencies up by contract id. Found and fixed 2026-07-15 alongside the entity-matching
+    // fix below (docs/design/contract-composition-assessment.md §8) — a regression test
+    // (`event_shape_and_publication_contracts_depend_on_construction_for_the_same_entity`) caught
+    // it immediately once a non-empty dependency was exercised for the first time; this bug
+    // predates that fix and was masked for as long as every real dependency case also produced
+    // zero non-empty dependencies (the entity-mismatch bug above).
+    let contract_ids: Vec<String> = clustering.unit_clusters.iter().map(|_| next_id()).collect();
+    let cluster_id_to_contract_id: std::collections::HashMap<&str, &str> = clustering.unit_clusters.iter()
+        .zip(contract_ids.iter())
+        .map(|(c, id)| (c.id.as_str(), id.as_str()))
+        .collect();
+
+    // An event-shape or publication cluster's own `subject` names the event (or, for
+    // Publication, the fixed "EventPublisher" subject) — never the entity it concerns — so the
+    // subject-based rule below can never link either kind back to their entity's Construction
+    // contract. `entity` (derived from owned behaviors, same technique the final field
+    // derivation below uses) is the only field that actually names the entity for these two
+    // kinds; found and fixed 2026-07-15 (docs/design/contract-composition-assessment.md §8) when
+    // an ADR-driven event contract's dependency edge to Construction never formed.
+    let cluster_entity = |c: &UnitCluster| -> Option<String> {
+        c.behavior_ids.iter().filter_map(|id| by_id.get(id.as_str())).find_map(|b| b.entity.clone())
+    };
+
+    clustering.unit_clusters.iter().zip(contract_ids.iter()).map(|(c, id)| {
+        let dependencies: Vec<String> = if c.kind == BehaviorKind::Construction {
             Vec::new()
+        } else if matches!(c.kind, BehaviorKind::EventShape | BehaviorKind::Publication) {
+            let entity_of_c = cluster_entity(c);
+            clustering.unit_clusters.iter()
+                .filter(|other| other.kind == BehaviorKind::Construction
+                    && entity_of_c.is_some()
+                    && cluster_entity(other) == entity_of_c)
+                .filter_map(|other| cluster_id_to_contract_id.get(other.id.as_str()).map(|id| id.to_string()))
+                .collect()
         } else {
             clustering.unit_clusters.iter()
                 .filter(|other| other.subject == c.subject && other.kind == BehaviorKind::Construction)
-                .map(|other| other.id.clone())
+                .filter_map(|other| cluster_id_to_contract_id.get(other.id.as_str()).map(|id| id.to_string()))
                 .collect()
         };
         let required_tests = c.behavior_ids.iter()
@@ -59,7 +96,7 @@ fn mechanical_unit_contracts(
         let member = owned.iter().find_map(|b| b.member.clone());
         let mandatory = owned.iter().find_map(|b| b.mandatory);
         Contract {
-            id: next_id(),
+            id: id.clone(),
             name: format!("{}{}", c.subject, pascal_case(c.kind.label())),
             scope: BehaviorScope::Unit,
             kind: Some(c.kind.clone()),
@@ -354,6 +391,38 @@ mod contract_grounding_tests {
         }
     }
 
+    fn event_shape_behavior(id: &str, entity: &str, event_name: &str, field: &str) -> Behavior {
+        Behavior {
+            id: id.to_string(),
+            source: BehaviorSource::Adr,
+            source_ref: format!("Domain Event for {entity} Registration"),
+            scope: BehaviorScope::Unit,
+            subject: event_name.to_string(),
+            kind: BehaviorKind::EventShape,
+            statement: format!("{event_name} contains {field}."),
+            derivation: BehaviorDerivation::Mechanical,
+            entity: Some(entity.to_string()),
+            member: None,
+            mandatory: None,
+        }
+    }
+
+    fn publication_behavior(id: &str, entity: &str, event_name: &str, topic: &str) -> Behavior {
+        Behavior {
+            id: id.to_string(),
+            source: BehaviorSource::Adr,
+            source_ref: format!("Domain Event for {entity} Registration"),
+            scope: BehaviorScope::Unit,
+            subject: "EventPublisher".to_string(),
+            kind: BehaviorKind::Publication,
+            statement: format!("{event_name} is published on {topic}."),
+            derivation: BehaviorDerivation::Mechanical,
+            entity: Some(entity.to_string()),
+            member: None,
+            mandatory: None,
+        }
+    }
+
     fn counter() -> impl FnMut() -> String {
         let mut n = 0usize;
         move || { n += 1; format!("test-contract-{n:03}") }
@@ -424,6 +493,46 @@ mod contract_grounding_tests {
         assert_eq!(c.entity.as_deref(), Some("Manufacturer"));
         assert_eq!(c.member, None);
         assert_eq!(c.mandatory, None);
+    }
+
+    #[test]
+    fn event_shape_and_publication_contracts_depend_on_construction_for_the_same_entity() {
+        // Regression test for the bug fixed 2026-07-15
+        // (docs/design/contract-composition-assessment.md §8): a Publication cluster's own
+        // `subject` is the fixed string "EventPublisher", and an EventShape cluster's `subject`
+        // is the event's own name ("ManufacturerRegistered") — neither equals Construction's
+        // subject ("Manufacturer"), so the old subject-only matching rule could never link them
+        // to Construction even though all three concern the same entity. Also checks Validation
+        // does NOT gain this edge: a validation contract's subject is entity+member
+        // ("ManufacturerName"), and semantically a raw-field check doesn't depend on an already-
+        // constructed instance — this rule must stay scoped to EventShape/Publication only.
+        let construction_b1 = construction_behavior("b010", "Manufacturer", "id");
+        let event_b = event_shape_behavior("b020", "Manufacturer", "ManufacturerRegistered", "eventId");
+        let publication_b = publication_behavior("b021", "Manufacturer", "ManufacturerRegistered", "manufacturer.registered");
+        let validation_b = validation_behavior("b001", "Manufacturer", "name", "ManufacturerName", "Name longer than 200 characters is rejected.", true);
+
+        let clustering = ClusteringResult {
+            unit_clusters: vec![
+                UnitCluster { id: "cluster-construction".to_string(), subject: "Manufacturer".to_string(), kind: BehaviorKind::Construction, behavior_ids: vec!["b010".to_string()] },
+                UnitCluster { id: "cluster-event".to_string(), subject: "ManufacturerRegistered".to_string(), kind: BehaviorKind::EventShape, behavior_ids: vec!["b020".to_string()] },
+                UnitCluster { id: "cluster-publication".to_string(), subject: "EventPublisher".to_string(), kind: BehaviorKind::Publication, behavior_ids: vec!["b021".to_string()] },
+                UnitCluster { id: "cluster-validation".to_string(), subject: "ManufacturerName".to_string(), kind: BehaviorKind::Validation, behavior_ids: vec!["b001".to_string()] },
+            ],
+            integration_groupings: vec![],
+        };
+        let behaviors = BehaviorList { behaviors: vec![construction_b1, event_b, publication_b, validation_b] };
+        let contracts = mechanical_unit_contracts(&clustering, &behaviors, &mut counter());
+
+        let by_kind = |k: BehaviorKind| contracts.iter().find(|c| c.kind == Some(k.clone())).unwrap();
+        let construction = by_kind(BehaviorKind::Construction);
+        let event_shape = by_kind(BehaviorKind::EventShape);
+        let publication = by_kind(BehaviorKind::Publication);
+        let validation = by_kind(BehaviorKind::Validation);
+
+        assert_eq!(construction.dependencies, Vec::<String>::new());
+        assert_eq!(event_shape.dependencies, vec![construction.id.clone()]);
+        assert_eq!(publication.dependencies, vec![construction.id.clone()]);
+        assert_eq!(validation.dependencies, Vec::<String>::new());
     }
 
     #[test]

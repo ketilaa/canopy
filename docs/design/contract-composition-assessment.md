@@ -351,3 +351,28 @@ them, not proposed speculatively. Next: add a JVM event/infrastructure file-targ
 `resolve_implementation_target`, and align the Construction-dependency rule's subject-matching so
 an event/publication behavior for entity `E` is recognized as depending on `E`'s own construction
 contract — then re-run the ADR-fix experiment as originally designed.
+
+**Addendum (2026-07-15, during the fix itself): two more real bugs surfaced, neither previously
+named above.** Writing the fix and a regression test for it (rather than hand-verifying the
+change) surfaced two further pre-existing defects, both silent until now for the same reason as
+blockers 1–2: nothing had ever exercised a non-empty unit-contract dependency before.
+1. `generate_story_plan_from_contracts` (`contract_plan.rs`) always passed `event_name: None` to
+   `resolve_implementation_target`, unconditionally, regardless of contract kind — meaning the
+   "event" layer could never resolve for *any* tech family, not just JVM, even before this
+   document's two named blockers. Fixed by recovering the event's own name from `Contract.name`
+   (stripping its fixed `"EventShape"` suffix), since `Contract` itself carries no separate
+   `subject` field to read it from directly — this module's own doc comment had referenced a
+   `Contract.subject` that no longer exists, a stale reference from an earlier schema shape.
+2. The Construction-dependency rule's fix above still stored the wrong id: `other.id.clone()`
+   copied the *cluster's* id (`UnitCluster.id`, its own separate id namespace) into
+   `Contract.dependencies`, which documents itself as holding *contract* ids. A cluster id would
+   never match anything `dependency_targets` (`contract_plan.rs`) looks up, silently. Fixed by
+   assigning every cluster's contract id up front (before computing any dependency), keyed by
+   cluster id, so a dependency can reference the real contract id a sibling cluster receives.
+
+Both are now covered by regression tests (`canopy-llm/src/skills/file_targets.rs`'s
+`jvm_events_directory_is_recognized_by_detect_layer`; `canopy-llm/src/prompts/contracts.rs`'s
+`event_shape_and_publication_contracts_depend_on_construction_for_the_same_entity`, which is what
+caught bug 2 immediately on the first run). Neither changes the status of `manufacturer-001`'s
+existing 6 published contracts: both bugs only ever mattered for a non-empty dependency case,
+which didn't exist until this fix introduced the first real one.

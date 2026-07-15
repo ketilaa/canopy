@@ -7,14 +7,18 @@
 //!
 //! Two real limits found while building this, disclosed rather than smoothed over:
 //! - An event-shape contract's file identity is NOT determined by `entity` alone — the event's
-//!   own name (`Contract.subject`, unchanged by Option 2) names the file
-//!   (`ManufacturerRegistered.ts`, not `Manufacturer.ts`). A publication contract's file is a
-//!   fixed, entity-independent name (`EventPublisher.ts`) shared by every entity in the service.
-//! - Not every (tech family, abstract layer) pair has an established convention yet — Spring
-//!   Boot's own skill (`spring_boot_skill`) doesn't define event/infrastructure/middleware file
-//!   layout at all (no dogfooding run has exercised a JVM event-driven service), and React's
-//!   skill has no model/repository/service concept for a form-only story. Returns `None` for
-//!   those rather than inventing an unverified convention.
+//!   own name names the file (`ManufacturerRegistered.ts`, not `Manufacturer.ts`). A publication
+//!   contract's file is a fixed, entity-independent name (`EventPublisher.ts`) shared by every
+//!   entity in the service. (`Contract` itself has no `subject` field to read this from directly
+//!   — the caller recovers it from `Contract.name`; see `contract_plan.rs`.)
+//! - Not every (tech family, abstract layer) pair has an established convention yet — React's
+//!   skill has no model/repository/service concept for a form-only story, and JVM's own
+//!   `spring_boot_skill` has no per-layer *content* rules yet for "event"/"infrastructure" (its
+//!   `layer_rules` only has a "domain" entry) even though a file-target convention for both now
+//!   exists below (added 2026-07-15, docs/design/contract-composition-assessment.md §8) — a real,
+//!   named, deliberately-deferred gap: file *placement* for a JVM event-driven service is now
+//!   established, file *content guidance* isn't yet, since no experiment has needed it. Returns
+//!   `None` for genuinely unconventioned pairs rather than inventing an unverified one.
 
 use crate::tech::TechFamily;
 use canopy_core::BehaviorKind;
@@ -87,8 +91,19 @@ pub fn resolve_implementation_target(
                 "repository" => Some(format!("{prefix}repository/{entity}Repository.java")),
                 "service" => Some(format!("{prefix}service/{entity}Service.java")),
                 "route" => Some(format!("{prefix}controller/{entity}Controller.java")),
-                // spring_boot_skill doesn't define event/infrastructure/middleware layout yet —
-                // see this module's own doc comment.
+                // Reuses the same plural "events"/"infrastructure" directory names the Node.js
+                // arm above uses (not a JVM-singular convention like domain/repository/service/
+                // controller above) specifically because `detect_layer()`
+                // (canopy-llm/src/skills/mod.rs) already recognizes `/events/` and
+                // `/infrastructure/` as generic, tech-family-independent layer names, checked
+                // before its JVM-singular block — reusing them means this needs no detect_layer()
+                // change. `spring_boot_skill` has no per-layer content rules for either yet (see
+                // this module's own doc comment) — file placement only, not file content
+                // guidance, added 2026-07-15 (docs/design/contract-composition-assessment.md §8).
+                "event" => event_name.map(|e| format!("{prefix}events/{e}.java")),
+                "infrastructure" => Some(format!("{prefix}infrastructure/EventPublisher.java")),
+                // spring_boot_skill doesn't define middleware layout yet — see this module's own
+                // doc comment.
                 _ => None,
             }
         }
@@ -197,8 +212,36 @@ mod tests {
         );
         assert_eq!(
             resolve_implementation_target("Spring Boot", "com.example.manufacturer", "manufacturer-service", "event", "Manufacturer", Some("ManufacturerRegistered")),
+            Some("services/manufacturer-service/src/main/java/com.example.manufacturer/events/ManufacturerRegistered.java".to_string())
+        );
+        assert_eq!(
+            resolve_implementation_target("Spring Boot", "com.example.manufacturer", "manufacturer-service", "event", "Manufacturer", None),
             None
         );
+        assert_eq!(
+            resolve_implementation_target("Spring Boot", "com.example.manufacturer", "manufacturer-service", "infrastructure", "Manufacturer", None),
+            Some("services/manufacturer-service/src/main/java/com.example.manufacturer/infrastructure/EventPublisher.java".to_string())
+        );
+        assert_eq!(
+            resolve_implementation_target("Spring Boot", "com.example.manufacturer", "manufacturer-service", "middleware", "Manufacturer", None),
+            None
+        );
+    }
+
+    #[test]
+    fn jvm_events_directory_is_recognized_by_detect_layer() {
+        // Ties this module's new JVM event/infrastructure paths to `detect_layer()`
+        // (canopy-llm/src/skills/mod.rs) directly, so a future change to either side that breaks
+        // the other fails a test here rather than silently reproducing the exact "layer-scoped
+        // rule never reaches the file" bug already found once for JVM's singular directories.
+        let event_path = resolve_implementation_target(
+            "Spring Boot", "com.example.manufacturer", "manufacturer-service", "event", "Manufacturer", Some("ManufacturerRegistered"),
+        ).unwrap();
+        assert_eq!(crate::skills::detect_layer(&event_path), "event");
+        let infra_path = resolve_implementation_target(
+            "Spring Boot", "com.example.manufacturer", "manufacturer-service", "infrastructure", "Manufacturer", None,
+        ).unwrap();
+        assert_eq!(crate::skills::detect_layer(&infra_path), "infrastructure");
     }
 
     #[test]
