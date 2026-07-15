@@ -376,3 +376,11 @@ Both are now covered by regression tests (`canopy-llm/src/skills/file_targets.rs
 caught bug 2 immediately on the first run). Neither changes the status of `manufacturer-001`'s
 existing 6 published contracts: both bugs only ever mattered for a non-empty dependency case,
 which didn't exist until this fix introduced the first real one.
+
+**Resolved, 2026-07-15: the ADR-fix experiment re-run, with all four fixes in place, produced
+the predicted real dependency edge — see `docs/design/contract-driven-implementation-experiment.md`'s
+"Stage 6 Results" section and `docs/reports/manufacturer-001.md`'s matching entry for the full
+before/after diff and the resulting cross-file, dependency-aware plan.** The composition question
+this document opened with has moved from "can composition work at all?" (unanswered until now) to
+"what happens as dependency complexity increases?" (multi-entity, multiple dependency edges,
+deeper dependency chains — all still untested against real, non-synthetic data).

@@ -134,6 +134,16 @@ the current codebase, not assumed. The Contract Composition Assessment
 (`docs/design/contract-composition-assessment.md`) names this as the single most important
 remaining unknown, ahead of composition or schema questions.
 
+**Further updated 2026-07-15.** That single most important unknown is now answered: Stage 5's A/B
+experiment ran contract-scoped generation directly against production's own real, unmodified
+prompt on the same file — contract-scoped won decisively (0/3 vs. 3/3, real compile and test),
+not just "capable of working in isolation" as Stages 1–3 had shown. Composition moved to the top
+of the priority list as a direct result, and Stage 6 answered *its* most basic question too: the
+mechanical dependency rule and multi-file plan generation work end to end against a real
+(non-synthetic) cross-contract dependency, not just the hand-written `Widget` fixture every prior
+test of it used. Content generation for *composed* (multi-file, dependency-linked) contracts, and
+composition beyond one dependency edge, remain untested — see the updated Open Questions below.
+
 # Why This Matters
 
 This narrative is unusual among the others reviewed because its ending is genuinely still open, not
@@ -170,3 +180,16 @@ synthetic test fixtures, never a real story; and multi-service/route-layer compo
 (frontend + backend together), which the current mechanical enumerator explicitly refuses rather
 than guesses at. `docs/design/contract-composition-assessment.md` (2026-07-15) is the fuller
 account of all three, with a proposed next experiment for the first.
+
+**Updated 2026-07-15 (same day, later): the first two are now partially resolved.** Content
+generation: Stage 5 answered this directly — contract-scoped generation beats production's real
+prompt on a single-entity, no-dependency file (0/3 vs. 3/3). Composition: Stage 6 produced the
+first real, non-synthetic cross-contract dependency edge (regenerating this story's domain-event
+ADR surfaced two blockers plus two more bugs found while fixing them — see the Composition
+Assessment §8) and confirmed `generate_story_plan_from_contracts` turns it into a correct 3-step,
+dependency-aware plan. Both remain open in their *harder* forms: content generation for a
+composed, multi-file, dependency-linked contract group is untested (Stage 5 only tested a single
+isolated file); composition beyond one dependency edge — multiple entities in one story, deeper
+dependency chains, multi-service/route-layer composition — is still exactly as untested as before.
+The question moved from "can this work at all?" to "what happens as complexity increases?" for
+both threads, not from open to closed.

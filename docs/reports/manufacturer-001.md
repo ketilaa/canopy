@@ -428,6 +428,49 @@ it does not yet generalize past a single-entity, no-dependency case — composit
 real cross-contract dependencies) remains untested and is now the next priority, per the design
 doc's own stated sequencing.
 
+## Contract-Driven Implementation, Stage 6 (2026-07-15) — First Real Composition
+
+The Contract Composition Assessment's cheapest proposed path to a real (non-synthetic)
+cross-contract dependency — regenerate this story's domain-event ADR with a topic clause — was
+checked against the actual mechanical rules before running anything, and found blocked by two
+real, previously-undiscovered defects (no JVM file-target convention for event/infrastructure
+layers; the Construction-dependency rule matched on `subject`, but event/publication behaviors
+never share Construction's subject). Fixing them surfaced two more, the same way: `event_name` was
+always passed as `None` regardless of contract kind, and the dependency rule stored a cluster's id
+instead of a contract's id. All four fixed and regression-tested
+(`canopy-llm/src/skills/file_targets.rs`, `canopy-llm/src/prompts/contracts.rs`,
+`canopy-llm/src/prompts/contract_plan.rs`).
+
+With the fixes in place, the real dogfooding project's story artifacts were backed up, the ADR
+was corrected (`ManufacturerRegistered` → `ManufacturerRegistered on topic
+manufacturer.registered`), and `canopy behaviors manufacturer-001` was re-run for real.
+
+- **The diff was clean and localized.** Contracts 001–006 (the six already-published contracts)
+  came back byte-identical — same ids, same names, `dependencies: []` unchanged. Two new contracts
+  were appended (`ManufacturerRegisteredEventShape` contract-007, `EventPublisherPublication`
+  contract-008), both correctly carrying `dependencies: [manufacturer-001-contract-006]` — the
+  first real, non-synthetic dependency edge this investigation has ever produced. The only
+  non-append change anywhere was `cluster-review.yaml`'s wording for an already-known cluster-006
+  finding (LLM review-prose non-determinism, not a structural change — `clusters.yaml` itself is
+  untouched for cluster-006).
+- **A standalone, read-only check confirmed `generate_story_plan_from_contracts` — the real
+  production function — turns this into a genuine multi-file, dependency-aware plan**: 3 steps,
+  where the two new files (`events/ManufacturerRegistered.java`,
+  `infrastructure/EventPublisher.java`) both correctly declare a dependency on
+  `domain/Manufacturer.java`. First time this investigation has produced a cross-file dependency
+  edge from real data instead of a synthetic `Widget` fixture.
+- **Kept, not rolled back.** The ADR correction is a genuine fix (it now follows the topic
+  convention the pipeline already expected), and the regenerated contracts are its correct,
+  intended effect. The repository's new baseline for this story includes real event contracts and
+  a real dependency edge.
+
+**Conclusion:** composition's most basic question — does the mechanical dependency rule and
+multi-file plan generation actually work end to end against real data — is answered yes. The
+harder composition questions (multiple entities in one story, deeper dependency chains,
+multi-service/route-layer composition, content-generation quality for the two new event/
+infrastructure files) remain open, named already in the Composition Assessment. The question has
+moved from "can composition work at all?" to "what happens as dependency complexity increases?"
+
 ## Current open items for this story
 
 - The domain-event-ADR fix's operation-classification logic (whole-word verb matching, exact
@@ -468,6 +511,18 @@ doc's own stated sequencing.
   Stage 2 added for contracts — one run's generated test invented an entire
   `ManufacturerRepository`/`ManufacturerService` pair outside the file being implemented. Not yet
   assessed for a fix, since content generation isn't wired to `canopy implement` at all yet.
-- **Composition is now the next priority for this investigation**, per the design doc's own
-  stated sequencing — untested so far against any real (non-empty) cross-contract dependency or
-  multi-entity case; the Contract Composition Assessment has the fuller account of what's open.
+- **Resolved by Stage 6:** whether the mechanical dependency rule and multi-file plan generation
+  work end to end against a real (non-synthetic) cross-contract dependency — previously untested
+  against anything but a hand-written `Widget` fixture. Answered yes; this story's `contracts.yaml`
+  now has a real dependency edge (`ManufacturerRegisteredEventShape`/`EventPublisherPublication`
+  → `ManufacturerConstruction`), and `generate_story_plan_from_contracts` correctly turns it into
+  a 3-step, dependency-aware plan.
+- **New from Stage 6:** `spring_boot_skill` still has no per-layer content rules for the
+  `event`/`infrastructure` layers, even though a file-target convention for both now exists —
+  file *placement* is solved, file *content guidance* isn't. Deliberately deferred: no experiment
+  has yet needed it (Stage 6 only exercised planning, not content generation, for these two files).
+- **Composition's remaining open questions**, per the Contract Composition Assessment: multiple
+  entities in one story, deeper dependency chains (a contract depending on a contract that itself
+  depends on another), and multi-service/route-layer composition — all still untested against real
+  data. The question has moved from "can composition work at all?" (Stage 6: yes) to "what happens
+  as dependency complexity increases?"

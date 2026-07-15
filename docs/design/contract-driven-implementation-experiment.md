@@ -977,3 +977,85 @@ win here is on a single-entity, no-dependency case, exactly the case Stages 1–
 contracts on. Whether contract-scoped generation holds up once dependencies are real (not empty
 lists, as the Composition Assessment already flagged) is untested by this stage and remains
 composition's open question, not this one's.
+
+## Stage 6 (2026-07-15): the first real, non-synthetic cross-contract dependency edge
+
+Per `docs/design/contract-composition-assessment.md`'s own recommendation (§7 #1, cheapest path
+to close the composition gap): regenerate `manufacturer-001`'s domain-event ADR with a real topic
+clause, since that would exercise the one mechanical dependency rule
+(`mechanical_unit_contracts`'s Construction-dependency rule) this whole investigation had only ever
+tested against synthetic `Widget` fixtures. Checking that prediction against the actual code before
+running anything (§8) found it was false as coded — two real blockers, not one cheap fix — and
+fixing them surfaced two further pre-existing bugs the same way. See §8 for the full account; this
+section covers what happened once all four fixes landed and the experiment was actually re-run.
+
+**Methodology, matching this investigation's own established rigor for a live artifact change:**
+the real dogfooding project's `contracts.yaml`/`clusters.yaml`/`behaviors.yaml` (and every sibling
+audit/coverage file in `.canopy/stories/manufacturer-001/`) were backed up before touching
+anything. `adr-006-domain-event-for-manufacturer-registration.yaml`'s `decision:` field was changed
+from `ManufacturerRegistered` to `ManufacturerRegistered on topic manufacturer.registered` — the
+fixed convention `parse_event_adr` requires — and `canopy behaviors manufacturer-001` was run for
+real (via `expect`, accepting every gate's default per this project's own documented driving
+pattern), regenerating all Stage 0–4 artifacts for the story from scratch.
+
+**Diff, before vs. after, file by file:**
+- `contracts.yaml`: pure append. Contracts 001–006 byte-identical (same ids, same names, same
+  `dependencies: []`). Two new contracts appended: `ManufacturerRegisteredEventShape`
+  (contract-007) and `EventPublisherPublication` (contract-008), **both carrying
+  `dependencies: [manufacturer-001-contract-006]`** — the exact predicted edge, referencing a real
+  contract id (confirming bug-2's cluster-id-vs-contract-id fix works).
+- `behaviors.yaml`/`clusters.yaml`: pure append, 4 new behaviors / 2 new clusters, everything
+  before them byte-identical.
+- `contract-coverage.yaml`: pure append (the 4 new behaviors mapped to their owning contracts).
+- `behavior-audit.yaml`: lost exactly one line — the pre-existing gap finding ("no EventShape
+  behavior was produced... check whether its decision text follows the convention") — expected,
+  since that's precisely the gap this fix closes.
+- `cluster-review.yaml`: the one soft, non-structural change. The pre-existing cluster-006 finding
+  (behaviors mentioning persistence, out of scope for `construction`) was reworded from one
+  combined sentence to three separate ones, plus a new, expected fourth finding for cluster-008.
+  `clusters.yaml` itself confirms cluster-006 was untouched structurally — this is LLM-authored
+  review-prose non-determinism on an already-known finding, not a regression.
+- `behavior-gaps.yaml`, `completeness.yaml`, `decisions.yaml`, `decision-audit.yaml`,
+  `clustering-audit.yaml`, `contract-audit.yaml`, `dependency-review.yaml`, `spec.yaml`,
+  `openapi.yaml`: byte-identical, zero churn.
+
+**Verdict: clean and localized**, confirmed before treating any of it as evidence — the explicit
+bar the user set before this run was allowed to count.
+
+**Composition check.** A small standalone, read-only program
+(`canopy-llm/examples/contract_driven_stage6_composition_check.rs`) called
+`generate_story_plan_from_contracts` — the real, unmodified, production function `canopy implement`
+calls — against the regenerated `contracts.yaml`, with no write, no execution, no risk (mirroring
+every prior stage's "standalone experiment, zero production risk" discipline). Result: a 3-step
+plan, the first multi-file, dependency-aware plan this investigation has produced from real data:
+
+```
+step 1 (create): .../domain/Manufacturer.java                — depends_on: (none)
+step 2 (create): .../events/ManufacturerRegistered.java       — depends_on: [.../domain/Manufacturer.java]
+step 3 (create): .../infrastructure/EventPublisher.java       — depends_on: [.../domain/Manufacturer.java]
+```
+
+Step 1 is byte-for-byte the same file/description Stages 2–4 already produced. Steps 2 and 3 are
+new — both correctly resolve to their own JVM file targets (the two new fixes in §8 working
+end-to-end) and both correctly declare a dependency on step 1's file (the entity-matching fix,
+also working end-to-end, referencing a real contract id that resolves to a real file target via
+`dependency_targets`).
+
+**Decision: kept, not rolled back.** The ADR correction is a genuine improvement (it now actually
+follows the topic convention the architecture skill and `mechanical_event_behaviors` both expect),
+and the regenerated artifacts are the intended, correct effect of that correction — not a
+throwaway probe. The repository's new baseline for `manufacturer-001` is: real event contracts,
+a real non-synthetic dependency edge, and real dependency-aware planning output. The pre-change
+backup remains in scratchpad for reference, not because a rollback is expected.
+
+**What this resolves, and what it doesn't.** This answers composition's most basic question —
+whether the mechanical dependency rule and multi-file plan generation actually work end to end
+against real data, not just synthetic fixtures — cleanly, yes. It does not touch the harder
+questions §1.3/§3 of the Composition Assessment already named as separate: multiple entities in
+one story, deeper dependency chains (a contract depending on a contract that itself depends on
+another), multi-service/route-layer composition, or content generation for the two new files (this
+stage only exercised planning, not Stage 5's generation-quality question, for `events/`/
+`infrastructure/` files — `spring_boot_skill` still has no per-layer content rules for either,
+disclosed already in `file_targets.rs`'s own doc comment). The composition question has moved from
+"can composition work at all?" to "what happens as dependency complexity increases?" — a
+meaningfully narrower, more specific open question than the one this stage started with.
