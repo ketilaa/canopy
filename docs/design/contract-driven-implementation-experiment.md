@@ -709,3 +709,146 @@ no integration-scope contracts yet) — both were caught by review, not by a liv
 the point of reviewing before shipping rather than after. 2 new regression tests added for each.
 
 Build and full workspace test suite (73 tests in `canopy-llm` after this change) green throughout.
+
+---
+
+## Stage 5 Design (scoped 2026-07-15, not yet implemented)
+
+Per the Contract Composition Assessment (`docs/design/contract-composition-assessment.md`, §1.1,
+§4): the dominant remaining uncertainty is no longer "can contracts drive implementation" but
+"does contract-scoped *generation* actually improve on what `canopy implement` already produces
+today, or only match a hand-built minimal prompt no one currently ships." Stages 1-3 only ever
+compared contract-scoped generation against itself across runs, never against production's real,
+fuller-context prompt. This stage answers that, before composition work takes priority (per the
+user's explicit sequencing: only promote composition to the top of the roadmap once this is
+understood).
+
+**Still a standalone experiment.** Same non-negotiables as Stages 1-4: no modification to
+`canopy implement`, `plan.rs`, or `execute.rs`. This stage calls production's real, unmodified
+public functions directly (`generate_unit_test_stub`, `execute_implementation_with_test`) —
+reusing the actual mechanism, not a copy of it — without going through the CLI or `execute.rs`'s
+orchestration at all.
+
+### Exact files
+
+- **Target entity**: the same real `manufacturer-001` case Stages 2-4 all used — six contracts
+  merging onto `Manufacturer.java`. No new data needed; reuses the existing real `contracts.yaml`,
+  `spec.yaml`, `services.yaml`, ADRs, and `openapi.yaml` already on disk.
+- **Harness**: the existing Stage 3 Maven project
+  (`<scratchpad>/stage3-maven/services/manufacturer-service/`), reused as-is — its `pom.xml`
+  already carries every dependency both paths need (`junit-jupiter`, `jakarta.validation-api`,
+  `jakarta.persistence-api`, `hibernate-validator`).
+- **Two sibling sub-packages, not one shared file** — so both paths' output exists
+  simultaneously, inspectable side by side, with no overwrite race between runs:
+  - Production path: `src/main/java/manufacturer_service/domain/production/Manufacturer.java` +
+    `src/test/java/manufacturer_service/domain/production/ManufacturerTest.java`
+  - Contract-scoped path: `src/main/java/manufacturer_service/domain/contractscoped/Manufacturer.java`
+    + `src/test/java/manufacturer_service/domain/contractscoped/ManufacturerTest.java`
+  Each of a path's 3 runs overwrites its own sub-package (sequential, not accumulating) —
+  matching Stage 3's own `mvn clean test` discipline so no stale `target/` class from a prior
+  run masks a new one.
+- **New experiment file**: `canopy-llm/examples/contract_driven_stage5_experiment.rs` — one
+  program, both paths, all 6 runs (3 per path), printing a final comparison table. Not two
+  separate files, so both paths definitely share the exact same loaded story/spec/contracts/
+  services/ADR data — no risk of the two paths silently drifting from slightly different inputs.
+
+### Exact contracts and exact inputs, per path
+
+**Contract-scoped path (B)** — identical to Stage 2/3: the same six real contracts
+(`ManufacturerNameValidation` through `ManufacturerConstruction`), their `required_tests`
+verbatim, `resolve_implementation_target`'s resolved layer, `skill_for_technology`'s "domain"
+render. Reuses Stage 2/3's own `test_prompt`/`impl_prompt` functions unchanged (only the target
+sub-package path differs, for co-existence with path A).
+
+**Production path (A)** — the real, unmodified functions `canopy implement` calls today:
+`generate_unit_test_stub` (Red phase) then `execute_implementation_with_test` (Green phase),
+loaded with real data read from disk:
+- `story`: `manufacturer-001`'s real `UserStory` (`load_user_stories`, filtered by id).
+- `spec`: the real `IntentSpec` (`load_story_spec`) — full `entity_schema` (8 fields: 5
+  validated + 3 system-generated) and full `scenarios` (**12** real scenarios — 5 original plus
+  the 7 boundary scenarios added earlier this investigation to clear Stage 0's completeness
+  gate).
+- `openapi_yaml`: the real, already-generated OpenAPI spec for this story.
+- `adrs`: all 6 real ADRs (`load_all_adrs`).
+- `services`/`service_packages`: the real `ServicesRegistry` (`load_services_registry`); an
+  empty `service_packages` map, matching Stages 1-4 (no scaffold detected for this project).
+- `step`: an `ImplementationStep` with `file` = the production sub-package path above,
+  `service` = `"manufacturer-service"`, `operation` = `"create"`, and — deliberately held
+  identical to path B's own step, so the *only* experimental variable is prompt context, not
+  incidental step-description wording — `description` = `"Constructs and validates
+  Manufacturer."` (the exact mechanical description `generate_story_plan_from_contracts` already
+  produces for this file).
+- `sibling_section`/`arch_skills`: `sibling_section` empty (no dependencies — matches path B);
+  `arch_skills` via the real `skills_for_architecture(adrs, tech)`, since production always
+  includes this and withholding it would no longer be testing production's real prompt.
+- `package_constraints`/`observed_call`: `None` (no dependency gate, no Roots-parsed call shape
+  available or needed here).
+
+**A concrete, checkable prediction going in, not just an open question:** `unit_test_stub_prompt`
+(the Java-specific test-stub function `generate_unit_test_stub` calls) has no layer-based
+scenario filtering at all — confirmed by reading it directly, `canopy-llm/src/prompts/step.rs`
+around line 315, which embeds `spec.scenarios` in full with a flat "one @Test method per
+scenario" instruction, unlike the TypeScript-specific `unit_test_stub_prompt_ts`'s
+`scenario_coverage_note` mechanism, which explicitly filters scenarios by layer relevance. For a
+domain-layer Java file, this means the model will be shown all 12 real scenarios — including ones
+describing HTTP rejection responses and event publication, concerns a plain domain class can't
+and shouldn't express — with no instruction telling it to disregard the inapplicable ones. Stage
+5 will show directly whether this produces measurable harm (irrelevant or malformed test methods,
+wasted prompt budget) or turns out inconsequential in practice.
+
+### Reproducibility methodology
+
+3 independent runs per path (6 total generate→write→`mvn clean test` cycles), matching the
+standard every prior stage in this investigation used. All 6 runs share identical loaded
+input data (one program execution, data loaded once) — only the model's own sampling varies
+run to run, not the inputs. Each run's real `mvn clean test` output (pass/fail per test method,
+compiler errors if any) is captured and reported, not eyeballed.
+
+### Success metrics, computed identically for both paths
+
+1. **Real compile-and-test pass rate** — the primary metric. For each run, how many of that
+   path's own generated test methods actually pass against that path's own generated
+   implementation, via real `mvn clean test`. Aggregated as (runs, tests-passed) across all 3
+   runs per path.
+2. **Ownership correctness** — the authorized field set is identical for both paths by
+   construction (`entity_schema`'s 8 fields exactly match the 6 contracts' combined 8 fields, a
+   fact already established, not assumed). Any declared field in either path's generated
+   implementation with no corresponding source (a contract's `required_tests`/`entity`/`member`
+   for path B, an `entity_schema` field for path A) is a violation, checked for both paths, not
+   assumed clean for either — the Contract Composition Assessment explicitly flagged this as
+   untested for production's own fuller-context prompt.
+3. **Constraint fidelity** — folded into metric 1: a boundary-condition test method passing *is*
+   the constraint-fidelity check (the test encodes the exact bound; a pass means the
+   implementation enforces it correctly), so this isn't a separate subjective judgment call.
+4. **Prompt size** — each path's actual constructed prompt length (characters), measured and
+   reported for both, both test-stub and implementation calls. Informative, not a pass/fail gate
+   — the hypothesis is that path B is meaningfully smaller, but this alone doesn't decide the
+   experiment either way.
+5. **Scenario-noise effect (specific to the prediction above)** — for path A's generated test,
+   how many of the 12 scenarios' worth of prompted "one test per scenario" instruction produced a
+   test method that doesn't compile, doesn't apply to a domain class, or duplicates a boundary
+   test already covered — checked explicitly, not inferred from the aggregate pass rate alone.
+
+### Stop conditions
+
+- **If path B (contract-scoped) meets or exceeds path A (production) on metric 1, with no new
+  ownership violations (metric 2)**: the hypothesis holds — contract-scoped generation is not
+  just capable of working, it's competitive with or better than what ships today. Composition
+  work (multi-entity, real dependency edges) becomes the next priority, per the user's own stated
+  sequencing.
+- **If path B underperforms path A** (lower real pass rate, or new defects path A doesn't have):
+  a direct, falsifying result. The right response is not to redesign contracts or the schema —
+  it means today's fuller context is pulling real weight, and wiring contract-scoped generation
+  into `execute.rs` would be premature. Treat "does narrower context actually help generation" as
+  still open, and leave `step.rs`/`execute.rs` exactly as they are.
+- **If both paths perform similarly (no clear winner)**: also a real, useful result — it would
+  suggest the *narrower* prompt is preferable on cost/latency/maintainability grounds even without
+  a quality edge, but that's a different, weaker claim than "better," and should be reported as
+  such rather than rounded up to a win for either side.
+- **Not a stop condition, but worth naming**: if metric 5's prediction is confirmed (production's
+  scenario-noise measurably hurts its own results), that's independently useful information about
+  a real, fixable gap in `unit_test_stub_prompt` — worth its own separately-scoped skill/prompt
+  fix regardless of which path wins the broader comparison, per this project's escalation order
+  (a missing layer filter is a prompt fix, not a reason to touch the contract schema).
+
+No implementation performed in this scoping pass, per the instruction to design before building.
