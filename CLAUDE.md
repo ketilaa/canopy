@@ -717,9 +717,9 @@ active; the hook only makes sure that judgment gets exercised instead of silentl
 
 ## Knowledge Capture Cadence
 
-`docs/{retrospectives,blog-drafts,principles,reports,narratives}/` is not a one-time export — it's
-meant to stay current as the project evolves, across whichever developer or session is doing the
-work. Five distinct artifact types, each answering a different question:
+`docs/{retrospectives,blog-drafts,principles,reports,narratives,open-questions}/` is not a
+one-time export — it's meant to stay current as the project evolves, across whichever developer or
+session is doing the work. Six distinct artifact types, each answering a different question:
 
 | Directory | Answers | Scope |
 |---|---|---|
@@ -728,6 +728,7 @@ work. Five distinct artifact types, each answering a different question:
 | `blog-drafts/` | What's one story worth telling? | A single bounded incident (or milestone) with a full belief→evidence→change arc and a genuine prediction at stake |
 | `reports/` | What happened across sessions against one story? | One story, extended chronologically |
 | `narratives/` | How did our thinking on one thread evolve across months? | Weeks-to-months, connects multiple retrospectives/principles/blog posts into one arc — see `docs/narrative-analysis.md` for how these get compared and ordered |
+| `open-questions/` | What important questions have we discovered but deliberately deferred? | One architectural/design question, tracked from discovery through eventual resolution — preservation, not project-management ceremony |
 
 Don't force a finding into the wrong type. A recurring pattern across many small commits is a
 principle, not a blog post (a blog post needs one dramatizable scene to open on, which a diffuse
@@ -737,13 +738,13 @@ together — "how did X evolve" — is a narrative, and narratives require a ded
 (pick one thread, trace it end to end) rather than emerging automatically from the bottom-up
 retrospective/principle/blog-post cadence below.
 
-**Trigger-based, not calendar-based.** None of these five get created because time passed — each
+**Trigger-based, not calendar-based.** None of these six get created because time passed — each
 has its own trigger, checked when relevant work happens, not on a schedule. Historical evidence for
 this shape: the historical-reconstruction sweep found retrospectives are common, principles less
 so, blog-worthy investigations rarer still, and narratives rarest of all — a fixed cadence would
 either starve the rare types waiting for a schedule slot, or pad the common ones with nothing to
 say. `docs/reports/`'s own trigger ("at the close of a sweep") already worked this way before the
-other four were generalized to match — proof this shape holds up in practice, not just in theory.
+other five were generalized to match — proof this shape holds up in practice, not just in theory.
 
 - **Retrospectives**: a day's work is cross-cutting (spans multiple stories or areas) or crosses a
   project-level milestone (first production wiring, first schema change, first cross-story
@@ -774,6 +775,18 @@ other four were generalized to match — proof this shape holds up in practice, 
   history, and design-doc/CLAUDE.md history together) is its own separate, much rarer trigger
   (enough accumulated drift that "Current View" reads as stale end-to-end), not the default
   response to one closed item.
+- **Open questions**: an important architectural or design question is discovered through real
+  evidence, is not the current priority, and is expected to remain relevant across sessions —
+  losing it (e.g. to a memory wipe) would genuinely hurt. Litmus test: would a future session need
+  this from the repo alone, with no memory system at all? If yes, it belongs here, not only in
+  personal memory. Update an existing entry (don't create a duplicate) when new evidence changes
+  its status, evidence, or exit criteria. Distinguish from the other five types: it graduates to
+  `docs/design/` once work actually starts (mark `status: active`, link the new design doc — the
+  entry stays as the stable placeholder, it isn't replaced); it graduates to a principle or
+  narrative once resolved with a generalizable lesson (the entry's `Resolution` section links out
+  rather than restating); it stays out of `reports/` entirely, since a report chronicles one
+  story's session history and an open question is a cross-cutting architectural gap, not a story.
+  Not project-management ceremony — no priority field, no reordering ritual; just preservation.
 
 **This is a habit to apply proactively whenever a natural trigger fires** — not a step that
 requires the user to ask each time, and not a scheduled job either. Skip it honestly when no
