@@ -370,3 +370,27 @@ secondary task, if there's a natural small follow-up that day: reading the Inven
 results against `unresolved-decisions-become-explicit-decision-points`'s own applicability
 criteria, to see whether the Decision-Point question in §2 above is answerable yet without a
 separate experiment.
+
+---
+
+## Update (2026-07-15): Items 1 and 2 Closed for Now
+
+Both ran. **Item 1** — `docs/design/human-insight-inventory.md`: every proposal in
+`manufacturer-001`'s one real review session, across every reproducibility tier, was Accepted
+verbatim with no differentiated scrutiny; Stage 2's own decision-point mechanism didn't catch it
+either. **Item 2** — `docs/design/domain-event-decision-point-criteria-comparison.md`: comparing
+domain-event determination's three bundled sub-decisions (existence, naming, topic-clause
+formatting) against the Decision Point mechanism's actual origin criteria found two of three
+already explained by an instruction-compliance gap and a missing-upstream-fact/sequencing gap, not
+by Policy Discovery's fabrication-with-no-basis pattern. **Verdict: too early to tell** — not a
+hedge; it rules out the simplest reading for two of three sub-decisions, but whether inconsistent
+compliance with the "always propose an event" rule masks a real judgment call remains open on a
+sample of one story.
+
+**Decision, given that outcome**: no Decision Point mechanism proposed; no separate domain-event
+investigation opened. `docs/open-questions/domain-boundary-explicitness.md` (a related, more
+speculative hypothesis raised alongside this work) stays `active`, untouched, not folded into any
+near-term plan. Both items are closed *as investigations* — this reassessment's own priority table
+above is otherwise unchanged; item 3 (composition) is not being promoted back up by this update,
+only recorded as no longer blocked by an *unexamined* domain-event foundation, since the shakiest
+part of that foundation now has a specific, narrower explanation rather than an open question mark.
