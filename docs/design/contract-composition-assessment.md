@@ -50,6 +50,10 @@ entity in `contract_plan.rs`'s own unit tests). `manufacturer-001` has exactly o
 genuinely depend on each other. Multi-entity, multi-file, real-dependency composition is the
 single largest gap between "tested" and "assumed" in this whole investigation.
 
+**Correction, 2026-07-15 (§8):** the specific "regenerate the ADR" path proposed below (§7 #1) to
+close this gap for free was checked against the actual mechanical rules and found blocked by two
+real defects, not merely untested — see §8.
+
 ### 3. Multi-service and route-layer (frontend/backend) composition
 
 `generate_story_plan_from_contracts` explicitly refuses two cases by design, not by oversight
@@ -258,10 +262,10 @@ use" — that requires the composition and multi-entity evidence §1-3 name as s
 ## 7. Recommendation — ranked by learning value for the next month
 
 1. **Composition experiment (§1.2/§3)** — highest learning value. This is the single largest gap
-   between "tested" and "assumed" in the whole investigation, and it's cheap to close: it mainly
-   needs a second real story/entity (or regenerating `manufacturer-001`'s domain-event ADR with a
-   real Topic Naming Convention ADR, which would finally produce a real, non-empty dependency
-   edge — Publication/EventShape depending on Construction — from data already in hand).
+   between "tested" and "assumed" in the whole investigation. **Correction, §8: the "cheap to
+   close" claim below was checked and found false as currently coded** — regenerating the ADR
+   does not, by itself, produce the dependency edge this recommendation assumed. See §8 for what
+   actually blocks it and what closing it now requires.
 2. **Stage 5: contract-scoped generation A/B (§4)** — the second-highest value, because it
    resolves the central open question (§1.1) this document surfaced: does contract-driven
    discovery's success actually extend to content generation, or does that remain an open
@@ -281,3 +285,69 @@ use" — that requires the composition and multi-entity evidence §1-3 name as s
    evidence across four adversarial stages points at a missing fact. Speculative schema work now
    would repeat exactly the mistake this investigation's own house rule warns against — "only
    revisit the contract schema if a future experiment reveals a genuinely missing fact." None has.
+
+---
+
+## 8. Correction (2026-07-15): the ADR-fix composition path is blocked, not free
+
+**Original assumption (§7, recommendation #1).** This document proposed regenerating
+`manufacturer-001`'s domain-event ADR (`adr-006-domain-event-for-manufacturer-registration.yaml`)
+with a topic clause as the cheapest way to close the composition gap — "cheap to close... from
+data already in hand," expected to produce a real, non-empty dependency edge (Publication/
+EventShape depending on Construction) with no new story or entity needed.
+
+**The investigation that checked it.** Before running anything, per this project's own "verify the
+mechanics before trusting a prediction" discipline (the same discipline Stage 5 applied to its
+harness before trusting a pass/fail result), a research pass read the actual code paths the
+prediction depends on — `mechanical_event_behaviors`/`parse_event_adr`
+(`canopy-llm/src/prompts/behaviors.rs`), `resolve_implementation_target`/
+`abstract_layer_for_kind` (`canopy-llm/src/skills/file_targets.rs`), and the mechanical
+Construction-dependency rule (`canopy-llm/src/prompts/contracts.rs`) — rather than assuming the
+prediction would hold because it sounded mechanically plausible.
+
+**What was confirmed to work.** `parse_event_adr` (`behaviors.rs:415-421`) is a plain string split
+on the literal substring `" on topic "`, requiring both halves non-empty and
+`event_name.starts_with(entity)` (`behaviors.rs:433`). Changing ADR-006's `decision:` field to
+`"ManufacturerRegistered on topic manufacturer.registered"` would parse cleanly and produce 3
+`EventShape` behaviors (`eventId`, `occurredAt`, `{entity}Id`) plus 1 `Publication` behavior
+(`behaviors.rs:435-460`). This half of the prediction holds.
+
+**Blocker 1: no JVM file-target convention for the layers these behaviors resolve to.**
+`abstract_layer_for_kind` (`file_targets.rs:28-37`) maps `EventShape → "event"` and
+`Publication → "infrastructure"`. But `resolve_implementation_target`'s `TechFamily::Jvm` match
+arm (`file_targets.rs:83-94`) only handles `"model"`, `"repository"`, `"service"`, `"route"` — no
+arm exists for `"event"` or `"infrastructure"`, so resolution falls through to `_ => None`
+(a pre-existing, already-disclosed gap: the comment there already notes `spring_boot_skill`
+doesn't define event/infrastructure/middleware layout yet). Consequence, confirmed by reading
+`generate_story_plan_from_contracts` (`contract_plan.rs:156-162`): a `None` file target doesn't
+skip just the new contract — it makes the function return `Err` for the *entire* plan, falling
+back to the legacy LLM planner for the whole story. Regenerating the ADR would not add one new
+step to a contract-driven plan; it would silently disable contract-driven planning for
+`manufacturer-001` altogether.
+
+**Blocker 2: the mechanical dependency rule wouldn't fire even if blocker 1 were fixed.** The
+Construction-dependency rule (`contracts.rs`, `mechanical_unit_contracts`) gives every
+non-Construction contract a dependency edge to whichever contract shares its `subject` and has
+`kind == Construction`. But `mechanical_event_behaviors` sets the Publication behavior's `subject`
+to the literal string `"EventPublisher"` (`behaviors.rs:456`), and the EventShape behaviors'
+`subject` to the event name (`"ManufacturerRegistered"`) — neither equals `"Manufacturer"`, the
+subject `ManufacturerConstruction` (contract-006) actually has. The rule matches on exact subject
+equality; nothing today maps an event/publication behavior's subject back to the entity it
+concerns. Even with blocker 1 fixed, this ADR change would still produce contracts with
+`dependencies: []`, the exact non-finding this whole experiment was meant to fix.
+
+**Why the original path doesn't currently work, stated plainly.** The prediction conflated "the
+ADR-parsing mechanism exists and would fire" (true) with "a resulting dependency edge to
+Construction would form" (false) — two independent mechanical rules, only the first of which was
+checked before this document made the "cheap to close" claim. Both blockers are pre-existing gaps
+in shipped code (not introduced by this correction), simply never exercised because no story has
+ever had an ADR in the required format until this document proposed creating one.
+
+**Status of the recommendation now.** These two blockers are the concrete, evidence-backed
+prerequisites this project's escalation order requires before a code fix (CLAUDE.md: "propose
+gated code... only once tiers 1 and 2 are genuinely exhausted... a real compliance limitation, not
+a missing-lookup or missing-instruction problem") — found by a real planned experiment hitting
+them, not proposed speculatively. Next: add a JVM event/infrastructure file-target convention to
+`resolve_implementation_target`, and align the Construction-dependency rule's subject-matching so
+an event/publication behavior for entity `E` is recognized as depending on `E`'s own construction
+contract — then re-run the ADR-fix experiment as originally designed.
