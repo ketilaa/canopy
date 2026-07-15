@@ -2,6 +2,7 @@
 //! (docs/design/behavior-first-planning.md). Stage 4 (Contract Generation) is the pipeline's
 //! last stage; wiring `canopy implement` to consume its contracts is future work.
 
+use crate::review_log::record_review;
 use crate::ui::{confirm_default, select_required};
 use crate::util::build_client;
 use anyhow::{Context, Result};
@@ -170,6 +171,7 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
 
             if choice == items.len() - 1 {
                 // Deferred — status stays Pending.
+                record_review("behaviors", Some(story_id), category_label, &d.question, "deferred");
                 continue;
             }
             let chosen = d.options[choice].clone();
@@ -180,6 +182,10 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
             );
             d.status = if is_assumption { DecisionStatus::AcceptedAssumption } else { DecisionStatus::Resolved };
             d.resolution = Some(chosen);
+            record_review(
+                "behaviors", Some(story_id), category_label, &d.question,
+                if is_assumption { "accepted-assumption" } else { "resolved" },
+            );
         }
     }
 

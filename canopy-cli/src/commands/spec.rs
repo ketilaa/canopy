@@ -1,8 +1,9 @@
 use crate::adr_wizard::maybe_prompt_testing_strategy;
-use crate::ui::{input_text_required, input_text_with_initial, select_required};
+use crate::review_log::record_review;
+use crate::ui::{input_text_required, input_text_with_initial, select_review_choice, ReviewChoice};
 use crate::util::build_client;
 use anyhow::{Context, Result};
-use canopy_core::{Adr, DomainRegistry, IntentSpec, StoryStatus};
+use canopy_core::{Adr, DomainRegistry, IntentSpec, ProposedAdr, StoryStatus};
 use canopy_llm::{generate_story_openapi, generate_story_spec, identify_architectural_questions, parse_event_adr};
 use canopy_storage::{
     load_all_adrs, load_domain_registry, load_services_registry, load_user_stories,
@@ -72,6 +73,45 @@ fn check_event_continuity(story_id: &str, newly_accepted_adrs: &[Adr], domain: &
     Ok(())
 }
 
+/// Mechanical, not an LLM judgment: which review category (per `docs/design/human-insight-
+/// inventory.md`'s Decision Classification table) a proposed ADR belongs to. Title keywords are
+/// checked before `component_type`, not after — production proposals sometimes bundle a tech-
+/// stack recommendation onto the service-ownership or UI proposal itself (a `technology` field
+/// alongside `component_type: "service"`/`"frontend"`), which would otherwise misclassify a
+/// structural proposal as a tech-stack one. Mirrors the same rule
+/// `pre_behavior_reproducibility_sweep.rs` already documented for measuring reproducibility;
+/// this is the production-side counterpart, used for logging rather than measurement.
+pub(crate) fn classify_proposal_category(p: &ProposedAdr) -> &'static str {
+    let title = p.title.to_lowercase();
+    if title.contains("domain event") {
+        return "domain-event";
+    }
+    if title.contains("service ownership") {
+        return "structural-service-ownership";
+    }
+    if title.contains("database") {
+        return "infrastructure-database";
+    }
+    if title.contains("event broker") {
+        return "infrastructure-event-broker";
+    }
+    if title.starts_with("ui ") || title.contains("ui for") {
+        return "ui";
+    }
+    if title.contains("tech stack") || title.contains("technology") {
+        return match p.component_type.as_deref() {
+            Some("frontend") => "tech-stack-frontend",
+            _ => "tech-stack-backend",
+        };
+    }
+    match p.component_type.as_deref() {
+        Some("frontend") => "tech-stack-frontend",
+        Some("service") => "tech-stack-backend",
+        Some("infrastructure") => "infrastructure-other",
+        _ => "structural-other",
+    }
+}
+
 pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
     let theme = ColorfulTheme::default();
 
@@ -138,11 +178,11 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                 }
             }
 
-            let choice = select_required(&theme, "Accept this ADR?", &["Accept", "Modify decision text", "Reject"], 0, "failed to read ADR choice")?;
+            let choice = select_review_choice(&theme, "Accept this ADR?", "Modify decision text", "failed to read ADR choice")?;
+            let category = classify_proposal_category(&proposal);
 
             match choice {
-                0 => {
-                    // Accept
+                ReviewChoice::Accept => {
                     let adr = Adr {
                         title: proposal.title.clone(),
                         decision: proposal.decision.clone(),
@@ -161,8 +201,7 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                         proposal.service.as_deref().unwrap_or("service"),
                     )?;
                 }
-                1 => {
-                    // Modify
+                ReviewChoice::Edit => {
                     let modified_decision = input_text_with_initial(&theme, "Enter revised decision text", &proposal.decision, "failed to read modified decision")?;
 
                     let mut modified_proposal = proposal.clone();
@@ -204,10 +243,17 @@ pub(crate) fn cmd_spec(story_id: &str, debug: bool) -> Result<()> {
                         modified_proposal.service.as_deref().unwrap_or("service"),
                     )?;
                 }
-                _ => {
+                ReviewChoice::Reject => {
                     println!("  Rejected — skipping.");
                 }
             }
+
+            let outcome = match choice {
+                ReviewChoice::Accept => "accept",
+                ReviewChoice::Edit => "modify",
+                ReviewChoice::Reject => "reject",
+            };
+            record_review("spec", Some(story_id), category, &proposal.title, outcome);
         }
 
         // Catch any service or frontend that ended up without a decided technology —
@@ -463,5 +509,68 @@ mod event_continuity_tests {
         let adrs = vec![event_adr("Domain Event ADR", "AccountRegistered on topic account-events")];
         let domain = domain_with(&[]);
         assert!(check_event_continuity("manufacturer-001", &adrs, &domain).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod classify_proposal_category_tests {
+    use super::classify_proposal_category;
+    use canopy_core::ProposedAdr;
+
+    fn proposal(title: &str, component_type: Option<&str>, technology: Option<&str>) -> ProposedAdr {
+        ProposedAdr {
+            question: "test question".to_string(),
+            title: title.to_string(),
+            decision: "test decision".to_string(),
+            reason: "test reason".to_string(),
+            alternatives: vec![],
+            service: None,
+            service_responsibilities: vec![],
+            technology: technology.map(str::to_string),
+            component_type: component_type.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn service_ownership_wins_over_a_bundled_technology_field() {
+        // Live-verified real shape: manufacturer-001's own service-ownership proposal carries
+        // component_type: "service" and technology: "Spring Boot" bundled onto it — title
+        // keywords must win, or this would misclassify as tech-stack-backend.
+        let p = proposal("Service Ownership for Manufacturer Registration", Some("service"), Some("Spring Boot"));
+        assert_eq!(classify_proposal_category(&p), "structural-service-ownership");
+    }
+
+    #[test]
+    fn ui_wins_over_a_bundled_technology_field() {
+        let p = proposal("UI for Manufacturer Registration", Some("frontend"), Some("React"));
+        assert_eq!(classify_proposal_category(&p), "ui");
+    }
+
+    #[test]
+    fn database_is_infrastructure_database() {
+        let p = proposal("Database for Manufacturer Service", Some("infrastructure"), Some("PostgreSQL"));
+        assert_eq!(classify_proposal_category(&p), "infrastructure-database");
+    }
+
+    #[test]
+    fn event_broker_is_infrastructure_event_broker() {
+        let p = proposal("Event Broker for Event-Driven Architecture", Some("infrastructure"), Some("Redpanda"));
+        assert_eq!(classify_proposal_category(&p), "infrastructure-event-broker");
+    }
+
+    #[test]
+    fn domain_event_is_domain_event_regardless_of_component_type() {
+        let p = proposal("Domain Event for Manufacturer Registration", None, None);
+        assert_eq!(classify_proposal_category(&p), "domain-event");
+    }
+
+    #[test]
+    fn standalone_tech_stack_title_uses_component_type_for_frontend_vs_backend() {
+        // The shape seen in a separate (non-persisted) rehearsal run, where tech stack was
+        // proposed as its own ADR rather than bundled onto ownership/UI.
+        let frontend = proposal("Tech Stack for Product Manager Portal", Some("frontend"), Some("React"));
+        let backend = proposal("Tech Stack for Manufacturer Registration Service", Some("service"), Some("Spring Boot"));
+        assert_eq!(classify_proposal_category(&frontend), "tech-stack-frontend");
+        assert_eq!(classify_proposal_category(&backend), "tech-stack-backend");
     }
 }

@@ -237,6 +237,18 @@ pub fn save_contract_audit(story_id: &str, audit: &ContractAudit) -> Result<(), 
     save(&format!("stories/{}/contract-audit.yaml", story_id), audit)
 }
 
+/// Mechanical review-outcome log — see `ReviewLogEntry`'s own doc comment. Returns an empty log
+/// when the file doesn't exist yet, same as every other accumulating registry in this module.
+pub fn load_review_log() -> Result<ReviewLog, StorageError> {
+    load_or_default("review-log.yaml")
+}
+
+pub fn append_review_log_entry(entry: ReviewLogEntry) -> Result<(), StorageError> {
+    let mut log = load_review_log()?;
+    log.entries.push(entry);
+    save("review-log.yaml", &log)
+}
+
 pub fn load_all_adrs() -> Result<Vec<Adr>, StorageError> {
     let paths = list_adrs()?;
     let mut adrs = Vec::new();
@@ -349,6 +361,34 @@ mod tests {
             let loaded = load_scaffold_plan().unwrap();
             assert_eq!(plan.commands.len(), loaded.commands.len());
             assert_eq!(plan.commands[0].creates, loaded.commands[0].creates);
+        });
+    }
+
+    #[test]
+    fn load_review_log_missing_returns_empty() {
+        with_tmpdir(|| {
+            let log = load_review_log().unwrap();
+            assert!(log.entries.is_empty());
+        });
+    }
+
+    #[test]
+    fn append_review_log_entry_accumulates() {
+        with_tmpdir(|| {
+            let entry = |outcome: &str| ReviewLogEntry {
+                timestamp: "2026-07-15T00:00:00Z".into(),
+                command: "spec".into(),
+                story_id: Some("manufacturer-001".into()),
+                category: "domain-event".into(),
+                subject: "Domain Event for Manufacturer Registration".into(),
+                outcome: outcome.into(),
+            };
+            append_review_log_entry(entry("accept")).unwrap();
+            append_review_log_entry(entry("modify")).unwrap();
+            let log = load_review_log().unwrap();
+            assert_eq!(log.entries.len(), 2);
+            assert_eq!(log.entries[0].outcome, "accept");
+            assert_eq!(log.entries[1].outcome, "modify");
         });
     }
 

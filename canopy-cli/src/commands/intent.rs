@@ -1,4 +1,5 @@
-use crate::ui::{input_text_required, input_text_with_initial, select_required};
+use crate::review_log::record_review;
+use crate::ui::{input_text_required, input_text_with_initial, select_review_choice, ReviewChoice};
 use crate::util::build_client;
 use anyhow::{Context, Result};
 use canopy_core::{Role, StoryStatus, UserStory};
@@ -55,15 +56,16 @@ pub(crate) fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
         println!("I want : {}", story.want);
         println!("So that: {}", story.so_that);
 
-        let choice = select_required(&theme, "Accept this story?", &["Accept", "Accept with edit", "Reject"], 0, "failed to read story choice")?;
+        let choice = select_review_choice(&theme, "Accept this story?", "Accept with edit", "failed to read story choice")?;
 
-        match choice {
-            0 => {
+        let outcome = match choice {
+            ReviewChoice::Accept => {
                 story.status = StoryStatus::Accepted;
                 accepted_count += 1;
                 println!("  Accepted.");
+                "accept"
             }
-            1 => {
+            ReviewChoice::Edit => {
                 let want = input_text_with_initial(&theme, "I want", &story.want, "failed to read edited want")?;
                 let so_that = input_text_with_initial(&theme, "So that", &story.so_that, "failed to read edited so_that")?;
                 story.want = want;
@@ -71,13 +73,16 @@ pub(crate) fn cmd_intent(statement: Option<String>, debug: bool) -> Result<()> {
                 story.status = StoryStatus::Accepted;
                 accepted_count += 1;
                 println!("  Accepted with edits.");
+                "accept-with-edit"
             }
-            _ => {
+            ReviewChoice::Reject => {
                 story.status = StoryStatus::Rejected;
                 rejected_count += 1;
                 println!("  Rejected.");
+                "reject"
             }
-        }
+        };
+        record_review("intent", Some(&story.id), "user-story", &story.want, outcome);
 
         curated.push(story);
     }

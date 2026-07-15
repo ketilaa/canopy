@@ -18,6 +18,26 @@ pub(crate) fn select_or(theme: &ColorfulTheme, prompt: &str, items: &[&str], def
     Select::with_theme(theme).with_prompt(prompt).items(items).default(default).interact().unwrap_or(fallback)
 }
 
+/// The three-way Accept / <edit-or-modify> / Reject shape shared by `intent` (story review) and
+/// `spec` (ADR review) — same skeleton (`select_required`, default 0 = Accept), different edit-
+/// step label and different post-choice effects, which stay with each call site rather than
+/// being forced into one function.
+#[derive(Clone, Copy)]
+pub(crate) enum ReviewChoice {
+    Accept,
+    Edit,
+    Reject,
+}
+
+pub(crate) fn select_review_choice(theme: &ColorfulTheme, prompt: &str, edit_label: &str, ctx: &'static str) -> Result<ReviewChoice> {
+    let choice = select_required(theme, prompt, &["Accept", edit_label, "Reject"], 0, ctx)?;
+    Ok(match choice {
+        0 => ReviewChoice::Accept,
+        1 => ReviewChoice::Edit,
+        _ => ReviewChoice::Reject,
+    })
+}
+
 pub(crate) fn input_text_required(theme: &ColorfulTheme, prompt: &str, ctx: &'static str) -> Result<String> {
     Input::with_theme(theme).with_prompt(prompt).interact_text().context(ctx)
 }

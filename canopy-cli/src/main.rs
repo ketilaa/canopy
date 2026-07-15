@@ -5,6 +5,7 @@ mod commands;
 mod dependency_gate;
 mod fix_loop;
 mod project_scan;
+mod review_log;
 mod roots;
 mod shell;
 mod tdd;

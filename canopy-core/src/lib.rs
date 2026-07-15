@@ -851,6 +851,33 @@ pub struct DependencyDecisionLog {
     pub decisions: Vec<DependencyDecision>,
 }
 
+/// A single human review action across the three review gates that used to record nothing
+/// mechanical about their own outcome: `intent` (story accept/reject), `spec` (ADR accept/
+/// modify/reject), `behaviors` (decision-point resolution). Feeds the Human-Insight Inventory
+/// (docs/design/human-insight-inventory.md), which previously had to reconstruct this by hand
+/// from `llm-debug.log` and cross-checking a mismatched pty transcript for a single story.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewLogEntry {
+    pub timestamp: String,
+    /// "intent" | "spec" | "behaviors"
+    pub command: String,
+    #[serde(default)]
+    pub story_id: Option<String>,
+    /// Free-form, mechanically assigned per call site — e.g. "user-story", "domain-event",
+    /// "structural-service-ownership", "infrastructure-database", or a `DecisionCategory` label.
+    pub category: String,
+    /// Short label identifying what was reviewed (a story id, an ADR title, a decision question).
+    pub subject: String,
+    /// "accept" | "accept-with-edit" | "modify" | "reject" | "resolved" | "accepted-assumption" | "deferred"
+    pub outcome: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReviewLog {
+    #[serde(default)]
+    pub entries: Vec<ReviewLogEntry>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

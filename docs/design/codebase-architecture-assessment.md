@@ -250,11 +250,23 @@ Small, additive, reversible — none require touching the higher-risk hot spots 
    change, and the existing test suite would catch any regression immediately.
 2. Extract the 8-times-duplicated ADR-summary bullet-list renderer into one shared helper.
    Same shape as #1.
-3. **A naturally-motivated opportunity, not a speculative one**: when the Roadmap Reassessment's
+3. ~~A naturally-motivated opportunity, not a speculative one: when the Roadmap Reassessment's
    Human-Insight Inventory work actually starts, that's the moment to factor the three independent
    review-loop implementations into one shared function *while* instrumenting it for the
    inventory's own accept/modify/reject counting — one change serving two purposes that would
-   otherwise be done separately.
+   otherwise be done separately.~~ **Done, 2026-07-15.** The Inventory's first pass (manual
+   `llm-debug.log` reconstruction for one story) was exactly the trigger. `intent.rs` and `spec.rs`
+   now share `ui::select_review_choice`/`ReviewChoice` for their common Accept/Edit/Reject shape
+   (domain-specific consequences stayed local to each call site — they genuinely differ, so
+   weren't force-merged); `behaviors.rs`'s decision-point resolution is structurally different
+   (N options + Defer) and wasn't forced into the same helper. All three now call
+   `review_log::record_review`, which appends a mechanical `ReviewLogEntry`
+   (`command`/`story_id`/`category`/`subject`/`outcome`) to `.canopy/review-log.yaml`. `spec.rs`'s
+   proposals are categorized by a new `classify_proposal_category`, mirroring the reproducibility
+   sweep's own documented mechanical rule but title-keyword-first (real proposals sometimes bundle
+   a `technology` field onto the service-ownership/UI proposal itself, which would otherwise
+   misclassify a structural proposal as tech-stack). Future Human-Insight Inventory passes read
+   this file directly instead of reconstructing history from logs.
 4. If a third "mechanical baseline + bounded review" workflow is ever needed, that's the trigger
    (per this project's own evidence standard) to extract `contracts.rs`'s/`clustering.rs`'s shared
    skeleton — not before.
