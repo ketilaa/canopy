@@ -95,14 +95,22 @@ pub(crate) fn classify_proposal_category(p: &ProposedAdr) -> &'static str {
     if title.contains("event broker") {
         return "infrastructure-event-broker";
     }
-    if title.starts_with("ui ") || title.contains("ui for") {
-        return "ui";
-    }
+    // Checked before the broader "ui"/"frontend" match below: an explicit "Tech Stack for X
+    // Portal" title is a standalone tech-stack proposal, not the structural UI proposal, even
+    // though it also names a frontend component.
     if title.contains("tech stack") || title.contains("technology") {
         return match p.component_type.as_deref() {
             Some("frontend") => "tech-stack-frontend",
             _ => "tech-stack-backend",
         };
+    }
+    // Live-verified gap: a fresh run titled the structural UI proposal "Frontend Component for
+    // Submitting Support Ticket" — no "ui" substring at all — which fell through to the
+    // component_type-only branch below and misclassified a structural proposal as tech-stack-
+    // frontend. "frontend" catches this; "ui"/"ui for" is kept for the wording the real
+    // manufacturer-001 project actually used ("UI for Manufacturer Registration").
+    if title.starts_with("ui ") || title.contains("ui for") || title.contains("frontend") {
+        return "ui";
     }
     match p.component_type.as_deref() {
         Some("frontend") => "tech-stack-frontend",
@@ -544,6 +552,22 @@ mod classify_proposal_category_tests {
     fn ui_wins_over_a_bundled_technology_field() {
         let p = proposal("UI for Manufacturer Registration", Some("frontend"), Some("React"));
         assert_eq!(classify_proposal_category(&p), "ui");
+    }
+
+    #[test]
+    fn frontend_titled_proposal_is_also_ui_not_tech_stack() {
+        // Live-verified against a real llama-server run (2026-07-15, scratchpad verification):
+        // the model titled the structural UI proposal "Frontend Component for Submitting Support
+        // Ticket" instead of "UI for X" — no "ui" substring at all — and it misclassified as
+        // tech-stack-frontend before this test was added.
+        let p = proposal("Frontend Component for Submitting Support Ticket", Some("frontend"), Some("React"));
+        assert_eq!(classify_proposal_category(&p), "ui");
+    }
+
+    #[test]
+    fn standalone_tech_stack_title_still_wins_even_when_it_names_a_portal() {
+        let p = proposal("Tech Stack for Customer Portal", Some("frontend"), Some("React"));
+        assert_eq!(classify_proposal_category(&p), "tech-stack-frontend");
     }
 
     #[test]
