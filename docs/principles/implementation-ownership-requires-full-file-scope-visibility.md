@@ -28,6 +28,7 @@ related_principles:
   - compute-facts-mechanically
   - deterministic-audits-vs-compensation
   - structure-emerges-from-behavior
+  - contracts-are-intent-roots-is-reality
 
 cluster: "Full-Scope Visibility"
 ---

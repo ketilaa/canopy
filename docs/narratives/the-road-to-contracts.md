@@ -14,6 +14,7 @@ related_principles:
   - exhaustive-enumeration-over-holistic-review
   - compute-facts-mechanically
   - implementation-ownership-requires-full-file-scope-visibility
+  - contracts-are-intent-roots-is-reality
 
 related_retrospectives:
   - 2026-07-13
