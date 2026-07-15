@@ -374,6 +374,60 @@ own "complete plan or an explicit error" design. Neither bug had fired against m
 own data yet (no detected package, no integration contracts) — both were caught by review, not by
 a live failure.
 
+## Contract-Driven Implementation, Stage 5 (2026-07-15) — Production vs. Contract-Scoped A/B
+
+Every prior stage tested contract-scoped generation only against itself. Stage 5 asked the
+question the Contract Composition Assessment named as the actual open one: does contract-scoped
+generation beat production's real, shipped story/spec/scenario/ADR prompt, or only a hand-built
+minimal one nobody ships? Same real file (`Manufacturer.java`, the same six contracts Stages 2–4
+used), same harness, same evaluation: 3 independent runs per path, real `mvn clean test`, no
+modification to `canopy implement` or any production call site — path A calls production's actual
+`generate_unit_test_stub`/`execute_implementation_with_test` directly; path B reuses Stage 2/3's
+own contract-scoped prompts verbatim.
+
+A harness-validity gap surfaced twice before a valid comparison existed: the Stage 3 Maven
+harness was built only for the contract-scoped path, so its `pom.xml` lacked AssertJ, then (after
+that fix) Mockito too — both of which production's real prompt uses and a real Spring Boot scaffold
+would provide transitively via `spring-boot-starter-test`. Each gap made all 3 path-A runs fail
+identically on a missing-package compile error, before reaching any real behavior to compare.
+Fixed both, re-ran the full 6-run experiment from scratch each time for symmetry. Results below are
+from the corrected, valid run.
+
+- **Path A (production): 0/3 pass. Path B (contract-scoped): 3/3 pass** — decisive, not close.
+  (A separate corrected-harness execution, run before the Mockito gap was caught, additionally
+  showed path B at 2/3 with one self-contained `int`-to-`Long` id-assignment bug — a real defect,
+  not discarded, but it doesn't change path B's standing against path A's 0/6 across both runs.)
+- **All 3 path-A failures were genuine content-generation defects, not harness artifacts:** (1)
+  a generated test assumed a `ManufacturerRepository`/`ManufacturerService` pair that was never
+  generated — scope invention beyond the file actually being implemented; (2) two runs generated
+  Bean Validation annotations (`@Size`, `@NotBlank`) with no constructor-level `throw`, so 12 of 30
+  tests failed at runtime since annotations alone never fire on a bare `new Manufacturer(...)` —
+  the same eager-construction-vs-`@GeneratedValue` conflation Stage 2/3 already found and fixed
+  for the contract-scoped skill, with no equivalent fix in production's prompt; (3) the generated
+  test invented four different constructor arities across scenario-driven test methods, while the
+  paired implementation only defined a subset of them.
+- **The predicted scenario-noise effect was confirmed.** `unit_test_stub_prompt` has no
+  layer-based scenario filter (unlike the TypeScript path's `scenario_coverage_note`), so
+  production's Java domain-file prompt is shown all 12 real scenarios unfiltered, including
+  `manufacturer-001-05` ("reject duplicate name") — a check no domain constructor can satisfy
+  without repository access. This measurably contributed to both the unsatisfiable test and the
+  constructor-arity drift above.
+- **Path B stayed structurally identical across all 3 runs**: one canonical 5-arg constructor,
+  manual eager validation on every field, eager `UUID` id assignment, exactly the six contracts'
+  8 authorized fields — no invention, no extra classes.
+- **Prompt size confirmed as predicted**: production ~13,098 chars vs. contract-scoped ~5,395
+  chars (~2.4x smaller) — and the larger prompt did not buy a passing result in either full
+  execution.
+
+**Conclusion:** the stage's own stop condition ("path B meets or exceeds path A on metric 1, with
+no new ownership violations") is reached cleanly. Contract-scoped generation beats production's
+real, shipped prompt on this file — not just capable in isolation as Stages 1–3 showed, but
+better than what ships today. This does not indict the story/spec/scenario/ADR approach in the
+abstract (the scenario-filter gap is a specific, fixable prompt bug, not a systemic verdict), and
+it does not yet generalize past a single-entity, no-dependency case — composition (multi-entity,
+real cross-contract dependencies) remains untested and is now the next priority, per the design
+doc's own stated sequencing.
+
 ## Current open items for this story
 
 - The domain-event-ADR fix's operation-classification logic (whole-word verb matching, exact
@@ -400,3 +454,20 @@ a live failure.
   every real Spring Boot Green-phase generation call was silently getting a generic fallback
   layer instead of its real one. Worth checking whether any other JVM-specific skill content,
   added before this fix, was similarly inert for the same reason.
+- **Resolved by Stage 5:** whether contract-scoped generation actually improves on production's
+  real prompt (not just a hand-built minimal one) was the single most important open question
+  named by the Contract Composition Assessment. Answered: yes, decisively, on a single-entity,
+  no-dependency case (0/3 vs 3/3, real compile+test). No longer open in this form.
+- **New from Stage 5:** `unit_test_stub_prompt` (`canopy-llm/src/prompts/step.rs`) has no
+  layer-based scenario filter for Java, unlike the TypeScript path's `scenario_coverage_note` —
+  confirmed to produce real harm (an unsatisfiable duplicate-name test, constructor-arity drift)
+  when a Java domain file is shown all of a story's scenarios unfiltered. A fixable prompt gap,
+  not yet fixed — content-generation wiring into `canopy implement` is still not done, so this
+  hasn't shipped yet either way.
+- **New from Stage 5:** production's real prompt has no ownership-visibility equivalent to what
+  Stage 2 added for contracts — one run's generated test invented an entire
+  `ManufacturerRepository`/`ManufacturerService` pair outside the file being implemented. Not yet
+  assessed for a fix, since content generation isn't wired to `canopy implement` at all yet.
+- **Composition is now the next priority for this investigation**, per the design doc's own
+  stated sequencing — untested so far against any real (non-empty) cross-contract dependency or
+  multi-entity case; the Contract Composition Assessment has the fuller account of what's open.

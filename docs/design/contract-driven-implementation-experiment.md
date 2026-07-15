@@ -852,3 +852,128 @@ compiler errors if any) is captured and reported, not eyeballed.
   (a missing layer filter is a prompt fix, not a reason to touch the contract schema).
 
 No implementation performed in this scoping pass, per the instruction to design before building.
+
+## Stage 5 Results (2026-07-15): production 0/3, contract-scoped 3/3 — a valid, decisive result
+
+Built `canopy-llm/examples/contract_driven_stage5_experiment.rs` exactly to this design: one
+program, both paths, 6 runs, real `mvn clean test` per run, no modification to `canopy implement`
+or any of its production call sites. Path A calls production's real, unmodified
+`generate_unit_test_stub`/`execute_implementation_with_test`; path B reuses Stage 2/3's own
+`contract_test_prompt`/`contract_impl_prompt` verbatim.
+
+### A harness-validity gap surfaced twice before a valid result existed
+
+The Stage 3 Maven harness was built to exercise only the contract-scoped path, so its `pom.xml`
+never needed dependencies that a real Spring Boot scaffold provides transitively via
+`spring-boot-starter-test`. Production's real prompt uses both — first surfaced as AssertJ
+(`org.assertj.core.api.Assertions`) missing, then, after that fix, Mockito
+(`org.mockito.*`/`MockitoExtension`/`@InjectMocks`) missing too — each causing all 3 path-A runs
+to fail identically on `package ... does not exist`, before reaching any behavior this experiment
+was designed to compare. Both were harness gaps, not findings: a real scaffolded project would
+have had both transitively, and production's prompt correctly assumes their availability. Fixed by
+adding `assertj-core` and `mockito-core`/`mockito-junit-jupiter` (test scope) to the harness
+`pom.xml`, verified via `mvn dependency:resolve`, and the full 6-run experiment re-run from
+scratch each time so the comparison stayed symmetric. The second, corrected, full re-run
+(`stage5_full_v3.log`) is the run these results are drawn from. Disclosed per this project's own
+house style for harness-validity gaps (see Stage 3's fence-extraction bug, Stage 4's dot-vs-slash
+path bug) — not smoothed over.
+
+### Results (3 runs per path, real `mvn clean test`)
+
+| Run | Path A (production) | Path B (contract-scoped) |
+|---|---|---|
+| 1 | **FAIL** — compile error: generated test references `ManufacturerRepository` and `ManufacturerService`, neither of which this call generates or was asked to generate — an out-of-file-scope invention | **PASS** |
+| 2 | **FAIL** — compiles; 12 of 30 generated `@Test` methods fail at runtime | **PASS** |
+| 3 | **FAIL** — compile error: test invokes 3-arg and 4-arg `Manufacturer(...)` overloads the generated implementation never defines (which only has no-arg/2-arg/5-arg) | **PASS** |
+
+**Path A: 0/3 pass. Path B: 3/3 pass.** (A separate, earlier full execution of the corrected
+harness — `stage5_full_v2.log`, run before the Mockito gap was found and fixed — additionally
+showed path B at 2/3, with the one failure a self-contained `int`-to-`Long` type error in
+`this.id = UUID.randomUUID().hashCode()`. Combined across both valid-for-path-B executions: 5/6.
+That failure is a real, reproducible defect — the same id-assignment defect class Stage 2/3 also
+found — not a fluke to discard, but it doesn't change path B's standing relative to path A, which
+failed 6/6 across the same two executions.)
+
+### Per-path failure analysis
+
+**Path A (production), all 3 failures are distinct, genuine content-generation defects — none is
+a harness artifact:**
+
+1. **Scope invention beyond the file being implemented.** Run 1's test assumes a
+   `ManufacturerRepository`/`ManufacturerService` pair exists, uses `@InjectMocks`/`MockitoExtension`
+   to wire them in, and asserts through them — a full application-service-plus-repository shape,
+   when the step being implemented is scoped to one domain file. Confirms the Contract Composition
+   Assessment's flagged-but-untested risk that production's fuller prompt has no equivalent to the
+   ownership-visibility constraint Stage 2 had to add for contracts.
+2. **Annotation-only validation, no constructor-level enforcement.** Runs 2 and 3 both generate
+   `@Size`/`@NotBlank`-style Bean Validation annotations but no `if (...) throw new
+   IllegalArgumentException(...)` in the constructor. Jakarta Bean Validation constraints are only
+   evaluated by an active `Validator` (or JPA lifecycle callback) — never by a bare `new
+   Manufacturer(...)` in a unit test — so every test asserting eager validation or eager `id`
+   assignment (`@GeneratedValue(strategy = GenerationType.IDENTITY)` only assigns at persist time)
+   fails at runtime. This is the same eager-construction-vs-JPA-generated-value conflation Stage
+   2/3 already found and fixed for the contract-scoped skill — production's prompt has no
+   equivalent fix.
+3. **Ad hoc telescoping constructors, invented per scenario rather than as one canonical shape.**
+   Across runs, path A's generated test calls `Manufacturer(name,address)`,
+   `(name,address,phoneNumber)`, `(name,address,null,email)`, and
+   `(name,address,phoneNumber,email,website)` — a different arity per scenario, with no single
+   constructor design driving all of them. The paired implementation call then only defines a
+   subset of the arities the test invented (typically 2-arg and 5-arg), so several scenario-driven
+   test methods don't compile. This directly matches the confirmed prediction below: the flat,
+   unfiltered 12-scenario prompt gives the model no reason to converge on one constructor shape.
+4. **The predicted unsatisfiable scenario surfaced exactly as expected.** Every run's test includes
+   a `should_fail...due_to_duplicate_name` method — scenario `manufacturer-001-05` — which no
+   domain constructor can satisfy without repository access. Two runs left it empty with a comment
+   disclaiming it ("assumed the service layer checks this"); one run wrote it as a real assertion
+   that fails at runtime for exactly the reason predicted. Confirms metric 5's prediction:
+   `unit_test_stub_prompt`'s lack of layer-based scenario filtering (unlike the TypeScript path's
+   `scenario_coverage_note`) produces real, measurable harm for a Java domain-layer file, not just
+   a theoretical gap.
+
+**Path B (contract-scoped): all 3 runs structurally identical** — one canonical 5-arg constructor,
+manual imperative validation for every field, eager `UUID.randomUUID()` id assignment, exactly the
+8 fields the six contracts' combined scope authorizes, nothing more. The single failure observed
+in the separate `_v2` execution (the `int`/`Long` id-assignment bug) was self-contained to one
+run and didn't recur in `_v3`'s 3 runs.
+
+### Metrics, per the design's own definitions
+
+1. **Real pass rate** — path A 0/3 (0/6 combined), path B 3/3 (5/6 combined). Decisive, not close.
+2. **Ownership correctness** — path B: clean in all 3 runs, exactly the contracts' 8 authorized
+   fields, no invented fields or classes. Path A: no invented *fields* beyond `entity_schema`'s 8
+   (the field-level check the design specified passes), but run 1 shows a distinct, broader scope
+   violation the design's field-level metric didn't anticipate — inventing entire *sibling classes*
+   (a repository, a service) outside the file being implemented. Worth naming as an ownership
+   violation in substance even though it falls outside metric 2's literal field-based definition.
+3. **Constraint fidelity** — folded into metric 1 as designed: path B's passing runs are the
+   fidelity check; path A never reaches a state where this is measurable, since it never compiles
+   or passes cleanly.
+4. **Prompt size** — confirmed as designed: production ~13,098 chars (entity_schema 992 + 12
+   scenarios 6,228 + arch_skills 1,755 + tech_rules 4,123) vs. contract-scoped ~5,395 chars (six
+   contracts' facts 1,272 + tech_rules 4,123) — production's prompt is ~2.4x larger, and none of
+   that extra size bought a passing result across either execution.
+5. **Scenario-noise effect** — confirmed (see failure analysis point 4 above): the unfiltered
+   12-scenario prompt directly produced both the unsatisfiable duplicate-name test and pressure
+   toward inventing multiple constructor arities to fit disparate scenario shapes into one file's
+   test class.
+
+### Stop condition reached
+
+**"Path B meets or exceeds path A on metric 1, with no new ownership violations."** Reached
+cleanly — path B is not merely competitive, it wins outright (3/3 vs 0/3, or 5/6 vs 0/6 combined),
+with a cleaner ownership profile than path A, not a worse one. Per the design's own stated
+consequence: **the hypothesis holds.** Contract-scoped generation is not just capable of working
+in isolation (Stages 1–3 already showed that) — it beats production's real, shipped prompt on the
+same file, same story, same harness. Composition (multi-entity, real cross-contract dependencies)
+becomes the next priority, per the user's own stated sequencing, now that generation quality is no
+longer the open question it was when this stage was scoped.
+
+**What this result does *not* say.** It does not say production's prompt design is bad in the
+abstract — `unit_test_stub_prompt`'s missing scenario-layer filter is a specific, nameable,
+fixable gap (this stage's metric 5 finding), not evidence that the whole story/spec/scenario/ADR
+approach is unsound. It also does not generalize beyond this one entity/file shape yet — path B's
+win here is on a single-entity, no-dependency case, exactly the case Stages 1–3 already validated
+contracts on. Whether contract-scoped generation holds up once dependencies are real (not empty
+lists, as the Composition Assessment already flagged) is untested by this stage and remains
+composition's open question, not this one's.
