@@ -245,3 +245,128 @@ consistent with this document's own "no implementation" scope.
   roadmap document is not the same as starting it. **Recommendation: leave `status: deferred` as
   is until you actually decide to launch the reproducibility sweep in §5** — updating it now would
   presume a decision this document only recommends.
+
+---
+
+## Update (2026-07-15): Roadmap Adjustment After the Reproducibility Sweep
+
+The sweep this reassessment recommended (§5) ran and produced a sharper, more specific result than
+anticipated: not generic "recommendations vary somewhat," but a clean split — backend technology
+and database choice perfectly stable (5/5 each), service/frontend naming only tier-2 (equivalent,
+not materially different), and the domain-event proposal's own presence and topic-convention
+compliance the single least stable output measured (present in 3/5 runs, convention-compliant in
+only 1 of those 3) — genuine tier-4 architectural divergence, not just tier-3 wobble. Full results:
+`docs/design/pre-behavior-planning-reproducibility-sweep.md`'s "Results" section;
+`docs/reports/manufacturer-001.md`'s matching entry. This update reassesses the roadmap against
+that specific result, following the same observe → classify → understand → decide discipline the
+contract investigation itself used — no fixes proposed here.
+
+### 1. Does the priority order still hold?
+
+Mostly, with one real adjustment. The original order promoted pre-behavior planning above
+composition on the strength of an *anecdote*; it's now promoted on the strength of a *measured,
+specific* result, which changes what should happen next more than it changes the ranking itself.
+Two concrete shifts:
+
+- **Human-Insight Inventory moves from #2 to the immediate next investigation** (see §2 below) —
+  the sweep gave it a sharp, well-motivated starting point it didn't have before.
+- **Composition's harder questions move down further**, not because composition itself lost
+  value, but because the sweep's evidence bears directly on Stage 6's own foundation: the real
+  dependency edge Stage 6 produced rested on exactly the category (domain-event proposals) the
+  sweep just showed is the least reproducible thing in the whole pre-behavior pipeline. Extending
+  composition further before understanding *that* better risks building on the specific piece of
+  ground just shown to be softest.
+
+Legacy planner retirement and contract schema work are unaffected — no new evidence points at
+either.
+
+### 2. Should Human-Insight Inventory become the next investigation?
+
+**Yes**, and more clearly than when originally proposed. The original case was "cheap and
+complementary." The sweep adds a real reason, not just a convenient one: it shows some
+recommendation categories are highly stable (tech/database) and at least one is highly unstable
+(domain event) — which means the review gate a human sees today looks structurally identical
+regardless of which kind of recommendation is behind it. A human reviewing a domain-event proposal
+has no way to know, from the review screen alone, that the answer they're looking at is one of
+several the model could just as easily have produced.
+
+**What it should measure first**: not a broad sweep of every review point (the original scope),
+but specifically — for `manufacturer-001`'s real dogfooding history — how domain-event/structural
+proposals were actually reviewed (Accept/Modify/Reject), compared against how tech-stack/database
+proposals were reviewed. Two possible findings, both informative and neither assumed in advance:
+if domain-event proposals were *also* frequently modified or rejected historically, that's
+convergent evidence — instability and human correction agreeing on the same weak spot. If they
+were mostly just Accepted despite being the least reproducible category measured, that's a
+different, arguably more important finding — it would mean the review gate currently gives no
+signal that a low-reproducibility recommendation is being rubber-stamped.
+
+### 3. Domain Event Recommendation Variability — symptom, root cause, special case, or broader pattern?
+
+**Evidence of a broader pattern already established elsewhere in this project, landing on the one
+case that combines two of its ingredients most sharply — not a new, isolated phenomenon.**
+
+Reasoning: the stable categories (backend tech, database) share a trait the unstable one lacks —
+each has a small set of extremely well-known, training-data-dominant defaults ("Spring Boot" for a
+Java backend, "PostgreSQL" for a relational store), so the model has strong external convention to
+lean on regardless of story specifics. Domain-event determination has neither: whether an event
+should be raised *at all* is a judgment call with no universal default, and the exact required
+shape (`"<EventName> on topic <topic>"`) is a bespoke, Canopy-specific convention with no strong
+analog in general training data. That combination — a genuine judgment call, layered with a
+bespoke formatting requirement — is exactly the shape `unresolved-decisions-become-explicit-
+decision-points` already describes at `high` confidence (a different sweep, 2026-07-14, policy
+discovery: 5/6 confidently-resolved-with-no-basis before that principle's fix). This sweep is a
+new, independent instance of the same underlying pattern, not a fresh discovery requiring its own
+theory.
+
+**Consequence for scoping**: this does *not* need to become its own freestanding investigation
+track — spinning one up would risk exactly the "five concurrent architectural investigations" the
+Morning Planning Review's own priority rules warn against, for a question an existing high-
+confidence principle already explains the shape of. Instead: fold "should domain-event
+determination become an explicit Decision Point" into the Human-Insight Inventory's scope as its
+first, most concrete item (§2), rather than opening a seventh independent frontier.
+
+### 4. Original Vision Alignment — where does domain-event recommendation fit?
+
+Offered categories: boilerplate generation / domain insight / architecture judgment / something
+else. **Domain insight / architecture judgment — not boilerplate** — and the sweep's own stability
+split may be tracking this distinction empirically, for the first time, not just conceptually.
+
+Backend tech and database choice are boilerplate-shaped in exactly the sense the original vision
+meant: any competent engineer would default to nearly the same choice regardless of the specific
+story, so a human reviewing the proposal is genuinely just rubber-stamping a low-insight decision
+— and the sweep confirms these are the stable categories. Whether a domain event should be raised,
+and what it represents, requires understanding the business process well enough to know whether
+downstream systems care about this state change — a genuine domain judgment, the kind of thing a
+Product Owner or domain expert should weigh in on, not a default a model should confidently invent.
+The sweep's instability here may not be simply "the model is bad at this specific task" — it may
+be a symptom that this was always the kind of decision requiring human domain insight, being asked
+of the model as if it were boilerplate. **Stated as a hypothesis worth testing further, not a
+proven law** — one sweep, one story, is suggestive, not conclusive; but it's a clean, non-obvious
+answer to a question this document has asked in the abstract twice now (§3 originally, again here)
+and can finally ground in a specific, measured result rather than architectural description alone.
+
+### 5. Updated Priority Order
+
+| Rank | Item | Current evidence | Expected learning value | Suggested next experiment |
+|---|---|---|---|---|
+| 1 | Human-Insight Inventory, domain-event/structural review outcomes first | Sweep shows a sharp stable/unstable split with no matching human-review signal yet measured | High — directly tests whether the review gate can currently tell a human which recommendations to scrutinize | Categorize `manufacturer-001`'s real review history against the Decision Classification table, domain-event and tech-stack proposals specifically |
+| 2 | Should domain-event determination become a Decision Point? | `unresolved-decisions-become-explicit-decision-points` (`high` confidence) already describes this shape; this sweep is a new instance, not new evidence for a new claim | Medium-high — a design question informed by #1's results, not a separate experiment | Read #1's results against the existing principle's own applicability criteria before deciding anything |
+| 3 | Composition's harder questions (multi-entity, deeper chains, multi-service) | Stage 6 proved the single-edge case, but on exactly the category now shown least reproducible | Medium, lower than before this sweep — real, but riskier to build on before #1/#2 land | Unchanged from the original reassessment; simply reordered behind #1/#2 |
+| 4 | Content-generation quality for a composed group | Unchanged | Medium | Unchanged |
+| 5 | Legacy planner retirement | Still premature per Composition Assessment §5 | Low near-term | Not a near-term experiment |
+| 6 | Contract schema work | Zero evidence across six-plus adversarial stages points at a missing fact | Low | None recommended |
+
+### 6. Morning Planning Review Support
+
+**Current architectural frontier**: the Human-Insight Inventory, specifically scoped around
+domain-event/structural-proposal review outcomes — the sharpest, most concrete open thread this
+project has right now, directly motivated by hard evidence rather than an anecdote.
+
+**What a future "What should we do today?" should likely recommend as the primary task**: start
+the Human-Insight Inventory against `manufacturer-001`'s real dogfooding history, comparing review
+behavior on domain-event/structural proposals against tech-stack/database proposals — not a broad
+audit of every review point, the narrower, sweep-motivated version of it. A reasonable optional
+secondary task, if there's a natural small follow-up that day: reading the Inventory's first
+results against `unresolved-decisions-become-explicit-decision-points`'s own applicability
+criteria, to see whether the Decision-Point question in §2 above is answerable yet without a
+separate experiment.
