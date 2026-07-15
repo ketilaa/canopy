@@ -143,3 +143,9 @@ existing applicability criteria — to justify proposing that domain-event deter
 explicit Decision Point. That is a design question, not a further measurement; this document
 supplies the evidence input to it and stops here, per the Roadmap Reassessment's own framing of
 this as a narrowly-scoped investigation, not a broad audit.
+
+A related, more speculative hypothesis — whether some of these same categories (service ownership,
+domain events, integration boundaries) are actually proxies for an unresolved domain-boundary
+decision the pipeline never surfaces explicitly — is evaluated separately in
+`docs/design/domain-boundary-hypothesis-assessment.md`; see also
+`docs/open-questions/domain-boundary-explicitness.md`.
