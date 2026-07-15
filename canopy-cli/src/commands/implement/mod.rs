@@ -48,7 +48,13 @@ fn ensure_services_scaffolded(services: &ServicesRegistry) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path::Path) -> Result<()> {
+pub(crate) fn cmd_implement(
+    story_id: &str,
+    debug: bool,
+    fix_log_dir: &std::path::Path,
+    legacy_planner: bool,
+    compare_with_legacy_planner: bool,
+) -> Result<()> {
     let theme = ColorfulTheme::default();
 
     let stories = load_user_stories()
@@ -105,6 +111,7 @@ pub(crate) fn cmd_implement(story_id: &str, debug: bool, fix_log_dir: &std::path
 
     let plan = plan::load_or_generate_plan(
         story_id, debug, story, &spec, &openapi_yaml, &services, &adrs, &service_packages, &theme,
+        legacy_planner, compare_with_legacy_planner,
     )?;
     let Some(plan) = plan else { return Ok(()); };
 

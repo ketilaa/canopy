@@ -55,6 +55,15 @@ enum Commands {
     Implement {
         /// Story ID to implement (must have status: accepted and a generated spec)
         story_id: String,
+        /// Force the legacy LLM-driven file-discovery planner, even if contracts.yaml exists
+        /// for this story (Stage 4 of docs/design/contract-driven-implementation-experiment.md)
+        #[arg(long)]
+        legacy_planner: bool,
+        /// Also run the legacy LLM-driven planner alongside contract-driven discovery and print
+        /// a diff — diagnostic only, never affects which plan gets saved/executed. Temporary,
+        /// for building confidence in contract-driven discovery before it becomes the only path.
+        #[arg(long)]
+        compare_with_legacy_planner: bool,
     },
     /// List all user stories and their current status
     Stories,
@@ -137,7 +146,8 @@ pub(crate) fn run_repl(debug: bool) -> Result<()> {
                         Commands::Init                         => cmd_init(debug),
                         Commands::Domain                       => cmd_domain_show(),
                         Commands::Scaffold { dir, regenerate } => cmd_scaffold(&dir, regenerate, debug),
-                        Commands::Implement { story_id }       => cmd_implement(&story_id, debug, &fix_log_dir),
+                        Commands::Implement { story_id, legacy_planner, compare_with_legacy_planner }
+                            => cmd_implement(&story_id, debug, &fix_log_dir, legacy_planner, compare_with_legacy_planner),
                         Commands::Stories                      => cmd_stories(),
                         Commands::Intent { statement }         => cmd_intent(statement, debug),
                         Commands::Spec { story_id }            => cmd_spec(&story_id, debug),

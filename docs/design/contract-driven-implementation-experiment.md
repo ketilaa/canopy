@@ -629,3 +629,83 @@ visibility + fixed skill combination produced working code without any fix-loop 
 built to address (it would need to extend `fix_file`-style repair to test files too, matching the
 real fix loop's actual scope) — a natural refinement for a future Stage 3 run, not a finding about
 this investigation's central question.
+
+---
+
+## Stage 4 (2026-07-15): production wiring — the first stage that touches `canopy implement`
+
+Every prior stage ran as a standalone cargo example; none touched production code. Stage 4 is
+different by design — it wires `canopy implement` itself to consume `contracts.yaml`, per this
+document's own migration plan (§6): "Replace `plan.rs`'s LLM-driven file discovery with
+contract-driven enumeration... for one entire story."
+
+**Design decision, confirmed before implementation:** the switch is triggered by a mechanical
+fact — the presence of a story's `contracts.yaml` — not an explicit opt-in flag, per the same
+"compute facts mechanically" house rule this whole investigation keeps returning to. Two
+refinements requested before building: (1) never silent — the CLI always prints which path ran
+and how to force the other one; (2) a temporary diagnostic (`--compare-with-legacy-planner`)
+that runs the legacy planner alongside contract-driven discovery purely to print a file-list
+diff, never affecting what gets saved or executed, to build confidence before this becomes the
+only path.
+
+**What shipped:**
+- `canopy-llm/src/prompts/contract_plan.rs` (new): `generate_story_plan_from_contracts` — fully
+  mechanical, zero LLM calls. Filters to `scope: Unit` contracts, resolves each one's file target
+  via `resolve_implementation_target`, groups contracts sharing a target into one step (the
+  ownership-visibility finding from Stage 2, now load-bearing in production, not just an
+  experiment), derives each step's `operation` (create/modify) directly from whether the target
+  is already in `existing_files` — mechanically, not by asking an LLM — and each step's
+  `description` from a fixed kind→verb table (the "Layer verbs" convention already named in this
+  project's CLAUDE.md: Validates, Constructs, Persists, Orchestrates, ...). `depends_on` maps each
+  contract's own `dependencies` (other contract ids) to *those* contracts' resolved targets.
+  Ordering reuses `plan.rs`'s existing `layer_weight`/`frontend_tier` sort (made `pub(crate)`, not
+  duplicated). 7 unit tests.
+- **Refuses to guess, by design.** Returns `Err(String)` rather than a plan whenever it can't be
+  confident: more than one non-frontend service exists (nothing on `Contract` yet records which
+  service owns which entity — a real, disclosed gap, not a bug); an `HttpRequest`/`HttpResponse`
+  contract exists (its "route" layer is ambiguous between a backend controller and a frontend
+  api-client, and nothing yet disambiguates); a contract has no `entity`/`kind`; or no mechanical
+  file-target convention exists yet for the resolved (tech, layer) pair. The caller falls back to
+  the LLM-driven planner on any `Err` — never a silently incomplete plan.
+- `canopy-cli/src/cli.rs`: two new flags on `Implement` — `--legacy-planner` (forces the old
+  path even when contracts.yaml exists) and `--compare-with-legacy-planner` (diagnostic only).
+- `canopy-cli/src/commands/implement/plan.rs`: `load_or_generate_plan` now checks
+  `canopy_storage::load_contracts(story_id)` before generating a new plan. `Err` (no
+  contracts.yaml — every story today except one manually-generated test case) falls through to
+  the exact same `generate_story_plan` call, with the exact same arguments, as before this
+  change — the "no contracts.yaml" path is unchanged, not just similar.
+
+**Verified against real data, not just synthetic test fixtures**, without requiring the target
+project to be scaffolded first (a separate, larger, more invasive action `cmd_implement`'s own
+`ensure_services_scaffolded` gate would otherwise demand before plan generation is even reached):
+`canopy-llm/examples/stage4_dry_run_verification.rs` calls the new function directly against
+`manufacturer-001`'s real, already-generated `contracts.yaml` and `services.yaml`. Result: **one
+step**, exactly as Stage 2/3 predicted (`ManufacturerNameValidation` through
+`ManufacturerConstruction` all resolve to the same `Manufacturer.java`), `operation: create`
+(correct — the file doesn't exist on disk yet), description `"Constructs and validates
+Manufacturer."` (mechanically derived from the two distinct kinds present, alphabetized and
+deduplicated), no `depends_on` (correct — nothing here depends on anything outside this one
+merged file).
+
+**Independent safety review before shipping, per this project's own practice of never folding
+"wrote it" and "shipped it" into the same unchecked step — found two real bugs, both fixed:**
+1. **JVM package path used dots instead of slashes.** `resolve_implementation_target`'s
+   `pkg_path` parameter expects a slash-separated path; a real scaffold-detected package name is
+   dotted (`com.example.widget`). Passing it straight through would have silently produced a
+   single bogus directory literally named `com.example.widget` instead of the correct
+   `com/example/widget/` tree — invisible until the first time a real JVM package is actually
+   detected (this pre-existing bug lived in `file_targets.rs` since Addendum 2, but had never
+   been reachable from production before this stage wired it in). Fixed: the same
+   `.replace('.', "/")` conversion `plan.rs`'s own LLM-driven planner already applies.
+2. **Integration-scope contracts were silently dropped, not fallback-triggering, when mixed with
+   unit contracts** — contradicting this function's own "complete plan or an explicit `Err`"
+   contract. A story with both kinds of contract (a normal, expected shape, not a hypothetical)
+   would have produced an `Ok` plan covering only the unit contracts, with no signal anything was
+   left out. Fixed: an explicit check returns `Err` when any integration-scope contract exists,
+   rather than silently filtering.
+
+Neither bug affects `manufacturer-001`'s own current contracts.yaml (no detected JVM package yet,
+no integration-scope contracts yet) — both were caught by review, not by a live failure, exactly
+the point of reviewing before shipping rather than after. 2 new regression tests added for each.
+
+Build and full workspace test suite (73 tests in `canopy-llm` after this change) green throughout.

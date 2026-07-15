@@ -5,7 +5,7 @@ use crate::ui::with_spinner;
 use crate::util::{build_client, iso_now};
 use anyhow::{Context, Result};
 use canopy_core::{Adr, IntentSpec, ServicesRegistry, StepStatus, StoryPlan, UserStory};
-use canopy_llm::{generate_story_plan, propose_dependencies, skill_for_technology_all_layers};
+use canopy_llm::{generate_story_plan, generate_story_plan_from_contracts, propose_dependencies, skill_for_technology_all_layers};
 use canopy_storage::{save_story_plan, load_story_plan};
 use dialoguer::{theme::ColorfulTheme, Confirm};
 use std::collections::HashMap;
@@ -27,6 +27,8 @@ pub(crate) fn load_or_generate_plan(
     adrs: &[Adr],
     service_packages: &HashMap<String, String>,
     theme: &ColorfulTheme,
+    legacy_planner: bool,
+    compare_with_legacy_planner: bool,
 ) -> Result<Option<StoryPlan>> {
     let plan = match load_story_plan(story_id) {
         Ok(existing) => {
@@ -55,13 +57,72 @@ pub(crate) fn load_or_generate_plan(
 
             let existing_files = scan_project_files(services);
             let client = build_client("planner", debug)?;
-            let plan = with_spinner(
-                format!("generating plan for {story_id}"),
-                || generate_story_plan(
-                    &client, story, spec, openapi_yaml, services, adrs,
-                    &existing_files, service_packages, &installed_deps_by_service,
-                ),
-            ).context("failed to generate implementation plan")?;
+
+            // Stage 4 (docs/design/contract-driven-implementation-experiment.md): an already-
+            // generated contracts.yaml is a mechanical fact — use contract-driven file discovery
+            // for this story instead of the LLM-driven planner, unless explicitly overridden.
+            // Never silent about which path ran, and never silently incomplete:
+            // generate_story_plan_from_contracts either returns a complete plan or explains
+            // exactly why it can't, in which case this falls back to the LLM-driven planner
+            // rather than guess or ship a partial plan.
+            let contract_plan = if legacy_planner {
+                None
+            } else {
+                match canopy_storage::load_contracts(story_id) {
+                    Ok(contracts) => match generate_story_plan_from_contracts(
+                        story_id, &contracts, services, service_packages, &existing_files,
+                    ) {
+                        Ok(p) => {
+                            println!(
+                                "Found .canopy/stories/{story_id}/contracts.yaml — using \
+                                 contract-driven file discovery ({} step(s)). Pass \
+                                 --legacy-planner to force the LLM-driven planner instead.",
+                                p.steps.len()
+                            );
+                            Some(p)
+                        }
+                        Err(reason) => {
+                            println!(
+                                "Found .canopy/stories/{story_id}/contracts.yaml, but contract-\
+                                 driven file discovery can't produce a complete plan yet \
+                                 ({reason}) — falling back to the LLM-driven planner."
+                            );
+                            None
+                        }
+                    },
+                    Err(_) => None,
+                }
+            };
+
+            if let Some(contract_plan) = &contract_plan {
+                if compare_with_legacy_planner {
+                    println!(
+                        "\n[diagnostic] Also running the legacy LLM-driven planner for \
+                         comparison (does not affect the saved plan)..."
+                    );
+                    match with_spinner(
+                        format!("generating comparison plan for {story_id}"),
+                        || generate_story_plan(
+                            &client, story, spec, openapi_yaml, services, adrs,
+                            &existing_files, service_packages, &installed_deps_by_service,
+                        ),
+                    ) {
+                        Ok(legacy) => print_plan_comparison(contract_plan, &legacy),
+                        Err(e) => eprintln!("[diagnostic] legacy planner comparison failed: {e}"),
+                    }
+                }
+            }
+
+            let plan = match contract_plan {
+                Some(p) => p,
+                None => with_spinner(
+                    format!("generating plan for {story_id}"),
+                    || generate_story_plan(
+                        &client, story, spec, openapi_yaml, services, adrs,
+                        &existing_files, service_packages, &installed_deps_by_service,
+                    ),
+                ).context("failed to generate implementation plan")?,
+            };
 
             // ── Dependency gate ──────────────────────────────────────────────────
             // Runs once per service with a known tech stack. For npm services,
@@ -245,4 +306,37 @@ pub(crate) fn load_or_generate_plan(
     };
 
     Ok(Some(plan))
+}
+
+/// Diagnostic only — never affects which plan is saved or executed. Temporary, for building
+/// confidence in contract-driven discovery (Stage 4) before it becomes the only path; a
+/// candidate for removal once that confidence is established. Compares file lists, not step
+/// content — the two planners are not expected to number, order, or describe steps identically,
+/// only to agree on which files this story actually touches.
+fn print_plan_comparison(contract_plan: &StoryPlan, legacy: &StoryPlan) {
+    let contract_files: std::collections::BTreeSet<&str> =
+        contract_plan.steps.iter().map(|s| s.file.as_str()).collect();
+    let legacy_files: std::collections::BTreeSet<&str> =
+        legacy.steps.iter().map(|s| s.file.as_str()).collect();
+
+    println!(
+        "[diagnostic] contract-driven: {} file(s), legacy planner: {} file(s)",
+        contract_files.len(), legacy_files.len()
+    );
+
+    let only_contract: Vec<&&str> = contract_files.difference(&legacy_files).collect();
+    let only_legacy: Vec<&&str> = legacy_files.difference(&contract_files).collect();
+
+    if only_contract.is_empty() && only_legacy.is_empty() {
+        println!("[diagnostic] file lists match exactly.");
+        return;
+    }
+    if !only_contract.is_empty() {
+        println!("[diagnostic] only in the contract-driven plan:");
+        for f in &only_contract { println!("  + {f}"); }
+    }
+    if !only_legacy.is_empty() {
+        println!("[diagnostic] only in the legacy planner's plan:");
+        for f in &only_legacy { println!("  + {f}"); }
+    }
 }

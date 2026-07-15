@@ -342,7 +342,7 @@ fn apply_ordering(raw: &str, mut steps: Vec<ImplementationStep>) -> Vec<Implemen
     ordered
 }
 
-fn layer_weight(file: &str) -> u8 {
+pub(crate) fn layer_weight(file: &str) -> u8 {
     let f = file.to_lowercase();
     // Build manifests first.
     if f.ends_with("pom.xml") || f.ends_with("build.gradle") { return 0; }
@@ -373,7 +373,7 @@ fn layer_weight(file: &str) -> u8 {
     3 // unknown — treat as mid-stack
 }
 
-fn frontend_tier(file: &str) -> u8 {
+pub(crate) fn frontend_tier(file: &str) -> u8 {
     let f = file.to_lowercase();
     // Suffix-based — co-located next to source, not under a separate directory.
     if f.contains(".test.") { return 3; }

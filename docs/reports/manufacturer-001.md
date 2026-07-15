@@ -338,6 +338,42 @@ behavior exactly. Corrected, then re-run from a clean baseline.
 The remaining gap (test-file repair) is a natural refinement for a future Stage 3 run, not a
 finding about contracts, ownership visibility, or this story's schema.
 
+## Contract-Driven Implementation, Stage 4 (2026-07-15) — First Production Wiring
+
+Every prior stage ran as a standalone cargo example; none touched production code. Stage 4 wires
+`canopy implement` itself to consume `contracts.yaml` — the first time this investigation touched
+the real, shipped CLI command, not a parallel experiment.
+
+Confirmed the trigger design before building: presence of a story's `contracts.yaml` is a
+mechanical fact, not an explicit opt-in flag — the same "compute facts mechanically" rule this
+whole investigation keeps returning to. Two refinements: never silent (the CLI always prints
+which planner ran and how to force the other), and a temporary `--compare-with-legacy-planner`
+diagnostic that runs both planners and prints a file-list diff without affecting what's saved.
+
+`generate_story_plan_from_contracts` (new, `canopy-llm/src/prompts/contract_plan.rs`) is fully
+mechanical — zero LLM calls. It groups contracts by resolved file target (the ownership-
+visibility finding from Stage 2, now load-bearing in production), derives `operation` from
+whether the target already exists on disk, and `description` from a fixed kind→verb table (this
+project's own "Layer verbs" convention). It refuses to guess by design: returns an explicit error
+whenever it can't be confident — more than one backend service, an `HttpRequest`/`HttpResponse`
+contract (ambiguous between a controller and a frontend api-client), or a contract missing
+`entity`/`kind` — and the caller falls back to the LLM-driven planner on any such error, never
+shipping a silently incomplete plan.
+
+**Verified against manufacturer-001's real, already-generated `contracts.yaml`**, without needing
+the project scaffolded first (a separate, larger action `cmd_implement`'s own scaffolding check
+would otherwise require): one step, exactly as Stage 2/3 predicted — all six contracts merge into
+`Manufacturer.java`, `operation: create`, description `"Constructs and validates Manufacturer."`
+
+**An independent safety review before shipping caught two real bugs, both fixed before commit:**
+a JVM package path used dots instead of slashes (would have silently produced a single bogus
+directory the first time a real package was detected — a pre-existing bug in `file_targets.rs`
+that had simply never been reachable from production before this stage); and integration-scope
+contracts were silently dropped rather than triggering the fallback, contradicting the function's
+own "complete plan or an explicit error" design. Neither bug had fired against manufacturer-001's
+own data yet (no detected package, no integration contracts) — both were caught by review, not by
+a live failure.
+
 ## Current open items for this story
 
 - The domain-event-ADR fix's operation-classification logic (whole-word verb matching, exact
