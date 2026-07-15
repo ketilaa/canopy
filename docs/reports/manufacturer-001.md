@@ -471,6 +471,41 @@ multi-service/route-layer composition, content-generation quality for the two ne
 infrastructure files) remain open, named already in the Composition Assessment. The question has
 moved from "can composition work at all?" to "what happens as dependency complexity increases?"
 
+## Pre-Behavior Planning Reproducibility Sweep (2026-07-15)
+
+The Roadmap Reassessment's top-ranked next investigation: does `canopy spec`'s service-discovery/
+technology-recommendation mechanism (`identify_architectural_questions`) produce reproducible
+output across repeated runs against the same input? Designed first
+(`docs/design/pre-behavior-planning-reproducibility-sweep.md`), then implemented as a standalone,
+read-only example calling that real function 5 times against frozen pre-spec state (empty
+services registry, zero ADRs — reconstructing this story's own real pre-spec condition, not
+today's already-resolved state).
+
+- **Verdict: Low reproducibility.** Backend technology (Spring Boot) and database (PostgreSQL)
+  were perfectly stable across all 5 runs. Frontend technology wobbled once (4× React, 1× Angular)
+  and event-broker choice wobbled once, independently (4× Redpanda, 1× Kafka) — each a materially
+  different recommendation for the identical question. Service/frontend naming split in a
+  correlated but equivalent pattern (entity-scoped vs. process-scoped naming, same real service
+  either way).
+- **The most significant finding**: the domain-event proposal's own presence, and whether it
+  follows the "`<EventName>` on topic `<topic>`" convention the mechanical pipeline requires, was
+  the least stable output of all — present in only 3 of 5 runs, and convention-compliant in only
+  1 of those 3. Only 1 of 5 runs (20%) would have produced a domain-event ADR the pipeline could
+  actually consume as designed.
+- **This reframes an earlier finding, not just extends it.** The Contract Readiness Assessment
+  (2026-07-14) attributed this story's missing topic clause to a stale, pre-mandatory-step fixture
+  — true for that specific historical ADR, but this sweep shows a freshly-generated proposal,
+  today, still omits the clause 4 times out of 5. The gap is live, not only historical. Stage 6's
+  own real dependency edge existed only because of a manual ADR correction this sweep shows the
+  model would supply unprompted just 1 time in 5.
+
+**Conclusion:** the anecdotal tech-stack-variance observation that opened the Pre-Behavior
+Planning Review is confirmed, not a one-off, and the domain-event proposal specifically is now
+identified as the most concrete, most actionable-relevant instability in the pre-behavior
+pipeline — measured, not assumed. No fix proposed here, per this sweep's own explicit charter
+(measure reproducibility, not redesign); see `docs/open-questions/pre-behavior-planning-review.md`
+(now `status: active`) for how this feeds future work.
+
 ## Current open items for this story
 
 - The domain-event-ADR fix's operation-classification logic (whole-word verb matching, exact
@@ -526,3 +561,12 @@ moved from "can composition work at all?" to "what happens as dependency complex
   depends on another), and multi-service/route-layer composition — all still untested against real
   data. The question has moved from "can composition work at all?" (Stage 6: yes) to "what happens
   as dependency complexity increases?"
+- **Resolved by the Pre-Behavior Planning Reproducibility Sweep:** whether service-discovery/
+  tech-recommendation is reproducible. Answered: no — Low reproducibility, with the domain-event
+  proposal's presence and topic-convention compliance the least stable element (1 of 5 runs
+  compliant). This also reframes Stage 6/Contract Readiness Assessment's "stale fixture" diagnosis
+  of the missing topic clause as understating a live, not just historical, gap.
+- **New, unresolved**: whether technology recommendation should become an explicit Decision Point
+  (per `unresolved-decisions-become-explicit-decision-points`), and whether the order-dependent-
+  prompt-content variability source (existing ADRs/services rendered in stored `Vec` order) also
+  contributes — this sweep isolated model-sampling variance only, by design.

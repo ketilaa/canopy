@@ -255,3 +255,96 @@ above composition's remaining open questions.
 
 No implementation has been performed. This document defines the sweep; running it is a separate,
 later step.
+
+---
+
+## Results (2026-07-15): Low reproducibility, confirmed
+
+Implemented exactly as designed: `canopy-llm/examples/pre_behavior_reproducibility_sweep.rs`
+calls `identify_architectural_questions` 5 times against the frozen pre-spec state (empty
+`ServicesRegistry`, empty `Vec<Adr>`, real `manufacturer-001` story and `domain_registry.yaml`).
+Full raw output: `pre_behavior_sweep.log` (scratchpad). No modification to any production call
+site; strictly read-only against the dogfooding project.
+
+### Per-category classification
+
+| Category | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 | Tier |
+|---|---|---|---|---|---|---|
+| Backend service name | `manufacturer-registration-service` | same | same | `manufacturer-service` | same | 2 (equivalent) |
+| Backend technology | Spring Boot | Spring Boot | Spring Boot | Spring Boot | Spring Boot | 1 (identical) |
+| Frontend component name | `manufacturer-registration-portal` | same | `manufacturer-portal` | `manufacturer-portal` | same | 2 (equivalent) |
+| Frontend technology | React | React | **Angular** | React | React | **3 (materially different)** |
+| Database | PostgreSQL | PostgreSQL | PostgreSQL | PostgreSQL | PostgreSQL | 1 (identical) |
+| Event broker | **Kafka** | Redpanda | Redpanda | Redpanda | Redpanda | **3 (materially different)** |
+| Domain-event proposal present? | **No** | Yes | Yes | Yes | **No** | **4 (architectural divergence)** |
+| Domain-event follows "on topic" convention? | n/a | No | No | **Yes** | n/a | **4 (architectural divergence)** |
+| Total proposal count | 4 | 5 | 5 | 5 | 6 | **4 (architectural divergence)** |
+
+Backend/frontend naming (tier 2) split in a **correlated**, not independent, pattern: runs 3 and
+4 both chose the shorter, entity-scoped names (`manufacturer-service`/`manufacturer-portal`) for
+*both* the backend and frontend, while runs 1, 2, and 5 both chose the longer, process-scoped
+names (`manufacturer-registration-service`/`-portal`) for both — a real naming-convention split
+the model applies consistently within a run, not a coin-flip per proposal. Worth naming precisely
+rather than only noting variance exists: for this one story, both namings equally identify the
+correct real-world service, so this specific instance doesn't cross into tier 3 — but the two
+conventions differ in scope (process-scoped vs. entity-scoped), which could matter for how a
+second, related story's service ownership resolves later. Not judged further here, per this
+sweep's own scope.
+
+### Verdict: Low reproducibility
+
+Per §4's own thresholds: any tier-4 classification in any run is sufficient for "Low," and three
+independent tier-4 findings are present (domain-event presence, domain-event convention
+compliance, and total proposal count all vary in structure, not just content) — on top of two
+separate tier-3 findings in different runs (frontend tech in run 3, event broker in run 1). This
+is not a marginal or borderline case.
+
+### The most significant single finding
+
+**The domain-event proposal's own presence, and its compliance with the "`<EventName>` on topic
+`<topic>`" convention `parse_event_adr` requires, is the least stable output of the entire sweep.**
+Present in 3 of 5 runs; of those 3, only 1 (run 4) actually included the topic clause the later
+mechanical pipeline (`mechanical_event_behaviors`) needs to produce any `EventShape`/`Publication`
+behavior at all. That's 1 of 5 runs (20%) producing a domain-event ADR the pipeline could consume
+as designed, absent this sweep's own after-the-fact correction.
+
+This directly reframes a conclusion from an earlier stage of this investigation. The Contract
+Readiness Assessment (2026-07-14, Q6 #2) found the real dogfooding project's ADR-006 lacked the
+topic clause and attributed this to the project's `decisions/` directory *predating* `cmd_init`'s
+mandatory Topic Naming Convention ADR — "a stale-fixture artifact, not a reachable defect in
+current code." Stage 6 (2026-07-15) then hand-corrected that ADR to add the missing clause, on
+the same "stale fixture" reasoning, to exercise the mechanical dependency rule. **This sweep shows
+the missing topic clause is not only a legacy/stale-fixture issue — a freshly-generated proposal,
+today, against the same story, still fails to include it 4 times out of 5.** The earlier
+diagnosis wasn't wrong (the specific historical ADR genuinely did predate the mandatory step), but
+it understated the scope: the underlying instability is live, not just historical.
+
+### What this does and doesn't justify concluding
+
+**Justified**: for `manufacturer-001`, at this one frozen pre-spec snapshot, pre-behavior
+planning's architectural-questions mechanism is Low reproducibility — confirming the anecdotal
+tech-stack-variance observation that opened this investigation was real, not a one-off, and
+identifying the domain-event proposal specifically as the least stable element.
+
+**Not justified**: any claim about *why* (this design isolates model-sampling variance only, per
+§5's own stated scope — it does not test the order-dependent-prompt-content variability source
+separately); any claim generalizing beyond this one story; and no claim about whether any specific
+recommendation is *good* — this sweep measured agreement, not quality, exactly as designed.
+
+### Relationship to future work — outcomes now known, not hypothetical
+
+- **Human-Insight Inventory**: a Low result means its accept/modify/reject signal will need
+  reading carefully — a human's edit to a tech-stack or domain-event proposal may reflect a
+  genuinely unstable recommendation, not necessarily a bad one considered on its own merits.
+- **Technology recommendation review**: this result is direct, no-longer-anecdotal evidence for
+  the shape `unresolved-decisions-become-explicit-decision-points` already describes — a
+  genuinely unsupported judgment call, today handled as a Recommendation with only a per-proposal
+  gate, not a Decision Point.
+- **Service discovery review**: the domain-event proposal's structural instability (present/absent,
+  convention-compliant/not) is a stronger, more specific version of "architectural divergence" than
+  this design anticipated in the abstract — worth prioritizing over the naming-convention variance,
+  which turned out to be tier 2, not tier 3/4.
+- **Composition experiments**: Stage 6's real dependency edge existed only because of a manual
+  correction this sweep now shows the model itself would supply unprompted only 1 time in 5. This
+  doesn't invalidate Stage 6's findings about contracts, but it is a concrete, no-longer-speculative
+  scope caveat on how that dependency edge came to exist in the first place.
