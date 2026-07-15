@@ -16,9 +16,13 @@ evidence_strength: medium
 source_artifacts:
   - "docs/design/contract-driven-implementation-experiment.md — Stage 1 Results (2026-07-14)"
   - "docs/design/contract-driven-implementation-experiment.md — Stage 2 Implementation and Results (2026-07-14)"
-  - "docs/reports/manufacturer-001.md — Contract-Driven Implementation, Stage 1 and Stage 2 sessions"
+  - "docs/design/contract-driven-implementation-experiment.md — Stage 3 Results (2026-07-15)"
+  - "docs/design/contract-driven-implementation-experiment.md — Stage 4 (2026-07-15)"
+  - "docs/reports/manufacturer-001.md — Contract-Driven Implementation, Stage 1 through Stage 4 sessions"
   - "canopy-llm/examples/contract_driven_stage1_experiment.rs"
   - "canopy-llm/examples/contract_driven_stage2_experiment.rs"
+  - "canopy-llm/examples/contract_driven_stage3_experiment.rs"
+  - "commit 1d0e3a4 — Wire canopy implement to consume contracts.yaml (Stage 4)"
 
 related_principles:
   - compute-facts-mechanically
@@ -76,6 +80,16 @@ training-driven default ("a JPA entity has an `@Entity`/`@Id`").
   before running the experiment. This is useful confirmation that full-scope visibility fixes
   *ownership* specifically, not generation quality broadly; the other defects trace to a
   documented tech-stack-skill gap, unaffected by how many contracts the model can see.
+- **Stage 3** (2026-07-15): the same six-contract, full-visibility group, now compiled and
+  executed for real rather than eyeballed — 2 of 3 runs passed with zero fix-loop iterations,
+  producing exactly the eight authorized fields each time. Confirms the Stage 2 result under a
+  stricter evidentiary bar (a real `mvn test` pass, not a manual read of generated code), but adds
+  no new entity or story — reconfirmation, not generalization.
+- **Stage 4** (2026-07-15): the same finding became load-bearing in production —
+  `generate_story_plan_from_contracts` groups contracts by resolved file target as a first-class
+  step, not an experimental one, before generating a plan. Verified against the same real
+  `manufacturer-001` contracts producing the same one-step, six-contract merge predicted since
+  Stage 2. Again: operationalizes the finding, doesn't extend its evidence base to a second case.
 
 # Counter-Evidence
 
@@ -89,6 +103,14 @@ dilution, or the combined contract list itself becoming too large to reliably ho
 this experiment's scale can't rule out. Rated `medium` accordingly, not `high`, until a second,
 independent file/entity/story confirms the same shape.
 
+**Stages 3 and 4 (2026-07-15) reconfirmed this finding but did not resolve this caveat.** Both
+reused the identical `manufacturer-001` six-contract group — real compilation in Stage 3, real
+production wiring in Stage 4 — which is valuable confirmation that the finding holds up under
+progressively stricter scrutiny, but neither introduces a second entity, file, or story. Per this
+project's own "extending evidence without changing confidence is a valid outcome" rule
+(CLAUDE.md's Knowledge Capture Cadence), the confidence rating below is deliberately left at
+`medium`, not inflated by the added evidence volume alone.
+
 # Applicability
 
 - Contract-driven code generation, specifically: before generating any file, assemble every
@@ -100,12 +122,15 @@ independent file/entity/story confirms the same shape.
 
 # Confidence Assessment
 
-Medium. The result itself is clean — a single-variable change producing a stark before/after
-shift (2/3 → 3/3) — but it rests on one entity, one file, one story. This is exactly the
-"evidence exists, generalization boundary untested" case this project's own evidence-grading
-discipline treats as `medium`, not `high` — the next contract-driven trial against a different
-entity or a file shared by a different number of contracts is what would move this to `high`, or
-surface the boundary condition where it stops holding.
+Medium, unchanged as of 2026-07-15. The result itself is clean — a single-variable change
+producing a stark before/after shift (2/3 → 3/3), reconfirmed twice more since (Stage 3's real
+compilation, Stage 4's production wiring) — but all four confirmations rest on one entity, one
+file, one story. This is exactly the "evidence exists, generalization boundary untested" case
+this project's own evidence-grading discipline treats as `medium`, not `high` — the Contract
+Composition Assessment (`docs/design/contract-composition-assessment.md`) names the concrete next
+trial that would move this: a real story with more than one entity, or real (non-empty)
+cross-contract dependencies, neither of which exists yet in any contracts.yaml this project has
+generated.
 
 # Generalization
 

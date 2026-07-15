@@ -7,16 +7,20 @@ narrative_type:
 
 time_span:
   start_date: 2026-06-19
-  end_date: 2026-07-14
+  end_date: 2026-07-15
 
 related_principles:
   - coverage-should-be-generated-not-discovered
   - exhaustive-enumeration-over-holistic-review
+  - compute-facts-mechanically
+  - implementation-ownership-requires-full-file-scope-visibility
 
 related_retrospectives:
   - 2026-07-13
+  - 2026-07-15
 
-related_blog_posts: []
+related_blog_posts:
+  - two-of-three-runs-invented-a-field-we-never-asked-for
 
 confidence: high
 ---
@@ -83,13 +87,27 @@ specification artifacts." Traceability, not documentation, is now the artifact's
 # Architecture Changes
 
 - `a1121e4`: OpenAPI/HTTP contract renamed out of the way, freeing "Contract" as a term.
-- `40bde93`: Contract Generation (Stage 4) implemented — `Contract`/`ContractSet`/
-  `ContractCoverage`/`DependencyReview`/`ContractAudit` types, one contract per cluster/grouping,
-  mechanical unit-contract derivation, reviewed integration-contract dependencies.
+- `40bde93`: Contract Generation (the behavior-first pipeline's own Stage 4) implemented —
+  `Contract`/`ContractSet`/`ContractCoverage`/`DependencyReview`/`ContractAudit` types, one
+  contract per cluster/grouping, mechanical unit-contract derivation, reviewed integration-contract
+  dependencies.
 - The design doc's own "Role of tools during implementation" section reframes the coding model's
   future role around this artifact: "treat the coding model primarily as a contract-to-code
   translator" — retrieval, testing, and validation tools driven by what a contract names, not by
   open-ended model-directed exploration.
+- **2026-07-15 — a separate, numbered investigation (its own Stages 1-4, not to be confused with
+  the planning pipeline's Stage 4 above) answered whether this artifact actually holds up as an
+  implementation boundary.** `dcf0326`/`ccce904`/`02a35ff`: `Contract`/`Behavior` gained
+  `kind`/`entity`/`member`/`mandatory` — three small, mechanically-derived fields, each added only
+  after concrete evidence named a real gap (`docs/contract-readiness-assessment.md`), not
+  speculatively. `5a8a4b4`/`e368cb1`: a single-contract trial found the boundary alone wasn't
+  enough (unauthorized field invention, 2 of 3 runs); showing every contract sharing a file fixed
+  it (3 of 3 clean) — see [[implementation-ownership-requires-full-file-scope-visibility]] and the
+  blog draft `two-of-three-runs-invented-a-field-we-never-asked-for`. `74d4aa7`: the same fix
+  confirmed by real compilation and test execution, not just read. `1d0e3a4`: contract-driven file
+  discovery landed in `canopy implement` itself — the first production code this whole
+  investigation touched, gated behind `contracts.yaml`'s mechanical presence, with a provably
+  unchanged fallback for every story that doesn't have one.
 
 # Principles That Emerged
 
@@ -105,6 +123,17 @@ The planning half of this road is complete: contracts are generated, gated, audi
 traceable back to the behaviors that produced them. The design doc is explicit that this "closes the
 planning half of the redesign" — a deliberate scope boundary, not an oversight.
 
+**Updated 2026-07-15.** The implementation half now has real, not just planned, evidence behind
+it — and a more precise shape than the design doc originally sketched. Contracts can drive
+implementation, but only once a model sees every contract that shares a file, not one at a time;
+that finding is itself now a graded principle, not just an experimental result. Contract-driven
+file *discovery* is live in production. Contract-driven file *content generation* is not — every
+real test/implementation-writing call in `canopy implement` still uses the full story/spec/
+scenario/ADR prompts regardless of whether contracts exist for a story, confirmed by grep against
+the current codebase, not assumed. The Contract Composition Assessment
+(`docs/design/contract-composition-assessment.md`) names this as the single most important
+remaining unknown, ahead of composition or schema questions.
+
 # Why This Matters
 
 This narrative is unusual among the others reviewed because its ending is genuinely still open, not
@@ -119,8 +148,25 @@ The design doc names its own unfinished business precisely: wiring `canopy imple
 consume `contracts.yaml` instead of the current ADR/architecture-skill-driven planning; deciding how
 a behavior's Decision Point dependency gets re-materialized once its blocking decision resolves
 (nothing currently re-derives a blocked behavior automatically); and the migration path from today's
-`plan.yaml` shape to this one. None of these were in scope for the planning-side work completed so
-far, and none have started as of this narrative's end date. The project's own stated litmus test for
-whether this succeeds, discussed separately from the commit record: if switching the target language
-or framework changes the contract itself, planning concerns have leaked back into implementation —
-a test that can only be run once this remaining wiring exists.
+`plan.yaml` shape to this one. The project's own stated litmus test for whether this succeeds,
+discussed separately from the commit record: if switching the target language or framework changes
+the contract itself, planning concerns have leaked back into implementation.
+
+**Updated 2026-07-15.** The first of those three — wiring `canopy implement` to consume
+`contracts.yaml` — is resolved for file discovery: `generate_story_plan_from_contracts` does this
+mechanically, live in production, verified against real data. The litmus test above has not yet
+been run in the form originally proposed (no second language/framework target has been tried),
+but a related, sharper version of it was: the contract schema itself was checked for
+language-independence early in this investigation and found clean by construction (no
+Spring-Boot-specific or React-specific vocabulary anywhere on `Contract`) — the tech-specific
+translation lives entirely in skills, as designed. The Decision Point re-materialization question
+and the `plan.yaml` migration path both remain exactly as open as before — neither was touched.
+
+**New open questions, surfaced by the same investigation that closed the first:** whether
+contract-driven *content* generation (not just discovery) actually improves on what
+`canopy implement` already produces today, untested in either direction; composition across
+multiple entities and real (non-empty) cross-contract dependencies, exercised so far only against
+synthetic test fixtures, never a real story; and multi-service/route-layer composition
+(frontend + backend together), which the current mechanical enumerator explicitly refuses rather
+than guesses at. `docs/design/contract-composition-assessment.md` (2026-07-15) is the fuller
+account of all three, with a proposed next experiment for the first.

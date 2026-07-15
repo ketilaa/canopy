@@ -719,13 +719,14 @@ active; the hook only makes sure that judgment gets exercised instead of silentl
 
 `docs/{retrospectives,blog-drafts,principles,reports,narratives}/` is not a one-time export — it's
 meant to stay current as the project evolves, across whichever developer or session is doing the
-work. Four distinct artifact types, each answering a different question, discovered in that order:
+work. Five distinct artifact types, each answering a different question:
 
 | Directory | Answers | Scope |
 |---|---|---|
-| `retrospectives/` | What happened during a period? | One day (or, for reconstructed ones, one era) |
+| `retrospectives/` | What happened during a period? | One cross-cutting day, or a project-level milestone |
 | `principles/` | What reusable lesson generalizes across many events? | Cross-cutting, evidence-graded, includes counter-evidence |
-| `blog-drafts/` | What's one story worth telling? | A single bounded incident with a full belief→evidence→change arc |
+| `blog-drafts/` | What's one story worth telling? | A single bounded incident (or milestone) with a full belief→evidence→change arc and a genuine prediction at stake |
+| `reports/` | What happened across sessions against one story? | One story, extended chronologically |
 | `narratives/` | How did our thinking on one thread evolve across months? | Weeks-to-months, connects multiple retrospectives/principles/blog posts into one arc — see `docs/narrative-analysis.md` for how these get compared and ordered |
 
 Don't force a finding into the wrong type. A recurring pattern across many small commits is a
@@ -736,39 +737,48 @@ together — "how did X evolve" — is a narrative, and narratives require a ded
 (pick one thread, trace it end to end) rather than emerging automatically from the bottom-up
 retrospective/principle/blog-post cadence below.
 
-Rather than a separate calendar-driven job, day-to-day knowledge capture piggybacks on checkpoints
-this project already has a habit of noticing:
+**Trigger-based, not calendar-based.** None of these five get created because time passed — each
+has its own trigger, checked when relevant work happens, not on a schedule. Historical evidence for
+this shape: the historical-reconstruction sweep found retrospectives are common, principles less
+so, blog-worthy investigations rarer still, and narratives rarest of all — a fixed cadence would
+either starve the rare types waiting for a schedule slot, or pad the common ones with nothing to
+say. `docs/reports/`'s own trigger ("at the close of a sweep") already worked this way before the
+other four were generalized to match — proof this shape holds up in practice, not just in theory.
 
-**At the end of a retrospective-worthy day** (the existing daily-retrospective habit — see
-`docs/retrospectives/`), after writing the day's retrospective, ask two follow-up questions before
-closing the session:
-1. **Does this day's work contain a blog-worthy arc?** — a genuine belief → evidence → design-change
-   → principle story, not a progress update. Most days won't. When one exists, add a draft to
-   `docs/blog-drafts/` following the style in that directory's existing drafts (evidence-first,
-   prediction-driven, concrete numbers — see the drafts themselves for the bar).
-2. **Did this day's work validate, refine, or refute a principle?** — either a new one crossing the
-   bar in `docs/principles/` (generalizes beyond a single fix, evidence-backed, survives a stated
-   counter-example), or new evidence for/against an existing principle file, which should be added
-   to that file's Evidence or Counter-Evidence section rather than left undocumented.
+- **Retrospectives**: a day's work is cross-cutting (spans multiple stories or areas) or crosses a
+  project-level milestone (first production wiring, first schema change, first cross-story
+  generalization). A story-scoped reproducibility sweep belongs in that story's `reports/` file
+  instead (see below) — don't double-capture the same content in both places.
+- **Principles**: a new, evidence-backed recurring pattern appears; existing evidence for a
+  principle is strengthened or weakened by new work; or a principle's own stated confidence-
+  limiting caveat (e.g. "medium because only one story has been tested") is resolved or
+  contradicted by new evidence. Extending a principle's evidence list without changing its
+  confidence rating is a valid, common outcome — don't inflate confidence just because more
+  evidence accumulated in the same shape as before.
+- **Blog drafts**: a complete investigation closes, OR a major evidence-backed intermediate
+  milestone is reached — AND, either way, a genuine prediction was at stake that could have gone
+  the other way, not a foregone conclusion. Follow the style in that directory's existing drafts
+  (evidence-first, prediction-driven, concrete numbers — see the drafts themselves for the bar).
+- **Reports**: at the close of a reproducibility sweep or dogfooding session against a specific
+  story — the original trigger-based artifact type; unchanged here. Don't leave sweep results only
+  in a scratchpad or a chat transcript. Scratchpad files are session-scoped and can be lost;
+  `docs/reports/` is the durable home. Prefer one file per story, extended chronologically as new
+  sessions run, over one file per sweep (see `docs/reports/manufacturer-001.md` for the shape).
+- **Narratives**: a long-running thread's own previously-stated open question or "what's left"
+  gets resolved by recent work; a major project belief changes; or enough new
+  retrospectives/principles have accumulated that an existing narrative's "Current View" or "Open
+  Questions" section looks stale. Check this by re-reading the narrative's own stated open items,
+  not by vibe. When a narrative *is* updated, update only the sections the trigger actually
+  touched — a resolved open question does not require re-reviewing the whole thread from scratch;
+  a full top-down regeneration pass (review retrospectives, principles, blog drafts, commit
+  history, and design-doc/CLAUDE.md history together) is its own separate, much rarer trigger
+  (enough accumulated drift that "Current View" reads as stale end-to-end), not the default
+  response to one closed item.
 
-**At the close of a reproducibility sweep or dogfooding session against a specific story**, add or
-extend that story's file in `docs/reports/` — don't leave sweep results only in a scratchpad or a
-chat transcript. Scratchpad files are session-scoped and can be lost; `docs/reports/` is the
-durable home. Prefer one file per story, extended chronologically as new sessions run, over one
-file per sweep (see `docs/reports/manufacturer-001.md` for the shape).
-
-**Narratives don't fit this daily cadence and shouldn't be forced into it.** Revisit
-`docs/narratives/` periodically (a natural trigger: after a major architecture pivot lands, or
-whenever enough new retrospectives/principles have accumulated that an existing narrative's "Current
-View" or "Open Questions" section looks stale) rather than at every checkpoint. When starting a new
-narrative pass, review retrospectives, principles, blog drafts, commit history, and design-doc/
-CLAUDE.md history together, looking specifically for a thread that spans weeks — not for what
-happened on any single day.
-
-**This is a habit to apply proactively, the same way the daily retrospective already is** — not a
-step that requires the user to ask each time. Skip it honestly on days that only produced routine
-fixes; forcing a blog draft or a "principle" out of an ordinary bug fix defeats the purpose (see
-"Blog Post Candidates" and "Engineering Principles" evidence bars below).
+**This is a habit to apply proactively whenever a natural trigger fires** — not a step that
+requires the user to ask each time, and not a scheduled job either. Skip it honestly when no
+trigger has actually fired; forcing an artifact out of routine work defeats the purpose (see "Blog
+Post Candidates" and "Engineering Principles" evidence bars below).
 
 **Why this shape, not a bigger pipeline:** an earlier proposal considered automating draft
 generation and publishing end to end. Deliberately scoped down to draft-only, human-gated

@@ -19,6 +19,7 @@ source_artifacts:
   - "commit 0dd7073 — Add Event Continuity gate, the sibling check to Entity Continuity"
   - "commit 390b7f6 — Compute domain-event ADR existence as a fact instead of asking the model to check"
   - "reproducibility sweep, manufacturer-001, 2026-07-14 (0/6 duplicate ADRs across 3 runs, down from ~2/3 incidence)"
+  - "commit 1d0e3a4 — Wire canopy implement to consume contracts.yaml (Stage 4): contract-driven file discovery triggers on contracts.yaml's mechanical presence, not an opt-in flag"
 
 related_principles:
   - deterministic-audits-vs-compensation
@@ -66,6 +67,15 @@ a duplicate anyway.
   answer mechanically instead... The result is injected as a single... fact." A controlled
   reproducibility sweep after the fix showed 0 duplicates across 3 runs, down from the previously
   quantified ~2/3 incidence with the same underlying data available to the model either way.
+- Commit `1d0e3a4` (2026-07-15): the same shape applied one level up, to a *routing* decision
+  rather than a content-generation one. Whether `canopy implement` uses contract-driven file
+  discovery or the legacy LLM-driven planner was designed, deliberately, as a check on a
+  mechanical fact — does `contracts.yaml` exist for this story — rather than an explicit opt-in
+  flag a human or a future session could simply forget to pass. The choice was explicit and
+  discussed before implementation, not incidental: an opt-in flag was considered and rejected
+  specifically because it "avoids mode drift caused by forgotten flags," the exact failure mode
+  this principle already predicts for any judgment left to be re-made by hand instead of computed
+  once from already-available data.
 
 # Counter-Evidence
 
