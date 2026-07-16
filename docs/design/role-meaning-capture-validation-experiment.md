@@ -12,6 +12,16 @@ Scope, per explicit constraint: validates role meaning capture only. Does not to
 bounded contexts, glossary enrichment, hot spots, or forward-reference detection — none of those
 are tested, referenced as future work, or smuggled back in below.
 
+**Redesign note (2026-07-16, same day)**: this document's central emphasis — distinguishing genuine
+engagement from mechanical filling from skipping — was set aside, not because it stopped being a
+real question, but because a later instruction correctly identified it as premature: whether the
+answer changes anything downstream matters more than whether users answer at all, and should be
+resolved first. `docs/design/role-meaning-value-validation.md` redesigns the experiment around that
+value question, assuming an answer exists rather than testing whether one is given. This document's
+own §5/§6 material (the response-behavior signals, and the first version of the downstream-impact
+comparison) is not wrong, only sequenced after a more important question — read the value validation
+first; this document's response-rate question becomes relevant again only once that one succeeds.
+
 ---
 
 # Why This Cannot Be a Simulated-Persona Test
