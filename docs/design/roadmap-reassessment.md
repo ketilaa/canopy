@@ -450,3 +450,15 @@ back, at whether the term itself was ever checked against what this project alre
 and the Product-Owner Perspective Experiment's explicit charter. This is filed as additional,
 independently-derived evidence for item 1's already-closed finding, not a reopening of item 1 or a
 new item 7.
+
+**Correction (2026-07-16, same day)**: the "unestablished referent" synthesis above was run
+through this project's own observation → hypothesis → evidence → counter-evidence discipline in
+`docs/design/unestablished-referent-hypothesis-review.md` and does not survive as a new concept.
+Three of the four gaps are better explained as an existing-mechanism coverage gap (duplicate-name
+fits `unresolved-decisions-become-explicit-decision-points` directly; role-semantics/authorization
+are most likely one gap, not two, and best explained by `exhaustive-enumeration-over-holistic-
+review`'s already-validated finding that Stage 0/2's checklists don't yet enumerate these specific
+items); the fourth (`Product` relationship) already has a home in `domain-boundary-
+explicitness.md`. The experiment's underlying observations (§1 of that document) stand; the shared-
+class synthesis drawn from them does not. Read that document for the full counter-evidence pass,
+not this paragraph's summary of it.
