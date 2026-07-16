@@ -394,3 +394,59 @@ near-term plan. Both items are closed *as investigations* — this reassessment'
 above is otherwise unchanged; item 3 (composition) is not being promoted back up by this update,
 only recorded as no longer blocked by an *unexamined* domain-event foundation, since the shakiest
 part of that foundation now has a specific, narrower explanation rather than an open question mark.
+
+---
+
+## Update (2026-07-16): New Evidence for Item 1 — The Product-Owner Perspective Experiment
+
+`docs/design/product-owner-perspective-experiment.md` adds independent evidence to item 1's own
+closed finding, via a different method: five simulated Product Owner personas reviewing
+`manufacturer-001`'s real generated artifacts, rather than reconstructing historical review
+outcomes. Four gaps surfaced, two of them independently reached by different personas reasoning
+in entirely different ways — a global duplicate-name rule with no distinguishing identifier
+(domain-expert and customer-outcome angles), and an undefined relationship to a `Product` entity
+that the story's own `so_that` field depends on but the domain vocabulary has never captured
+(product-portfolio angle, directly corroborating `domain-boundary-hypothesis-assessment.md`'s more
+abstract reasoning with a concrete instance). A third — total absence of any authorization model,
+despite "authenticated" appearing in every scenario's `given` clause — was noticed by exactly one
+of five personas, the sharpest illustration in either experiment of how persona-dependent this
+category of gap is. A fourth — ambiguity in whether "manufacturer representative" denotes an
+external or internal actor — sits logically prior to the authorization gap.
+
+**Why this counts as independent evidence, not a restatement**: the Human-Insight Inventory asked
+"how was this actually reviewed" (a historical, single-session reconstruction). This experiment
+asks "what would an engaged reviewer notice" (a simulated, multi-lens re-reading of the same
+artifacts). Both converge on the same underlying conclusion — Canopy's output looks fully resolved
+regardless of whether it actually is — reached by two different methods against the same real
+story. That convergence is stronger than either finding alone.
+
+**A shared pattern across the four gaps, worth naming precisely**: all four are cases where
+generated language — a business rule's implicit equivalence criterion ("same name" standing in for
+"same manufacturer"), a role label ("manufacturer representative"), a precondition word
+("authenticated"), a purpose clause ("so that products can reference them") — reads as though it
+already denotes a specific, settled real-world concept, when the concept itself was never
+separately established anywhere in the pipeline's own artifacts (`domain_registry.yaml`,
+`roles.yaml`, an ADR, a Decision Point). This is a narrower and, in three of the four cases, a
+*prior* failure mode to the one `unresolved-decisions-become-explicit-decision-points` already
+names: that principle covers a model *recognizing* a question exists and then silently fabricating
+an answer to it (duplicate-name handling fits this shape well — it is a genuine business-policy
+question the model answered with an unstated assumption). Role semantics, the authorization gap,
+and the `Product`-relationship gap are different in kind: nothing here indicates the model ever
+registered a question at all, because the specification's own fluent phrasing already presupposes
+a meaning for the term in play. `open_questions: []` and Stage 0's `gaps: []` are both accurate
+under this pipeline's current definition of "gap," and both miss all three — because none of the
+three ever took the shape of a flagged, unresolved question in the first place.
+
+**Working name for this shared class, offered here as a description of the pattern, not a proposed
+mechanism**: an *unestablished referent* — a term or relationship the specification uses fluently,
+that determines correctness downstream, whose actual real-world meaning was never confirmed against
+this project's own established vocabulary. This is distinct from a missing mechanical fact
+(computable, no ambiguity) and distinct from an unresolved policy decision in the existing
+Decision Point sense (a recognized question with no supporting basis) — it sits one level further
+back, at whether the term itself was ever checked against what this project already knows a
+`Manufacturer`, a `manufacturer representative`, or "products referencing them" actually means.
+
+**No mechanism proposed here** — matching this update's own evidence-before-redesign discipline
+and the Product-Owner Perspective Experiment's explicit charter. This is filed as additional,
+independently-derived evidence for item 1's already-closed finding, not a reopening of item 1 or a
+new item 7.
