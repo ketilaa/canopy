@@ -208,6 +208,16 @@ never scoped to cover.
 Still design-level — no prompt wording, no command, no schema. What a user should experience if
 this MVP works, and what "working" concretely means for each part of it.
 
+**Correction (2026-07-16, same day)**: the internal/external classification below was stress-tested
+against twenty realistic role names in `docs/design/role-classification-stability-test.md` and found
+to fail structurally (not just awkwardly) for a real fraction of common role shapes — suppliers,
+auditors, franchise partners, contractors, affiliated professionals. That document's conclusion: the
+answer set below should be read as **superseded** by a four-way `internal | external | affiliated |
+unresolved` set, with "on whose behalf does this actor act" as the more primary underlying question.
+Left as originally written below, not silently edited, per this project's own disclosed-correction
+discipline — read the stability test for the full reasoning before treating the three-way set below
+as current.
+
 **What question should be answered?** One question, asked once per newly-introduced role: *is this
 actor internal to the business — someone who acts on the business's own behalf (an employee, an
 operator, an internal team) — or external to it — someone outside the business itself (a customer,
