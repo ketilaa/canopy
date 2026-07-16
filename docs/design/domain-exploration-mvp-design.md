@@ -200,3 +200,59 @@ never scoped to cover.
 - **Bounded contexts, architecture ownership, service decomposition, aggregate design, event-
   modeling frameworks, or any large domain-modeling exercise** — none of these are touched by role
   meaning capture at all, and none of the evidence gathered so far requires them.
+
+---
+
+# What Success Looks Like From the User's Perspective
+
+Still design-level — no prompt wording, no command, no schema. What a user should experience if
+this MVP works, and what "working" concretely means for each part of it.
+
+**What question should be answered?** One question, asked once per newly-introduced role: *is this
+actor internal to the business — someone who acts on the business's own behalf (an employee, an
+operator, an internal team) — or external to it — someone outside the business itself (a customer,
+a partner, a third party, or the counterpart entity the story is even about)?* This is the single
+distinction the Role-Semantics Investigation found sits underneath the authorization question and
+was never asked anywhere. It is deliberately narrower than "describe this role" — a free-text
+description is still available for anything beyond this (the same `Described` shape already
+supports one), but the one thing that must be *forced*, per this project's own validated lesson
+that bounded questions outperform open invitations, is this specific classification.
+
+**What answers are possible?** Three, and only three, mirroring the resolved/not_applicable/
+unresolved shape Policy Discovery already validated rather than inventing a new one: **internal**,
+**external**, or **unresolved** — a genuine, first-class third option, not a fallback for a broken
+interaction. Whichever of the two substantive answers is given, an optional free-text elaboration
+can accompany it (e.g., *which* kind of external party) — but the elaboration is never a substitute
+for the forced classification itself, the same way a Policy Discovery answer needs both a
+classification and grounding, not grounding alone.
+
+**What does "unresolved" look like?** Exactly as legitimate and exactly as visible as a substantive
+answer — never a silently-defaulted guess, and never hidden. Concretely: a role marked unresolved
+must be distinguishable, wherever roles are shown or reused, from one marked internal or external —
+not merged into a generic "unknown" bucket indistinguishable from a role nobody ever asked about in
+the first place. It must not be treated as a blocking gap the way an unresolved Stage 0 completeness
+finding is — this MVP is deliberately lower-stakes than that — but it also must not be silently
+resolved by a later stage without a human explicitly revisiting it; the same "protect what's already
+recorded, even when what's recorded is 'we don't know yet'" posture `freeze-the-established-spec`
+already argues for once *something* has been decided.
+
+**How is the answer preserved?** Attached to the role itself, in the roles registry — not
+per-story — so the question is asked once per role, not once per story that happens to reuse it.
+Once given, a substantive answer is treated as an established fact for that role from then on, the
+same way an accepted ADR is treated as established once resolved. An `unresolved` answer is
+preserved too, not discarded — a later story reusing the same role should see that it is still
+unresolved, so the option to revisit it stays open without ever being *forced* open again
+automatically.
+
+**How does downstream Canopy benefit?** Three ways, in order of how directly evidenced each is.
+First, and most directly: the business-policy checklist's `authorization` area, which today asks
+about permission "beyond the actor already being authenticated" with no way to know who that actor
+is, gains a settled fact to reason from instead of an unexamined assumption — the exact dependency
+the Role-Semantics Investigation's §4 already established. Second: a future review of this same
+kind — another Human-Insight-Inventory-style pass, or another Product-Owner Perspective Experiment
+on a new story — has real, human-confirmed ground truth to check against, rather than needing to
+reconstruct the ambiguity by hand the way this entire investigation thread has had to do for
+`manufacturer-001`. Third, and most speculative: if a role's internal/external status turns out to
+correlate with anything `identify_architectural_questions` already reasons about (e.g., whether a
+customer-facing vs. an internal-admin frontend is the right shape) — a genuine possibility, not a
+claim being made here, since nothing in this MVP wires the two together.
