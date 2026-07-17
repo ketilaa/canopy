@@ -198,6 +198,48 @@ any future design of a real domain-exploration mechanism.
 
 ---
 
+# The Shape of Supplied Meaning, Checked Against the Data
+
+Restating the specificity finding above more precisely, since it may be the most consequential
+single result of this phase — checked directly against all four usable runs, not asserted from
+impression:
+
+| Persona | Character of the supplied fact | Traceability result |
+|---|---|---|
+| risk-averse | **Operational** — names a specific artifact ("the original order/purchase confirmation number") and a specific check ("verified against our records") | Strong — both resolved policies cite the fact verbatim |
+| growth-retention | **Operational** — names specific actions ("trigger an offer to exchange... or store credit," "the stated reason... must always be captured") | Strong — every scenario mirrors these specific actions directly |
+| operational (raw, pre-failure content) | **Operational** — names a specific mechanism ("matching the order date against a fixed return window") | Strong in raw content, though the run itself failed for an unrelated formatting reason |
+| customer-experience | **Mixed** — names one specific check ("the customer's own account order history") inside reasoning that is otherwise principle-level ("minimizing friction... more valuable than strict verification") | Weak/plausible only — schema hints align, but every resolved policy cites the generic story, not the fact |
+| compliance | **Principle-level** — "legally mandated," "driven by external obligation, not internal preference," with no single concrete, quotable mechanism | Weakest of all four — no artifact reflects this persona's distinguishing content at all |
+
+Three of four usable runs confirm the pattern cleanly at one pole or the other; the fourth
+(customer-experience) sits in between rather than confirming either pole outright — worth stating
+honestly rather than rounding it into either bucket.
+
+**This is not an isolated new observation — it is a specific, testable instance of a mechanism this
+project already holds at high confidence.** `unresolved-decisions-become-explicit-decision-points`
+established that the citation-requirement fix only works because it forces a "resolved" answer to
+point at something specific and checkable, rather than accepting a plausible-sounding claim on its
+own. The same mechanism, read from the other direction, explains this phase's finding directly:
+`generate_story_spec`'s own citation behavior can only point at a supplied fact when that fact
+*contains* something specific enough to quote. "Verified against our records" gives the model a
+concrete phrase to lift into an `evidence` field; "driven by external obligation, not internal
+preference" gives it nothing equivalently specific to point at, so it falls back to citing the
+generic story instead. The principle was validated for the model's *own* answers; this phase is the
+first evidence it may extend to *human-supplied* facts as well — the same underlying requirement
+(specificity, not just presence) on both sides of the exchange.
+
+**Evidence-strength caveat, stated plainly given how much weight this finding could bear**: this is
+one experiment, four usable data points, one run per persona — the same N=1 limitation every
+experiment in this chain has carried. It is a strong, honest, well-supported *pattern* in this run,
+not yet a validated principle by this project's own evidence bar (which has generally wanted
+independent confirmation across more than one investigation before promoting a finding to
+`docs/principles/`). Worth designing a dedicated follow-up to test directly — deliberately varying
+only *how operationally specific* a supplied fact is, holding its underlying content constant — but
+not undertaken here; this document reports what this run found, not a new experiment.
+
+---
+
 # Selecting the Pair for Phase 3
 
 **Operational is excluded outright** — no valid spec exists to carry forward.
