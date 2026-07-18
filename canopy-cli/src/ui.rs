@@ -38,20 +38,74 @@ pub(crate) fn select_review_choice(theme: &ColorfulTheme, prompt: &str, edit_lab
     })
 }
 
+/// `dialoguer::Input`'s own cursor-position math has a live upstream bug (confirmed present in
+/// both 0.11 and the latest 0.12: `ArrowLeft`/`ArrowRight`/`Backspace` each use a different
+/// line-wrap modulus), so the visible cursor can drift from the actual buffer position once text
+/// wraps past terminal width — meaning what's on screen while editing is not reliably what ends
+/// up in the buffer. Rather than patch a vendored copy of a third-party terminal-input crate,
+/// every text input echoes the captured value back on its own line, unaffected by any mid-edit
+/// cursor drift, and asks for an explicit (default-yes) confirmation before it's used — so a
+/// garbled edit is caught here, not discovered later in a downstream LLM call or saved artifact.
+fn confirm_captured_text(theme: &ColorfulTheme, prompt: &str, value: &str) -> bool {
+    println!("  → {prompt}: {value}");
+    confirm_default(theme, "Use this exactly as shown?", true)
+}
+
 pub(crate) fn input_text_required(theme: &ColorfulTheme, prompt: &str, ctx: &'static str) -> Result<String> {
-    Input::with_theme(theme).with_prompt(prompt).interact_text().context(ctx)
+    let mut initial: Option<String> = None;
+    loop {
+        let mut input: Input<String> = Input::with_theme(theme).with_prompt(prompt);
+        if let Some(text) = &initial {
+            input = input.with_initial_text(text);
+        }
+        let value = input.interact_text().context(ctx)?;
+        if confirm_captured_text(theme, prompt, &value) {
+            return Ok(value);
+        }
+        initial = Some(value);
+    }
 }
 
 pub(crate) fn input_text_optional(theme: &ColorfulTheme, prompt: &str, ctx: &'static str) -> Result<String> {
-    Input::with_theme(theme).with_prompt(prompt).allow_empty(true).interact_text().context(ctx)
+    let mut initial: Option<String> = None;
+    loop {
+        let mut input: Input<String> = Input::with_theme(theme).with_prompt(prompt).allow_empty(true);
+        if let Some(text) = &initial {
+            input = input.with_initial_text(text);
+        }
+        let value = input.interact_text().context(ctx)?;
+        if confirm_captured_text(theme, prompt, &value) {
+            return Ok(value);
+        }
+        initial = Some(value);
+    }
 }
 
 pub(crate) fn input_text_with_initial(theme: &ColorfulTheme, prompt: &str, initial: &str, ctx: &'static str) -> Result<String> {
-    Input::with_theme(theme).with_prompt(prompt).with_initial_text(initial).interact_text().context(ctx)
+    let mut current = initial.to_string();
+    loop {
+        let value: String = Input::with_theme(theme).with_prompt(prompt).with_initial_text(&current).interact_text().context(ctx)?;
+        if confirm_captured_text(theme, prompt, &value) {
+            return Ok(value);
+        }
+        current = value;
+    }
 }
 
 pub(crate) fn input_text_default(theme: &ColorfulTheme, prompt: &str, default: String, ctx: &'static str) -> Result<String> {
-    Input::with_theme(theme).with_prompt(prompt).default(default).interact_text().context(ctx)
+    let mut initial: Option<String> = None;
+    loop {
+        let mut input: Input<String> = Input::with_theme(theme).with_prompt(prompt);
+        input = match &initial {
+            Some(text) => input.with_initial_text(text),
+            None => input.default(default.clone()),
+        };
+        let value = input.interact_text().context(ctx)?;
+        if confirm_captured_text(theme, prompt, &value) {
+            return Ok(value);
+        }
+        initial = Some(value);
+    }
 }
 
 pub(crate) fn bootstrap_select(theme: &ColorfulTheme, prompt: &str, suggestions: &[String]) -> Result<Vec<String>> {
