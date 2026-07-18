@@ -56,6 +56,8 @@ Derive the minimal set of user stories that fully cover this intent. Rules:
 - A creation story includes all actor-provided attributes — mandatory and optional. Split into an update story only when the intent explicitly describes editing an existing record.
 - One intent action = one story. Do not decompose a single action into sub-steps.
 - "depends_on" lists IDs of stories (existing or new in this batch) that must exist first
+- "depends_on" is ALWAYS a YAML sequence, even for a single dependency — `depends_on: [<story-id>]`,
+  NEVER a bare string like `depends_on: <story-id>`
 - Reason explicitly about dependencies within this batch: if story B requires story A to exist
   first (because it operates on something A creates), then B must list A in depends_on
 - A story that creates a resource has no depends_on; a story that reads, updates, or deletes
