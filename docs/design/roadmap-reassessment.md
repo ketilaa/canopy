@@ -462,3 +462,98 @@ items); the fourth (`Product` relationship) already has a home in `domain-bounda
 explicitness.md`. The experiment's underlying observations (§1 of that document) stand; the shared-
 class synthesis drawn from them does not. Read that document for the full counter-evidence pass,
 not this paragraph's summary of it.
+
+---
+
+## Update (2026-07-18): Backlog Execution Plan
+
+Status: decided, not further analysis. Closes the long chain of investigation this document has
+tracked since 2026-07-15 (Role Meaning, in full, via `docs/design/role-meaning-collapses-to-
+classification.md`; vocabulary-discrepancy, in full, via `docs/reports/backlog-discovery-
+vocabulary-check.md`'s Runs #1–#3) and translates the resulting reassessment directly into
+execution. No new investigation opened here — only what to build next, in order.
+
+### Active Tracks
+
+- **Backlog Evolution** — what capabilities does Canopy already know about (entities, events,
+  roles) that have no story yet. Concept-level signals only, primary: entity-with-no-story.
+- **Story Readiness** — does *this* story's own spec/behaviors/contracts hold together. The
+  existing Stage 0/2/continuity-audit machinery, now named as answering a different question than
+  Backlog Evolution rather than the same one. The Human-Insight Inventory rerun belongs here.
+- **Vertical-slice implementation from a real discovered gap** — `Customer`, the first candidate
+  Backlog Evolution has actually found, carried through the real pipeline rather than left as a
+  finding.
+- **Parked, unaffected, low priority** (real, not retired, just not next): composition's harder
+  questions (multi-entity, deeper chains, multi-service), content-generation quality for a composed
+  contract group, legacy planner retirement, contract schema work.
+
+### Retired Tracks
+
+- **Vocabulary-discrepancy (word-level) detection** — concluded; operates on the wrong unit
+  (tokens, not concepts). Shipped code stays; no further precision work planned against it.
+- **Role Meaning / Role Semantics investigation** — concluded; collapsed to one narrow, local fact
+  (role identifier + classification value feeding `authorization`). No further investigation.
+- **Operational-fact collection-strategy analysis** — concluded; its only output was the Role
+  Meaning finding above. No second operational fact is queued for the same treatment.
+- **Canopy-Assisted Domain Exploration vision / Domain Exploration MVP** — superseded by the
+  concept-level Backlog Evolution framing, which is narrower and better evidenced.
+- **Domain-event Decision Point question** — closed 2026-07-15 ("too early to tell"); no new
+  evidence since.
+- **Pre-behavior planning reproducibility, as an active investigation** — the sweep ran; its
+  finding (domain-event proposals are the least reproducible category) is already absorbed into the
+  closed Human-Insight Inventory / Decision-Point items above. Not a track to keep running.
+
+### Next 3 Iterations
+
+**Iteration 1 — Entity-with-no-story check**
+- *Objective*: a small, standalone, mechanical check comparing `domain_registry.yaml` entity names
+  against every story's `as_a` value (cross-checked with `roles.yaml`), surfacing entities that
+  have never been the subject of any story.
+- *Expected learning*: whether a concept-level signal reliably surfaces real, worthwhile backlog
+  gaps the way the retired word-level check did not — the first direct test of today's core
+  conclusion.
+- *Implementation effort*: low. A set-difference over data Canopy already produces; no LLM call;
+  same tier as the already-shipped mechanical checks (`classify_proposal_category`,
+  `find_vocabulary_discrepancies`).
+- *Completion criteria*: run against the real dogfooding project and correctly surface all 8
+  already-confirmed uncaptured entities (`Order`, `Customer`, `Cart`, `Payment`, `Supplier`,
+  `Review`, `Discount`, `Notification`) via the `as_a`-only method, with the `product-008`
+  false-negative trap (the word "customers" appearing in `so_that` text) correctly avoided; built,
+  tested, committed, reinstalled.
+
+**Iteration 2 — Human-Insight Inventory rerun**
+- *Objective*: re-run the existing Human-Insight Inventory counting method, unchanged, against the
+  full `review-log.yaml` history now accumulated across every real dogfooding session this project
+  has run (`manufacturer-001`'s original review plus every product-*/warehouse-*/support-*/
+  finance-*/delivery-* session since) — not the single-story sample the original inventory used.
+- *Expected learning*: whether "too early to tell" resolves into an actual pattern now that a much
+  larger real sample exists — specifically whether some review categories get real scrutiny
+  (modify/reject, or meaningful/not-sure) while others are uniformly rubber-stamped.
+- *Implementation effort*: near-zero. No new code — reuse the counting/categorization method
+  already validated in `docs/design/human-insight-inventory.md` against data that already exists on
+  disk.
+- *Completion criteria*: a written comparison of accept/modify/reject and meaningful/not-meaningful/
+  not-sure rates across categories and sessions, with an explicit verdict on whether the original
+  "too early to tell" finding still holds or is now answerable.
+
+**Iteration 3 — Customer vertical slice**
+- *Objective*: carry `Customer` — the first real candidate Iteration 1 identifies — through
+  `intent → spec → behaviors → implement` as a real story in the dogfooding project.
+- *Expected learning*: whether a Backlog Evolution finding actually converts into a safely
+  implementable story end to end — the first real test of discovery-to-implementation for a
+  genuinely discovered, not synthetic, gap.
+- *Implementation effort*: medium — a real story through the existing pipeline, same cost class as
+  any other story; no new mechanism required.
+- *Completion criteria*: a `Customer`-facing story (e.g. "browse the catalog") accepted, specified,
+  and carried at least through `behaviors`/contract generation, with results recorded at the same
+  bar as prior dogfooding sessions in `docs/reports/`.
+
+### What specific question is each iteration answering?
+
+1. **Entity-with-no-story**: does a concept-level signal (known entity, no story) reliably surface
+   real, worthwhile backlog gaps, where word-level detection did not?
+2. **Human-Insight Inventory rerun**: now that real review data spans many more sessions, does the
+   review gate actually differentiate scrutiny by category, or is everything still rubber-stamped
+   regardless of category?
+3. **Customer vertical slice**: does a capability discovered by the entity-with-no-story signal
+   actually make it safely into implemented software?
