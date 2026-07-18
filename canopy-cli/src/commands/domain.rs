@@ -3,13 +3,18 @@ use canopy_core::{DomainRegistry, StoryStatus, UserStories};
 use canopy_storage::{load_domain_registry, load_user_stories};
 
 /// Splits a PascalCase entity name into lowercase words — "ProductVariant" -> "product variant" —
-/// so a compound entity name can be matched as a phrase against free-form story fields.
+/// so a compound entity name can be matched as a phrase against free-form story fields. Only
+/// splits at a lowercase-to-uppercase boundary, so an all-caps acronym like "SKU" stays "sku"
+/// rather than becoming "s k u" (live-verified bug: the naive "space before every uppercase char"
+/// version broke exactly this case, silently flagging an already-covered entity as uncaptured).
 fn spaced_lowercase(name: &str) -> String {
     let mut out = String::new();
-    for (i, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() && i > 0 {
+    let mut prev_lower = false;
+    for ch in name.chars() {
+        if ch.is_uppercase() && prev_lower {
             out.push(' ');
         }
+        prev_lower = ch.is_lowercase();
         out.extend(ch.to_lowercase());
     }
     out
@@ -176,6 +181,20 @@ mod entities_without_stories_tests {
         let domain = domain_with(&["Order"]);
         let stories = UserStories {
             stories: vec![story("s1", "product manager", "cancel Orders", "x", StoryStatus::Accepted)],
+        };
+        assert!(entities_without_stories(&domain, &stories).is_empty());
+    }
+
+    #[test]
+    fn matches_all_caps_acronym_entity_names() {
+        // Live-verified bug: naive space-before-every-uppercase-char logic turned "SKU" into
+        // "s k u", which never matches "sku" in real story text — flagging an already-covered
+        // entity as uncaptured.
+        let domain = domain_with(&["SKU"]);
+        let stories = UserStories {
+            stories: vec![story(
+                "s1", "product manager", "assign an SKU to a product variant", "x", StoryStatus::Accepted,
+            )],
         };
         assert!(entities_without_stories(&domain, &stories).is_empty());
     }
