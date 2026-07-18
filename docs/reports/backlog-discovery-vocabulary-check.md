@@ -154,27 +154,32 @@ not-sure, `across` → not-meaningful):
 | not-meaningful | 12 | 57% |
 | not-sure | 5 | 24% |
 
-### Finding 4 — All three response options were used naturally, without any artificial pressure to do so
+### Finding 4 — Signal-validation evidence: the flagged terms sort into distinguishable classes
 
 `Not sure` was never used as a dumping ground — every instance had a specific, stated reason
 (compound-phrase overlap: `location`/`levels`; concept-vs-synonym ambiguity: `issues`/`settled`/
 `delivery`). `Meaningful` was reserved for terms naming a genuinely absent, distinct concept
-(`inventory`, `warehouse`, `team`, `customers`) — every one of these, read back now, still looks
-correct on reflection. This directly answers the question this run was designed to test: **yes, a
-real (attentive, unscripted) judgment does naturally separate `catalog`-shaped signal from
-`stays`-shaped noise** — not because the detector got smarter, but because the review step itself
-absorbed the noise, exactly as the design predicted it might.
+(`inventory`, `warehouse`, `team`, `customers`). This shows the *signal itself* is a classifiable
+mix — not uniform noise, not uniform gold — and that the three-option review interaction is
+expressive enough to represent that mix without forcing anything into the wrong bucket.
 
-### Finding 5 — Noise did not cause friction, but this evidence is limited to one attentive reviewer
+**What this finding does not show, stated precisely so it isn't overread**: this classification
+was performed by this agent, who went in already knowing the hypothesis, the implementation, and
+which distinctions the experiment was designed to surface. That makes this evidence about the
+*signal's composition* (tier 2 below) — it is not evidence that an independent human, encountering
+these prompts with no prior context, would sort them the same way, as easily, or at all. That
+question is still open; see "Three tiers of validation" below.
+
+### Finding 5 — Mechanical observation: dismissing noise took no extra steps for this reviewer
 
 Across 21 judgments, dismissing a `not-meaningful` term took exactly the same one keystroke as
-confirming a `meaningful` one — no hesitation, no extra step, no visible cost to being shown a
-noisy candidate. This is a real, disclosed data point in favor of tolerating imprecision rather
-than adding a filter now. **Important limitation, stated plainly**: this session's reviewer (this
-agent) already understood the mechanism's purpose going in, which is not the same as an
-independent human encountering it cold, with no context, possibly repeatedly across many sessions
-where fatigue could change the answer. This evidence supports "noise is tolerable for an attentive
-reviewer," not yet "noise is tolerable for every real user in practice."
+confirming a `meaningful` one — a plain, countable fact about the interaction, not a usability
+verdict. **This does not support a conclusion about noise tolerance, usability, or friction for a
+real user.** This agent is not an independent human: prior knowledge of the mechanism's purpose
+plausibly makes classification faster and more confident than it would be for someone encountering
+the prompt cold, possibly repeatedly, with no stake in the experiment's outcome. Keystroke-count
+parity is a mechanism-level fact (tier 1); whether noise is *tolerable* is a human-validation
+question (tier 3) this run cannot answer.
 
 ### Finding 6 — Domain extraction quality visibly changes how much the check has left to flag
 
@@ -199,18 +204,41 @@ orthogonal to the vocabulary-discrepancy check and already a known, tracked pipe
 
 ---
 
+## Three tiers of validation — what Runs #1 and #2 actually support
+
+Kept as its own section because the three questions are easy to blur together, and blurring them
+is exactly what would make this report overclaim. Each is a different question, answered by
+different evidence, and progress on one does not transfer to the others.
+
+| Tier | Question | Status | Evidence |
+|---|---|---|---|
+| 1. Mechanism validation | Does the check fire, render, and log correctly? | **Supported** | Run #1 + Run #2: detection, question wording, and `review-log.yaml` entries all worked correctly across 5 real sessions and 24 flagged terms, no code changes needed. |
+| 2. Signal validation | Does the underlying signal (referenced-but-uncaptured term) actually contain a distinguishable mix of real gaps, noise, and genuine ambiguity? | **Partially supported** | Run #2: 21 terms sorted cleanly into meaningful/not-meaningful/not-sure with a stated reason each, under one reviewer's classification. Suggestive that the mix is real and classifiable — not yet confirmed independent of who's doing the classifying. |
+| 3. Human validation | Do independent humans find the signal useful — tolerate the noise, use all three options naturally, treat it as worth their attention? | **Not supported — open** | No data yet. Every judgment so far (Run #1's defaults, Run #2's 21 classifications) came from either a scripted default or this agent, not an independent human with no foreknowledge of the hypothesis. |
+
+**The strongest conclusion these two runs support:** the mechanism works mechanically, and
+produces a mix of signal and noise that can be classified.
+
+**The strongest conclusion these two runs do *not* support, and must not be read as supporting:**
+independent humans find the signal useful. That question — usability, noise tolerance, whether the
+three response options get used naturally by someone without inside knowledge, whether the signal
+is worth a real user's attention at all — remains entirely open. Findings 4 and 5 above were
+revised to stop short of claiming otherwise.
+
+---
+
 ## Open items for the next run
 
-- **Resolved by Run #2**: whether a real, attentive reviewer naturally distinguishes signal from
-  noise across the three response options. Answered yes, with reasoning recorded per term above.
-- **Still open**: whether this holds for an actual independent human, not this agent acting as
-  reviewer — the next real test of the hypothesis needs a session where the person interacting has
-  no foreknowledge of the mechanism's purpose.
-- **Still open**: no follow-through signal (whether an acknowledged gap later becomes a real story)
-  is measurable yet — this needs multiple sessions over time against `stories.yaml`'s accumulated
-  history, per the original design's stated signal list.
+- **Tier 1 (mechanism): considered closed** unless a future session surfaces a new plumbing defect.
+- **Tier 2 (signal): still accumulating** — more sessions, ideally across more varied domains and
+  more reviewers (not only this agent), would strengthen or weaken confidence that the
+  meaningful/noise/ambiguous mix generalizes.
+- **Tier 3 (human validation): not started.** The next real test needs a session where an actual
+  independent person — no foreknowledge of the hypothesis, the implementation, or the desired
+  distinctions — encounters the prompts and responds. Nothing run so far substitutes for this.
+- **Still open, independent of the above**: no follow-through signal (whether an acknowledged gap
+  later becomes a real story) is measurable yet — this needs multiple sessions over time against
+  `stories.yaml`'s accumulated history, per the original design's stated signal list.
 - **Deliberately not acted on yet, per explicit instruction**: the detection algorithm (stopword
-  list, part-of-speech blindness) was left untouched throughout Run #2, even though several
-  clear-noise terms (`reflect`, `receive`, `accurate`) would be filtered by a part-of-speech check.
-  Precision tuning is the next candidate only after enough genuine human sessions establish whether
-  it's actually needed, not before.
+  list, part-of-speech blindness) was left untouched throughout Run #2. Precision tuning is the
+  next candidate only after tier 3 evidence establishes whether it's actually needed, not before.
