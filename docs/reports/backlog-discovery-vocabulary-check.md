@@ -204,7 +204,90 @@ orthogonal to the vocabulary-discrepancy check and already a known, tracked pipe
 
 ---
 
-## Three tiers of validation — what Runs #1 and #2 actually support
+## Run #3 (2026-07-18) — First real independent-human data
+
+Everything before this run came from either a scripted default (Run #1) or this agent's own
+classification (Run #2) — tier 3 was explicitly flagged as untested. Run #3 is the project owner's
+own real dogfooding session: 8 real stories (`product-001` through `product-008`, a manufacturer →
+model → product → product-variant → SKU → publish-to-catalog chain), driven entirely by the
+project owner in their own terminal, with no scripting or agent involvement in any answer.
+
+**Timing caveat, disclosed rather than glossed over:** this session ran on the binary after the
+`depends_on` prompt-consistency fix (`5108c32`) but *before* the echo-and-confirm fix (`2defa79`)
+was built and installed — the cursor-drift bug that motivated that fix was still live during this
+session. No specific garbled entry was identified, but it can't be fully ruled out that a typed
+value was affected in a way that went unnoticed. This is a caveat on typing fidelity, not on the
+meaningfulness judgments themselves.
+
+### Full results (20 flagged terms)
+
+| Story | Term | Outcome |
+|---|---|---|
+| product-001 | catalog | **meaningful** |
+| product-001 | sale | not-meaningful |
+| product-002 | system | not-meaningful |
+| product-003 | manage | not-meaningful |
+| product-003 | publish | not-meaningful |
+| product-003 | variants | not-meaningful |
+| product-005 | refer | not-meaningful |
+| product-005 | unique | not-meaningful |
+| product-005 | version | not-meaningful |
+| product-005 | identified | not-meaningful |
+| product-006 | various | not-meaningful |
+| product-006 | attributes | not-meaningful |
+| product-006 | managed | not-meaningful |
+| product-006 | uniquely | not-meaningful |
+| product-007 | variant | not-meaningful |
+| product-007 | uniquely | not-meaningful |
+| product-007 | identified | not-meaningful |
+| product-008 | view | not-meaningful |
+| product-008 | unique | not-meaningful |
+| product-008 | version | not-meaningful |
+
+### Distribution
+
+| Outcome | Count | Share |
+|---|---|---|
+| meaningful | 1 | 5% |
+| not-meaningful | 19 | 95% |
+| not-sure | 0 | 0% |
+
+### Finding 8 — Real evidence the mechanism gets used across a whole real session, not abandoned
+
+The project owner carried the mechanism through all 8 stories in one real working session,
+answering 20 prompts along the way, rather than stopping partway through. That's a genuine,
+directly-observed data point for tier 3: whatever the noise level, it did not stop this real user
+from continuing to use `canopy intent` normally across a multi-story session.
+
+### Finding 9 — Real distribution is far more skewed toward "not-meaningful" than Run #2's, and "not-sure" was never used
+
+Run #2 (this agent) landed at roughly 19% meaningful / 57% not-meaningful / 24% not-sure. This real
+session landed at 5% meaningful / 95% not-meaningful / 0% not-sure — one confirmed candidate
+(`catalog`, in the very first story) and a long, unbroken run of dismissals after that, with the
+three-way choice never once resolving to the middle option. Read plainly, not explained away: an
+independent human classified almost everything after the first story as noise, and never reached
+for "not-sure" even once, unlike this agent's own more even split. Plausible, undecided
+explanations — not stated as conclusions — include: this project owner's stories were already
+domain-coherent (product/variant/SKU vocabulary thought through before typing), leaving genuinely
+less signal left for the check to find; a real user may resolve ambiguity faster and more
+decisively than this agent's own deliberated reasoning did; or fatigue/habituation across a longer
+real session could push toward faster, more uniform dismissals as it went on — the last 14
+straight judgments were all `not-meaningful`, with no meaningful or not-sure entries interleaved.
+Nothing in the data distinguishes between these; this is exactly the kind of question only a
+follow-up session (or asking the project owner directly) can resolve.
+
+### Finding 10 — The one confirmed term shows independent, if partial, corroboration
+
+`domain_registry.yaml` now contains both `Catalog` (a bare, undescribed entry) and `CatalogEntry`
+(a fully-described entity: "A product with its variant that are published to the catalog.") —
+meaning the concept flagged as `meaningful` in `product-001` did, in fact, later get captured in
+some form elsewhere in this same session's domain vocabulary. This doesn't prove the flag *caused*
+that capture (no controlled comparison exists here), but it's a real, disclosed data point in the
+right direction rather than a flagged concept that went nowhere.
+
+---
+
+## Three tiers of validation — what Runs #1, #2, and #3 actually support
 
 Kept as its own section because the three questions are easy to blur together, and blurring them
 is exactly what would make this report overclaim. Each is a different question, answered by
@@ -212,16 +295,20 @@ different evidence, and progress on one does not transfer to the others.
 
 | Tier | Question | Status | Evidence |
 |---|---|---|---|
-| 1. Mechanism validation | Does the check fire, render, and log correctly? | **Supported** | Run #1 + Run #2: detection, question wording, and `review-log.yaml` entries all worked correctly across 5 real sessions and 24 flagged terms, no code changes needed. |
-| 2. Signal validation | Does the underlying signal (referenced-but-uncaptured term) actually contain a distinguishable mix of real gaps, noise, and genuine ambiguity? | **Partially supported** | Run #2: 21 terms sorted cleanly into meaningful/not-meaningful/not-sure with a stated reason each, under one reviewer's classification. Suggestive that the mix is real and classifiable — not yet confirmed independent of who's doing the classifying. |
-| 3. Human validation | Do independent humans find the signal useful — tolerate the noise, use all three options naturally, treat it as worth their attention? | **Not supported — open** | No data yet. Every judgment so far (Run #1's defaults, Run #2's 21 classifications) came from either a scripted default or this agent, not an independent human with no foreknowledge of the hypothesis. |
+| 1. Mechanism validation | Does the check fire, render, and log correctly? | **Supported** | Runs #1–#3: detection, question wording, and `review-log.yaml` entries all worked correctly across 6 real sessions (5 driven, 1 fully independent) and 44 flagged terms, no code changes needed. |
+| 2. Signal validation | Does the underlying signal (referenced-but-uncaptured term) actually contain a distinguishable mix of real gaps, noise, and genuine ambiguity? | **Partially supported** | Run #2: 21 terms sorted cleanly into meaningful/not-meaningful/not-sure with a stated reason each, under one reviewer's classification. Run #3 confirms the signal contains at least some real candidates even for a real, already-coherent set of stories (1 of 20), though the mix skewed far more toward noise than Run #2's did. |
+| 3. Human validation | Do independent humans find the signal useful — tolerate the noise, use all three options naturally, treat it as worth their attention? | **Started — one real data point** | Run #3: the project owner used the mechanism across a full 8-story real session (20 judgments) without abandoning it. But the distribution (95% not-meaningful, 0% not-sure) and its cause (coherent input vocabulary vs. fatigue vs. faster real-world decisiveness) are not yet distinguishable from a single session — genuinely still open, not merely under-sampled. |
 
-**The strongest conclusion these two runs support:** the mechanism works mechanically, and
-produces a mix of signal and noise that can be classified.
+**The strongest conclusion these three runs support:** the mechanism works mechanically, produces a
+mix of signal and noise that can be classified, and at least one real independent human used it
+through a whole session without it becoming a blocker.
 
-**The strongest conclusion these two runs do *not* support, and must not be read as supporting:**
-independent humans find the signal useful. That question — usability, noise tolerance, whether the
-three response options get used naturally by someone without inside knowledge, whether the signal
+**The strongest conclusion these three runs do *not* support, and must not be read as supporting:**
+that independent humans generally find the signal useful, tolerate the noise well, or that the
+three response options get used naturally by someone without inside knowledge. One real session
+with a 95%-noise distribution and zero use of "not-sure" is a genuine first data point, not a
+settled answer — it could mean the noise rate is a real problem, or it could mean this particular
+session's input vocabulary was simply already unusually coherent. Whether the signal
 is worth a real user's attention at all — remains entirely open. Findings 4 and 5 above were
 revised to stop short of claiming otherwise.
 
@@ -232,13 +319,25 @@ revised to stop short of claiming otherwise.
 - **Tier 1 (mechanism): considered closed** unless a future session surfaces a new plumbing defect.
 - **Tier 2 (signal): still accumulating** — more sessions, ideally across more varied domains and
   more reviewers (not only this agent), would strengthen or weaken confidence that the
-  meaningful/noise/ambiguous mix generalizes.
-- **Tier 3 (human validation): not started.** The next real test needs a session where an actual
-  independent person — no foreknowledge of the hypothesis, the implementation, or the desired
-  distinctions — encounters the prompts and responds. Nothing run so far substitutes for this.
+  meaningful/noise/ambiguous mix generalizes. Run #3's far-more-skewed distribution than Run #2's
+  is itself a reason to keep accumulating rather than treat either session as representative.
+- **Tier 3 (human validation): started, not settled.** Run #3 is one real independent session with
+  a real, unexplained skew (95% not-meaningful, 0% not-sure). The open question is no longer
+  "has anyone tried this" but "does this distribution hold up, and why did it look like this" —
+  more real sessions, and ideally a direct question to the project owner about their subjective
+  experience (did the noise feel costly? was "not-sure" ever tempting but skipped?), would help
+  separate "coherent input, genuinely little signal left" from "the noise rate is a real problem."
 - **Still open, independent of the above**: no follow-through signal (whether an acknowledged gap
   later becomes a real story) is measurable yet — this needs multiple sessions over time against
-  `stories.yaml`'s accumulated history, per the original design's stated signal list.
+  `stories.yaml`'s accumulated history, per the original design's stated signal list. Run #3's
+  `Catalog`/`CatalogEntry` pair is a first, uncontrolled hint in the right direction, not a
+  confirmed instance.
 - **Deliberately not acted on yet, per explicit instruction**: the detection algorithm (stopword
-  list, part-of-speech blindness) was left untouched throughout Run #2. Precision tuning is the
-  next candidate only after tier 3 evidence establishes whether it's actually needed, not before.
+  list, part-of-speech blindness) was left untouched throughout Runs #2 and #3. Precision tuning is
+  the next candidate only after enough tier-3 evidence establishes whether it's actually needed —
+  Run #3's 95% dismissal rate is a real data point in favor of eventually revisiting this, but one
+  session isn't enough to act on yet.
+- **New from this session**: a live, unrelated `dialoguer::Input` cursor-drift bug was found and
+  fixed (`2defa79`) — every text input now echoes the captured value and asks for confirmation
+  before use. Run #3 predates this fix, so its typed content can't be fully guaranteed free of the
+  bug's effects, though no specific garbled entry was identified.
