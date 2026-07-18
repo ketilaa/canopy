@@ -17,6 +17,7 @@ source_artifacts:
   - "commit a254b25 — Add Entity Continuity gate and fix the want-field example that anchored on it"
   - "commit 0dd7073 — Add Event Continuity gate, the sibling check to Entity Continuity"
   - "reproducibility sweep, manufacturer-001 (Account-vs-Manufacturer entity divergence, live-verified)"
+  - "docs/reports/product-010-customer-vertical-slice.md, 2026-07-19 — out_of_scope and the accepted scenario/behavior set contradicted each other, uncaught by any existing audit"
 
 related_principles:
   - compute-facts-mechanically
@@ -119,3 +120,16 @@ current checks all rely on relatively clean string-comparison logic. It's not ye
 whether the same reliability gain holds once the "check" itself requires more judgment to perform,
 or whether that shifts the problem back into the same kind of unreliable-judgment territory this
 principle was built to route around.
+
+**A real, live instance of exactly this untested case surfaced 2026-07-19**: `product-010`'s
+`out_of_scope` field explicitly excluded "Customer authentication and authorization," while the
+same story's accepted scenarios and contract included a full 401-unauthorized behavior — a genuine
+semantic contradiction between two fields of the same artifact, not a lexical mismatch any
+string-comparison check would catch. No audit anywhere in the pipeline compares `out_of_scope`'s
+content against the scenario/behavior content at all — this isn't a case of the existing lexical
+checks failing at a harder semantic task, it's a case of no check existing at that layer yet. This
+sharpens, rather than resolves, the open question this section already posed: the reliability gain
+this principle documents has only ever been measured for exact-match-friendly checks; whether the
+same mechanical, fail-loud approach generalizes to semantic contradiction-detection remains
+genuinely untested. No mechanism proposed here — recorded per
+`docs/open-questions/story-readiness-vs-backlog-evolution.md`.

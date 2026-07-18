@@ -18,6 +18,7 @@ source_artifacts:
   - "commit 0fd89d7 — Force per-item policy classification instead of a freeform resolved/open split"
   - "commit c77f322 — Require textual evidence before Policy Discovery may classify a policy resolved"
   - "reproducibility sweep, manufacturer-001, 2026-07-14 (5/6 confidently-resolved-with-no-basis → 1-2/6, remainder correctly surfaced as open questions)"
+  - "docs/reports/product-010-customer-vertical-slice.md, 2026-07-19 — a resolved_policies citation whose 'evidence' was an absence of mention, not a positive fact, passed unflagged"
 
 related_principles:
   - compute-facts-mechanically
@@ -70,6 +71,14 @@ making the decision unasked.
 - A controlled reproducibility comparison before and after this fix: before, most runs resolved 5
   of 6 questions with unsupported specifics; after, runs resolved 1–2 of 6, with the remainder
   correctly routed to an explicit open question a human is expected to answer.
+- A sharper, live-verified instance of the exact gap this principle's own Future Validation section
+  had already flagged as untested (see below): `product-010`'s `authorization` policy was filed
+  under `resolved_policies` with the citation *"the story does not explicitly mention any
+  authorization requirements for browsing a catalog"* — an absence of evidence, not a positive
+  fact, presented as if it satisfied the citation requirement. It passed every stage downstream
+  unflagged, including Stage 2's own Decision Point mechanism, which never saw the question because
+  it only processes items already classified `unresolved`. Full trace in
+  `docs/open-questions/story-readiness-vs-backlog-evolution.md`.
 
 # Counter-Evidence
 
@@ -118,3 +127,10 @@ citation requirement (quoting the exact supporting substring, rather than naming
 would clarify whether that closes the remaining gap or whether an even stronger enforcement
 mechanism is needed once fabrication-with-a-real-but-irrelevant-citation becomes the dominant
 remaining failure mode.
+
+**Confirmed live, 2026-07-19, as a real (not merely hypothetical) instance of this exact gap**: the
+`product-010` case above isn't "a real source that doesn't say what's claimed" — it's a citation of
+an absence itself, one step further than what this section already anticipated. The presence check
+alone cannot distinguish "cites a real, on-topic fact" from "cites the fact that nothing was said."
+No mechanism proposed here — recorded as evidence the gap this section already named is real and
+reachable in practice, not only in theory.
