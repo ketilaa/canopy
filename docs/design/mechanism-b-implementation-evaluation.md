@@ -132,3 +132,42 @@ more evidence first is not recommended: the confirmed failure instance's exact t
 full existing regression corpus is in hand and already checked by hand above, and the residual risk
 (recall against unseen phrasing) is not something further analysis can close — only real dogfooding
 against new stories can, which this implementation should proceed to enable rather than wait on.
+
+---
+
+# Implementation and Measurement Results (2026-07-19)
+
+Built exactly as specified above: `is_unsupported_absence_claim` (`canopy-llm/src/prompts/spec.rs`),
+wired into both the `"resolved"` and `"not_applicable"` arms of `bucket_policy_checklist`.
+`canopy-prompt-reviewer` found no issues with the check's design or scoping; it did catch a real
+doc-comment placement bug during review (the new function's doc comment had merged with the
+pre-existing one with no blank-line separation, which would have made rustdoc attach the whole
+combined block to the wrong function and leave `bucket_policy_checklist` undocumented) — fixed by
+reordering `is_unsupported_absence_claim` to follow `bucket_policy_checklist` in the file instead of
+preceding it, each with its own correctly-attached doc comment.
+
+**Historical instances it catches**: one — `product-010`'s real `authorization` resolution ("The
+story does not explicitly mention any authorization requirements for browsing a catalog"),
+verified via a regression test built specifically to isolate the new check from the pre-existing
+evidence-presence check (real `evidence` text supplied, so a genuine `evidence`-quotes-the-story
+case is confirmed insufficient to pass — only the absence-claim check can be causing the
+rejection).
+
+**False positives found**: none, against every case checked — the full pre-existing
+`policy_checklist_tests` regression suite (15 tests, including the two real legitimate fixtures,
+`"name must be unique"` and `"no other entities exist"`), plus the constructed-but-realistic
+counter-example using the now-known-correct business resolution for `product-010`
+("Authorization not required — catalog browsing is intentionally public").
+
+**Newly surfaced failures**: none beyond the one already-confirmed instance. No other real
+`resolved_policies` data exists to test against — `product-010` is the only story in the current
+real dogfooding project with any `resolved_policies` entry at all (confirmed by direct inspection),
+and `manufacturer-001`'s raw artifacts no longer exist on disk. This is stated plainly rather than
+implied away: the real corpus this measurement draws from is one confirmed positive case and a
+handful of pre-existing fixture negatives, not a broad sample. The open question this iteration is
+meant to answer — does this narrow signal prove useful in real dogfooding — remains open until a
+new real story runs through `canopy spec` and either fires correctly, stays quiet correctly, or
+does neither.
+
+Build and full workspace test suite green throughout (`cargo build --workspace`,
+`cargo test --workspace`) — no regressions in any other crate.

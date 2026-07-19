@@ -698,6 +698,15 @@ fn bucket_policy_checklist(items: Vec<PolicyChecklistItem>) -> Result<(Vec<Resol
         match item.classification.trim().to_lowercase().as_str() {
             "resolved" => match (item.detail, item.evidence) {
                 (Some(resolution), Some(evidence)) => {
+                    if is_unsupported_absence_claim(&resolution) {
+                        return Err(LlmError::UnexpectedShape(format!(
+                            "policy checklist item '{}' was classified 'resolved' but its own \
+                             resolution text reports an absence rather than stating a rule (\"{}\") \
+                             — treating silence as permission is not a resolution. Re-run \
+                             `canopy spec`.",
+                            item.area, resolution
+                        )));
+                    }
                     resolved.push(ResolvedPolicy { area: item.area, resolution, evidence })
                 }
                 _ => return Err(LlmError::UnexpectedShape(format!(
@@ -707,16 +716,25 @@ fn bucket_policy_checklist(items: Vec<PolicyChecklistItem>) -> Result<(Vec<Resol
                     item.area
                 ))),
             },
-            "not_applicable" | "not applicable" => {
-                if item.detail.is_none() || item.evidence.is_none() {
-                    return Err(LlmError::UnexpectedShape(format!(
-                        "policy checklist item '{}' was classified 'not_applicable' but no \
-                         detail and/or no evidence was provided — a structural exemption with no \
-                         grounding is a guess, not a resolution. Re-run `canopy spec`.",
-                        item.area
-                    )));
+            "not_applicable" | "not applicable" => match (&item.detail, &item.evidence) {
+                (Some(detail), Some(_)) => {
+                    if is_unsupported_absence_claim(detail) {
+                        return Err(LlmError::UnexpectedShape(format!(
+                            "policy checklist item '{}' was classified 'not_applicable' but its \
+                             own detail text reports an absence rather than stating a structural \
+                             reason (\"{}\") — treating silence as permission is not a resolution. \
+                             Re-run `canopy spec`.",
+                            item.area, detail
+                        )));
+                    }
                 }
-            }
+                _ => return Err(LlmError::UnexpectedShape(format!(
+                    "policy checklist item '{}' was classified 'not_applicable' but no \
+                     detail and/or no evidence was provided — a structural exemption with no \
+                     grounding is a guess, not a resolution. Re-run `canopy spec`.",
+                    item.area
+                ))),
+            },
             _ => match item.detail {
                 Some(detail) => open_questions.push(detail),
                 None => return Err(LlmError::UnexpectedShape(format!(
@@ -729,6 +747,32 @@ fn bucket_policy_checklist(items: Vec<PolicyChecklistItem>) -> Result<(Vec<Resol
         }
     }
     Ok((resolved, open_questions))
+}
+
+/// A `resolved`/`not_applicable` item can pass the grounding check above (both `detail` and
+/// `evidence` present) while still being unsupported: `detail` reports that the input is *silent*
+/// on the question, and that silence is then treated as if it settled the question — live-verified
+/// (product-010's real `authorization` resolution: `detail` = "the story does not explicitly
+/// mention any authorization requirements for browsing a catalog", `evidence` = a genuine verbatim
+/// quote of the story). Presence of `evidence` doesn't help here — the evidence can be completely
+/// real and the resolution still invalid, because absence of a stated requirement is not
+/// confirmation none exists (docs/design/mechanism-b-implementation-evaluation.md).
+///
+/// Deliberately narrow: matches self-referential absence-of-mention framing ("the input doesn't
+/// say X"), not general negation of a domain rule ("X is not required"). The latter is completely
+/// ordinary, legitimate phrasing for a real, grounded resolution (e.g. "authorization not required
+/// — catalog browsing is intentionally public") and must not be rejected — scoping to the specific
+/// self-referential shape is what keeps this precise instead of just flagging the word "not".
+fn is_unsupported_absence_claim(text: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "does not mention", "does not explicitly mention",
+        "does not state", "does not explicitly state",
+        "does not specify", "no mention of", "not mentioned",
+        "not specified in", "not stated in",
+        "nothing in the story", "nothing indicates",
+    ];
+    let lower = text.to_lowercase();
+    MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// Mechanically enumerates every scenario the spec needs, BEFORE any scenario is written — the
@@ -1021,6 +1065,58 @@ mod policy_checklist_tests {
         assert_eq!(resolved[0].area, "uniqueness");
         assert_eq!(resolved[0].resolution, "name must be unique");
         assert_eq!(resolved[0].evidence, "ADR: Service Ownership");
+        assert!(open.is_empty());
+    }
+
+    #[test]
+    fn resolved_with_a_real_absence_claim_fails_loudly_even_with_genuine_evidence() {
+        // The real, confirmed product-010 failure: `detail` reports that the story is silent on
+        // authorization, `evidence` is a genuine verbatim quote of the real story — the existing
+        // presence check alone would accept this. Isolating that from this new check: evidence is
+        // present and real, so a rejection here can only be caused by the absence-claim check.
+        let err = bucket_policy_checklist(vec![
+            item(
+                "authorization",
+                "resolved",
+                Some("The story does not explicitly mention any authorization requirements for browsing a catalog."),
+                Some("User Story: As a customer, I want browse the published catalog, so that can see available products"),
+            ),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("authorization"));
+        assert!(err.to_string().contains("treating silence as permission"));
+    }
+
+    #[test]
+    fn not_applicable_with_a_real_absence_claim_fails_loudly() {
+        let err = bucket_policy_checklist(vec![
+            item("authorization", "not_applicable", Some("The spec does not mention any authorization rule."), Some("story text")),
+        ]).unwrap_err();
+        assert!(err.to_string().contains("authorization"));
+    }
+
+    #[test]
+    fn a_grounded_not_required_resolution_is_not_blocked() {
+        // General negation of a domain rule ("not required") must stay legitimate — only the
+        // self-referential "the input doesn't say X" framing is targeted, not the word "not".
+        let (resolved, _) = bucket_policy_checklist(vec![
+            item(
+                "authorization",
+                "resolved",
+                Some("Authorization not required — catalog browsing is intentionally public."),
+                Some("ADR: Catalog Browsing Service Ownership"),
+            ),
+        ]).unwrap();
+        assert_eq!(resolved.len(), 1);
+    }
+
+    #[test]
+    fn existing_grounded_not_applicable_fixture_is_not_blocked() {
+        // "no other entities exist" cites a genuine structural fact, not an absence-of-mention
+        // report — must keep passing under the new check exactly as it did before it existed.
+        let (resolved, open) = bucket_policy_checklist(vec![
+            item("consistency", "not_applicable", Some("no other entities exist"), Some("domain vocabulary: none")),
+        ]).unwrap();
+        assert!(resolved.is_empty());
         assert!(open.is_empty());
     }
 
