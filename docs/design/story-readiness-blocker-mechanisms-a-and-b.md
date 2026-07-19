@@ -181,6 +181,40 @@ trade-off worth measuring rather than avoiding, but it should be measured agains
 corpus (`manufacturer-001`, `product-010`) before this is trusted, the same discipline already
 applied to Mechanism A.
 
+## Correction (2026-07-19, same day): The Revision Above Checks The Wrong Field
+
+Before implementing, `product-010`'s actual persisted `resolved_policies` entry was read directly
+(`../canopy-e-commerce/.canopy/stories/product-010/spec.yaml`) rather than continuing to reason
+from this document's own earlier paraphrase of it. That paraphrase was wrong in a way that matters:
+
+```yaml
+resolved_policies:
+- area: authorization
+  resolution: The story does not explicitly mention any authorization requirements for browsing a catalog.
+  evidence: 'User Story: As a customer, I want browse the published catalog, so that can see available products'
+```
+
+`ResolvedPolicy` has two separate fields (`canopy-core/src/lib.rs`) — `resolution` (the stated
+rule, from the prompt's `detail`) and `evidence` (the source it's grounded in). The vacuous,
+absence-reporting text ("the story does not explicitly mention...") lives in **`resolution`**.
+**`evidence` is a genuine, verbatim quote of the real story** — it is not fabricated, not
+untraceable, and not vacuous by the definition this document has been using. The Revision above
+(and this document's earlier framing generally) treated the resolution text as if it were the
+evidence being checked for traceability. It is not. Any check that verifies `evidence` traces to a
+real source — however well it's implemented — **would pass this exact case**, because the evidence
+already does trace to something real. The actual defect is a non-sequitur one level up: a
+resolution ("not required") drawn from evidence that is silent on the question, not evidence that
+fails to exist or fails to connect to anything real. Traceability and logical support are different
+properties, and this confirmed instance is a failure of the second, not the first — exactly the gap
+`unresolved-decisions-become-explicit-decision-points`'s own Future Validation section already
+named as unclosed ("does not yet verify that a cited source genuinely supports the specific claim
+made"), now confirmed as the actual shape of the one real instance on file, not a hypothetical
+extension of it.
+
+This does not resurrect the original phrase-list design as-is — it corrects which field a
+absence-language check should ever have been reading. See the full critical review below for the
+corrected design and its own honest limits.
+
 ---
 
 # Why These Are The Smallest Useful Interventions
@@ -280,3 +314,108 @@ registry, a new artifact type, a new command, or a new confirmation gate. Concre
   cleanly and still exhibit any of the other taxonomy classes. This is the deliberate scope
   boundary the user set, not an oversight, but worth stating plainly so a future reader doesn't
   mistake "A and B are covered" for "Story Readiness is covered."
+
+---
+
+# Critical Review of Revised Mechanism B (2026-07-19)
+
+Requested before implementation: does evidence-traceability actually target class B correctly, and
+is it the smallest available structural signal? Checked directly against `product-010`'s real
+persisted artifact (above), not against this document's own earlier paraphrase of it.
+
+## Assessment Of Revised Mechanism B
+
+The traceability signal is well-motivated in general — it correctly generalizes past wording style,
+and it's grounded in a real, named gap (`unresolved-decisions-become-explicit-decision-points`'s own
+Future Validation section). But applied to the wrong field, it does not target the confirmed
+failure. `evidence` in `product-010`'s real artifact is a verbatim quote of the story — genuinely
+traceable by any reasonable definition. The defect is that `resolution` ("the story does not
+explicitly mention any authorization requirements") draws a "not required" conclusion from evidence
+that is silent on the question — absence of a stated requirement is being treated as confirmation
+none exists, a non-sequitur, not an ungrounded citation. A check that verifies `evidence` traces to
+something real cannot catch this, because in this instance it already does.
+
+## Historical Failures It Would Catch
+
+- **Pre-fix zero-citation fabrication** (5 of 6 policy questions resolved with invented specifics,
+  no citation at all): already caught today by the existing presence check (`bucket_policy_checklist`
+  rejects `None` evidence) — not new value from this mechanism, but confirms the baseline still
+  holds.
+- **A hypothetical present-but-fully-fabricated evidence string** (non-empty text with zero
+  connection to any real source) would be caught by evidence-traceability specifically. This is a
+  structurally real failure shape and the reason the underlying principle asked for a stronger
+  citation requirement — but it has no confirmed real instance in this project's history yet. Every
+  confirmed real "resolved" fabrication either had zero citation (pre-fix, already handled) or had a
+  real citation with an unsupported inference (`product-010`, not handled by traceability).
+
+## Historical Failures It Would Miss
+
+- **`product-010`'s authorization case — the flagship confirmed instance this mechanism exists to
+  catch.** Evidence-traceability would pass it, as shown above. This is not a minor gap; it is the
+  single real, fully-worked example this entire investigation has been reasoning from.
+- **`manufacturer-001`'s duplicate-name policy — unverifiable with data currently on hand.** No
+  document reviewed quotes that policy's actual `resolution`/`evidence` text verbatim, and the
+  underlying dogfooding project's `.canopy` state no longer exists on disk (only `product-010`
+  remains in the current project). Stated honestly as a gap in this review, not glossed over: it is
+  plausible the same pattern recurs there (a real quote from `so_that`'s "products can reference
+  them" language, paired with an invented specific dedup rule), but this cannot be confirmed against
+  real text the way `product-010` can.
+
+## Expected False Positives
+
+Split by which field a corrected check targets, since this review recommends changing that:
+
+- **A narrowly-scoped `resolution`-side absence-marker check** (see Smallest Viable Implementation)
+  risks flagging a legitimate resolution that uses negation for a genuinely supported reason (e.g.
+  "not applicable — idempotency doesn't apply to a read-only GET request") if the phrase set is too
+  broad. Scoping strictly to self-referential absence-of-mention framings ("the story/spec does not
+  mention/state/specify"), not all negation, is the mitigation — same discipline as the original
+  phrase-list idea, just correctly aimed.
+- **An `evidence`-side traceability check** (if pursued as a second, lower-priority check) risks
+  rejecting legitimate paraphrased citations, and citations grounded in general technical convention
+  (REST semantics, standard defaults) with no textual overlap to project-specific sources at all.
+  Untested against real data: `product-010` has exactly one `resolved_policies` entry in its
+  persisted artifact — the false-positive testing corpus this document's earlier Revision assumed
+  ("`product-010`'s other resolved-policy items") does not actually exist. `bucket_policy_checklist`
+  also only ever retains `resolved` items in `ResolvedPolicy` — `not_applicable` items are
+  validated for grounding but their `detail`/`evidence` are never persisted anywhere, so even the
+  other five named policy areas' grounding for this story is unrecoverable after the fact.
+
+## Expected False Negatives
+
+- Evidence-traceability alone: confirmed to miss `product-010` outright (see above) — not a
+  probabilistic risk, a demonstrated one against the one real instance available.
+- A `resolution`-side absence-marker check: will miss any unsupported inference that doesn't use an
+  absence-reporting phrase — e.g. a bare "not required" or "no additional authorization needed" with
+  no stated reasoning at all. This is a real, acknowledged recall limit, not resolved by this review.
+- Neither check (alone or combined) catches a resolution that cites a real source, states a
+  positive-sounding rule, and is still an unsupported inference the source doesn't actually license
+  (the deeper gap the governing principle's own Future Validation section names as still open,
+  requiring semantic verification this project has deliberately excluded via the "no new LLM calls"
+  constraint).
+
+## Smallest Viable Implementation
+
+Retarget the check to `resolution`, not `evidence`, and narrow its framing from "traceability" to
+what the evidence actually supports: **does `resolution`'s own text contain a self-referential
+absence-of-mention marker** — a short, explicit phrase set ("the story does not mention", "does not
+explicitly state", "no mention of", "not specified in", "nothing in the story states") — for an item
+classified `resolved` or `not_applicable`? If so, reject it: the resolution is reporting silence
+about its own input as if that were a decided rule, the same fail-loud/re-run path already used for
+a missing citation. This is smaller than the evidence-traceability design in this document's earlier
+Revision: it inspects one field, needs no new parameters (`story`/`adrs`/`domain` are not required —
+this check only needs the item's own `resolution` text), and is directly, verifiably motivated by
+the one real confirmed failure rather than a plausible-but-unconfirmed extension of it. Evidence-
+traceability, if pursued at all, should be a separate, explicitly lower-priority follow-on aimed at
+the (currently unconfirmed) fully-fabricated-evidence sub-shape — not conflated with this fix, and
+not implemented first, since it has no real instance motivating it yet.
+
+## Recommendation: Implement / Revise Further
+
+**Revise further before implementing** — not the traceability concept in the abstract, but its
+target field. The corrected, resolution-side absence-marker check is the version this review
+recommends building next: smaller than the original proposal, needs no new function parameters,
+and — unlike evidence-traceability — actually catches the one confirmed real failure this whole
+mechanism exists for. Evidence-traceability stays a reasonable idea for a later iteration, once a
+real fully-fabricated-evidence instance is observed to motivate it, rather than built now on
+projected risk alone.
