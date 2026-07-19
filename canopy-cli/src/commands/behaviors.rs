@@ -61,6 +61,7 @@ pub(crate) fn cmd_behaviors(story_id: &str, debug: bool) -> Result<()> {
                 GapKind::MissingScenario => "missing scenario",
                 GapKind::AmbiguousOutcome => "ambiguous outcome",
                 GapKind::UnresolvedQuestion => "unresolved question",
+                GapKind::ScopeContradiction => "scope contradiction",
             };
             let marker = match gap.severity() {
                 GapSeverity::Gap => "GAP",

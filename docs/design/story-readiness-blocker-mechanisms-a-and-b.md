@@ -125,6 +125,62 @@ listed phrases appear (a differently-worded absence-report) would show the phras
 recall, not just a precision risk — the natural next escalation in that case would be the broader
 grounding check named in the Risks section, not proposed here as v1.
 
+## Revision (2026-07-19, same day): Mechanism B's Signal Reassessed Before Implementation
+
+Mechanism A was implemented as designed above. Before implementing B, the phrase-list design was
+reassessed on the user's own instruction: is the real signal "absence-report wording," or "resolved
+policy lacks positive grounding"? **The reassessment favors the structural signal, and the
+phrase-list design above should not be implemented as v1.**
+
+**Why the phrase list is the wrong first cut.** It targets *wording*, not the *property that
+actually matters*. `unresolved-decisions-become-explicit-decision-points`'s original fabrication
+evidence — 5 of 6 policy questions "resolved" with specific, invented answers, before the
+citation-presence fix — contained no absence-language at all; it was confidently-worded, invented
+prose. A phrase list tuned to `product-010`'s specific wording ("does not mention") would catch
+that one instance and miss the shape of failure this principle was actually built around: a
+citation that sounds positive but traces to nothing real. Optimizing for the easiest pattern in the
+one confirmed instance risks solving the narrower problem instead of the one the principle names.
+
+**The structural alternative, and where it's already anticipated.** `unresolved-decisions-become-
+explicit-decision-points`'s own Future Validation section states the next test directly: "a
+stricter citation requirement (quoting the exact supporting substring, rather than naming a source
+category) would clarify whether that closes the remaining gap." That is the structural signal —
+not "does this text sound vacuous" but "does this text actually quote something real." The
+prompt's own schema already asks for this (`evidence: "<exact source quoted/named — omit only if
+unresolved>"`, `canopy-llm/src/prompts/spec.rs:614`) — the gap is that `bucket_policy_checklist`
+only ever verified *presence*, never that the content is *traceable*. This reframes B's mechanism
+as closing a gap between an already-stated prompt requirement and its enforcement, not adding a new
+requirement — a smaller, more defensible change than it first appears.
+
+**Revised signal.** Does a `resolved`/`not_applicable` item's `evidence` text contain a substantial,
+normalized (case-insensitive, whitespace-collapsed) substring match against at least one already-
+known source: the story's own `as_a`/`want`/`so_that`, an accepted ADR's `title`/`decision`/
+`reason`, or a domain-registry entity/event name or description? If no such overlap exists
+anywhere, the citation traces to nothing real — reject it, the same fail-loud/re-run path already
+used for a missing citation. This is a strict superset of what the phrase list would catch:
+`product-010`'s actual text ("the story does not explicitly mention any authorization
+requirements") has zero overlap with any real source either, so it still fails — but so would a
+confidently-worded, fully invented citation with no absence-language in it at all, which the phrase
+list would have missed entirely.
+
+**What this costs relative to the phrase-list version.** `bucket_policy_checklist`
+(`canopy-llm/src/prompts/spec.rs:694`) currently takes only `items: Vec<PolicyChecklistItem>` — the
+revised check needs `story`, `adrs`, and the domain registry as additional parameters. This is
+still minimal: `generate_story_spec` (the one call site, `spec.rs:973`) already has `story`, `adrs`,
+and `domain: &DomainRegistry` in scope at the exact point `bucket_policy_checklist` is called — no
+new loading, no new artifact, just threading three already-available references one call deeper.
+Still fully mechanical (a normalized substring check, zero new LLM calls) — the same "compute facts
+mechanically" shape as the phrase-list version, just checking a more structural fact.
+
+**Open risk, stated plainly, not resolved here.** Legitimate resolutions are more likely to
+paraphrase a source than quote it verbatim, and a normalized-substring check is stricter than a
+phrase-list heuristic — this could trade the phrase list's recall problem for a *precision*
+problem (rejecting genuinely well-grounded but paraphrased citations). This is exactly the kind of
+thing "optimize for the most structural signal, not the easiest text pattern" accepts as a
+trade-off worth measuring rather than avoiding, but it should be measured against the same real
+corpus (`manufacturer-001`, `product-010`) before this is trusted, the same discipline already
+applied to Mechanism A.
+
 ---
 
 # Why These Are The Smallest Useful Interventions
@@ -145,8 +201,9 @@ registry, a new artifact type, a new command, or a new confirmation gate. Concre
   `bucket_policy_checklist`'s existing `Err`-and-re-run path. Neither needs a new "is this a
   blocker" decision procedure — both borrow one already validated in production.
 - **Mechanical where the evidence says mechanical is enough, one LLM call only where it's
-  genuinely required.** B is fully deterministic Rust (a phrase check) — no new LLM call at all.
-  A cannot be, since detecting whether a scenario "presupposes" an excluded concern is a semantic
+  genuinely required.** B is fully deterministic Rust (a normalized substring-grounding check, per
+  the Revision above) — no new LLM call at all. A cannot be, since detecting whether a scenario
+  "presupposes" an excluded concern is a semantic
   judgment no string match can make reliably (already established: this is the one class in the
   whole taxonomy that is confirmed to have no code-only precedent, unlike Entity/Event Continuity's
   exact-name matching) — but even there, the LLM's role is narrowed to one bounded per-pair
@@ -171,12 +228,11 @@ registry, a new artifact type, a new command, or a new confirmation gate. Concre
   stays quiet on the rest of the corpus) would be the first real evidence the principle generalizes
   beyond exact-match checks; a noisy result would be equally valuable evidence of where it stops
   generalizing.
-- **The real false-positive rate of a targeted phrase-list check for citation vacuity** — cheap to
-  measure (run it against every `resolved_policies`/`not_applicable` entry across both real
-  stories) and directly answers whether this narrow, mechanical first cut is sufficient or whether
-  a broader grounding-comparison check (verifying a citation's text actually traces to the story,
-  an ADR, or domain vocabulary — the same technique Entity/Event Continuity already validated) is
-  needed as a second iteration.
+- **The real precision/recall trade-off of a structural grounding check for citation quality**
+  (per the Revision above) — cheap to measure (run it against every `resolved_policies`/
+  `not_applicable` entry across both real stories) and directly answers whether requiring a
+  citation to trace to a real, already-known source is the right bar, or whether it rejects
+  legitimate paraphrased citations too often to be usable without a softer, fuzzier match.
 - **Whether these two mechanisms, applied going forward, actually change what the Human-Insight
   Inventory would measure next time.** Both Human-Insight Inventory passes found uniform Accept
   across every category with real data — if these mechanisms fire on new stories the way they're
@@ -200,16 +256,18 @@ registry, a new artifact type, a new command, or a new confirmation gate. Concre
   "importing a single record" — related vocabulary, not a real contradiction). The enumeration
   discipline bounds *which* pairs get asked about; it does not by itself guarantee each individual
   answer is reliable.
-- **Mechanism B's phrase list is deliberately narrow, which is both its safety margin and its
-  weakness.** It will not catch a vacuous citation phrased without any of the listed markers (e.g.,
-  a model could write "authorization is not a concern here" instead of "not mentioned") — a
-  precision-favoring choice for a first iteration, at a known recall cost that dogfooding is
-  expected to surface, not eliminate.
-- **A genuine edge case exists where Mechanism B could produce a real false positive**: a
+- **Mechanism B, per the Revision above, trades a recall risk for a precision risk.** Requiring
+  citation text to trace to a real source is stricter than a wording heuristic: a legitimate,
+  well-grounded citation that paraphrases rather than quotes its source could be rejected as a
+  false positive. This needs checking against real examples (`manufacturer-001`'s five real
+  resolutions, `product-010`'s other policy items) before the check is trusted broadly, not assumed
+  away.
+- **A genuine edge case exists where Mechanism B could still produce a real false positive**: a
   legitimate `not_applicable` resolution that explicitly and correctly cites `out_of_scope` itself
-  as its grounding is a positive citation, not a vacuous one, but might share surface language
-  ("not... mentioned/covered") with the phrase list if worded carelessly. This needs checking
-  against real examples before the check is trusted broadly, not assumed away.
+  as its grounding should pass (its text should overlap with the actual `out_of_scope` entry), but
+  only if the model quotes or closely paraphrases the `out_of_scope` text itself rather than just
+  referring to the concept loosely — worth checking against a real example before trusting the
+  check broadly.
 - **Both mechanisms are validated so far against exactly two stories.** Every risk and every piece
   of "evidence that would prove usefulness" above draws from the same small, real corpus this
   entire investigation has used throughout (`product-010`, `manufacturer-001`, plus

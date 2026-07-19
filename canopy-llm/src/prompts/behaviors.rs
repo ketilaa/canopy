@@ -121,6 +121,32 @@ fn numbered(items: &[String]) -> String {
     items.iter().enumerate().map(|(i, item)| format!("{}. {item}", i + 1)).collect::<Vec<_>>().join("\n")
 }
 
+/// One entry per `out_of_scope` item, each pointing back at the scenario listing already shown
+/// once above (see `scenario_reference_listing`) rather than restating scenario content here —
+/// same proximity/no-duplicate-injection reasoning as `scenario_checklist`. One item per
+/// (excluded concern, scenario) PAIR — nested enumeration, not one holistic "scan every scenario"
+/// question per excluded concern — the same discipline `exhaustive-enumeration-over-holistic-
+/// review` already established for Checklists 1-3 (prompt-review finding: an earlier version
+/// asked one question per excluded concern that scanned the whole scenario list at once, exactly
+/// the omission-prone shape `mechanical_candidate`'s own doc comment above already documents as
+/// live-verified to fail). Items stay bare (name the pair, no restated question) so the actual
+/// yes/no question lives only in the shared instruction — matching `scenario_checklist`/
+/// `open_question_items`'s shape, not `constraint_item`'s (which restates a *different* question
+/// per item because each one names a distinct mechanically-found candidate; there's no equivalent
+/// per-pair candidate here). Naturally empty when there are no scenarios or no excluded concerns
+/// — nothing to pair, not a special-cased guard (see docs/design/product-010-story-readiness-
+/// failure-diagnosis.md for the confirmed failure case this checklist targets: an excluded
+/// concern contradicted by an accepted scenario, undetected because no check compared the two).
+fn scope_contradiction_checklist(out_of_scope: &[String], scenarios: &[Scenario]) -> Vec<String> {
+    let mut items = Vec::new();
+    for concern in out_of_scope {
+        for scenario in scenarios {
+            items.push(format!("Excluded concern \"{concern}\" vs. scenario {}", scenario.id));
+        }
+    }
+    items
+}
+
 /// Renders a checklist section, or nothing at all when there are no items. Live-verified bug
 /// this fixes: rendering an empty checklist as a "None." placeholder still sometimes produced a
 /// spurious gap referencing "None." as if it were a real item — the model didn't reliably treat
@@ -182,6 +208,15 @@ fn specification_completeness_prompt(story: &UserStory, spec: &IntentSpec, adrs:
         "For EACH item, is it resolved by an existing ADR or scenario above?",
         &open_question_items,
     );
+    let scope_items = scope_contradiction_checklist(&spec.out_of_scope, &spec.scenarios);
+    let checklist4 = checklist_section(
+        "## Checklist 4 — Scope contradiction",
+        "For EACH item, does the referenced scenario (in the listing above) avoid presupposing \
+         or requiring the referenced excluded concern? Answer \"yes\" if it stays clear of it, \
+         \"no\" if it presupposes or requires it — the story would then be excluding and \
+         depending on the same concern.",
+        &scope_items,
+    );
 
     let adrs_summary = if adrs.is_empty() {
         "None yet.".to_string()
@@ -209,15 +244,16 @@ specification as a whole. Answer yes or no for each item individually before mov
 next. Only emit a gap for an item you answered "no" to. A checklist that isn't shown below has
 no items to check — do not emit any gap for it.
 
-{scenario_reference}{checklist1}{checklist2}{checklist3}Emit a `missing_scenario` gap for each "no" in Checklist 1, an `ambiguous_outcome` gap for each
-"no" in Checklist 2, and an `unresolved_question` gap for each "no" in Checklist 3. Do not invent
-gaps outside these three categories, and do not emit anything for an item you answered "yes" to.
+{scenario_reference}{checklist1}{checklist2}{checklist3}{checklist4}Emit a `missing_scenario` gap for each "no" in Checklist 1, an `ambiguous_outcome` gap for each
+"no" in Checklist 2, an `unresolved_question` gap for each "no" in Checklist 3, and a
+`scope_contradiction` gap for each "no" in Checklist 4. Do not invent gaps outside these four
+categories, and do not emit anything for an item you answered "yes" to.
 
 Return ONLY valid YAML — no prose, no code fences:
 
 gaps:
-  - kind: missing_scenario | ambiguous_outcome | unresolved_question
-    description: "<specific, concrete — name the exact field, scenario id, or question>"
+  - kind: missing_scenario | ambiguous_outcome | unresolved_question | scope_contradiction
+    description: "<specific, concrete — name the exact field, scenario id, question, or excluded item>"
 "#,
         as_a = story.as_a,
         want = story.want,
@@ -227,6 +263,7 @@ gaps:
         checklist1 = checklist1,
         checklist2 = checklist2,
         checklist3 = checklist3,
+        checklist4 = checklist4,
     )
 }
 
@@ -765,5 +802,53 @@ mod adr_event_coverage_tests {
         let behaviors = BehaviorList { behaviors: vec![] };
         let findings = adr_event_coverage_findings(&spec, &adrs, &behaviors);
         assert!(findings.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod scope_contradiction_checklist_tests {
+    use super::*;
+
+    fn scenario(id: &str) -> Scenario {
+        Scenario {
+            id: id.to_string(),
+            name: String::new(),
+            given: vec![],
+            when: String::new(),
+            then: vec![],
+            constraints: vec![],
+        }
+    }
+
+    #[test]
+    fn one_item_per_concern_scenario_pair() {
+        let out_of_scope = vec!["Customer authentication and authorization".to_string()];
+        let scenarios = vec![scenario("story-001-01"), scenario("story-001-02")];
+        let items = scope_contradiction_checklist(&out_of_scope, &scenarios);
+        assert_eq!(items.len(), 2);
+        assert!(items[0].contains("Customer authentication and authorization"));
+        assert!(items[0].contains("story-001-01"));
+        assert!(items[1].contains("story-001-02"));
+    }
+
+    #[test]
+    fn nests_fully_across_multiple_concerns_and_scenarios() {
+        let out_of_scope = vec!["A".to_string(), "B".to_string()];
+        let scenarios = vec![scenario("s1"), scenario("s2"), scenario("s3")];
+        let items = scope_contradiction_checklist(&out_of_scope, &scenarios);
+        assert_eq!(items.len(), 6);
+    }
+
+    #[test]
+    fn no_items_when_out_of_scope_is_empty() {
+        let items = scope_contradiction_checklist(&[], &[scenario("s1")]);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn no_items_when_there_are_no_scenarios_to_compare_against() {
+        let out_of_scope = vec!["Customer authentication and authorization".to_string()];
+        let items = scope_contradiction_checklist(&out_of_scope, &[]);
+        assert!(items.is_empty());
     }
 }

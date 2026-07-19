@@ -117,6 +117,10 @@ pub enum GapKind {
     AmbiguousOutcome,
     /// An entry in `open_questions` has no accepted ADR or scenario resolving it.
     UnresolvedQuestion,
+    /// An `out_of_scope` entry is contradicted by an accepted scenario that presupposes or
+    /// requires the excluded concern — a same-story, cross-field contradiction (see
+    /// docs/design/product-010-story-readiness-failure-diagnosis.md).
+    ScopeContradiction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -138,9 +142,19 @@ impl GapKind {
     /// than requested as LLM output — one less degree of freedom the model can get wrong.
     pub fn severity(&self) -> GapSeverity {
         match self {
-            GapKind::MissingScenario | GapKind::UnresolvedQuestion => GapSeverity::Gap,
+            GapKind::MissingScenario | GapKind::UnresolvedQuestion | GapKind::ScopeContradiction => GapSeverity::Gap,
             GapKind::AmbiguousOutcome => GapSeverity::Review,
         }
+    }
+}
+
+#[cfg(test)]
+mod gap_kind_tests {
+    use super::*;
+
+    #[test]
+    fn scope_contradiction_is_blocking() {
+        assert_eq!(GapKind::ScopeContradiction.severity(), GapSeverity::Gap);
     }
 }
 
