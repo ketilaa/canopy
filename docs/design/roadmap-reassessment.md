@@ -557,3 +557,19 @@ execution. No new investigation opened here — only what to build next, in orde
    regardless of category?
 3. **Customer vertical slice**: does a capability discovered by the entity-with-no-story signal
    actually make it safely into implemented software?
+
+---
+
+## Update (2026-07-19): Iteration 2 Closed
+
+`docs/design/human-insight-inventory-rerun.md`: reran the original inventory's method against the
+now-larger real history (2 stories reaching `spec`, 9 intent-stage sessions, 42 real review
+actions total). The original single-story finding sharpens rather than changes — uniform Accept
+across every domain-judgment-shaped category, one exception at the most mechanically obvious
+possible defect. The domain-event category's own sample size did not grow (still n=1); the
+Decision Point mechanism (Stage 2) is now confirmed, twice, to have never fired in real use at all.
+Full result and the reasoning for keeping "does scrutiny differentiate by category" and "should
+domain-event become a Decision Point" as separate, differently-answered questions: see that
+document's §3. No new track opened; Iteration 3's open question
+(`docs/open-questions/story-readiness-vs-backlog-evolution.md`) remains the sharpest unresolved
+thread.
