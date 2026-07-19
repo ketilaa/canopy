@@ -114,6 +114,14 @@ absence of evidence) that no check exists at this layer.
 
 ### 2.3 Missing capability assumption (project-wide capability grounding)
 
+**Superseded (2026-07-19):** a confirmed business fact (catalog browsing is public, no
+authentication required) later established that this section's classification does not hold for
+`product-010` — there is no missing capability being presupposed, because the 401 requirement was
+never legitimate in the first place. See
+`docs/design/product-010-reassessed-with-confirmed-public-browsing-intent.md` for the full
+reasoning. This section's analysis is left as originally written below, since it was sound given
+what was known at the time — not rewritten, only superseded.
+
 **Evidence for.** The accepted 401-Unauthorized behavior presupposes an authentication/session
 mechanism. That mechanism has zero representation anywhere in this project — not as an entity, not
 as a role capability, not as a story, not as an ADR. Structurally the same *shape* of question

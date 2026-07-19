@@ -103,6 +103,15 @@ reduction should be read as plausible, not established.
 
 ### C — Capability/entity presupposed but never established → independent phenomenon, but not a blocker
 
+**Superseded in part (2026-07-19):** `product-010` is no longer a valid C-instance — a confirmed
+business fact (catalog browsing is public) established that its 401 requirement was invented, not
+a legitimate not-yet-built capability. See
+`docs/design/product-010-reassessed-with-confirmed-public-browsing-intent.md`. This also resolves
+the tension flagged below (why the "severe" C-instance always co-occurred with A/B while the
+"clean" one never produced a demonstrated defect): the severe instance was never really C. The
+`manufacturer-001` instance and the general argument that C resists full reduction are unaffected —
+left as originally written below.
+
 **Is this fundamentally a readiness blocker?** No — already established in the severity
 classification (`structure-emerges-from-behavior` argues directly against it).
 
