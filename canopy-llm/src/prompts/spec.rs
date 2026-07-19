@@ -905,8 +905,9 @@ Scenario rules:
   system-generated fields set at creation.
   Good: "The {entity} is registered and a {entity}Created event is published."
   Bad:  "WidgetService stores the data and the message broker receives the event."
-- constraints: state the exact rule this scenario tests (empty list if the requirement is a
-  happy-path success case with no constraint being violated)
+- constraints: ALWAYS `[]` (no items) for a happy-path success case with no constraint being
+  violated. ALWAYS a list containing exactly one string (the exact rule text) when this scenario
+  tests a specific constraint. NEVER a list containing an empty list as an item.
 - Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc., in the same order as
   the coverage requirements above.
 
@@ -923,8 +924,7 @@ scenarios:
     when: "<user or system action>"
     then:
       - "<observable outcome>"
-    constraints:
-      - "<constraint or empty list>"
+    constraints: []
 "#,
         story_id = story.id,
         as_a = story.as_a,
@@ -973,6 +973,9 @@ Write BDD scenarios (Given/When/Then) as acceptance criteria. Rules:
   technology names, or infrastructure operations.
   Good: "The actor sees the updated result."
   Bad:  "WidgetService updates the record and the message broker receives the event."
+- constraints: ALWAYS `[]` (no items) for a happy-path success case with no constraint being
+  violated. ALWAYS a list of one string per rule (the exact rule text) when this scenario tests
+  one or more specific constraints. NEVER a list containing an empty list as an item.
 - Scenario IDs must follow the pattern: {story_id}-01, {story_id}-02, etc.
 
 Return ONLY valid YAML — no prose, no code fences.
@@ -985,8 +988,7 @@ scenarios:
     when: "<user or system action>"
     then:
       - "<observable outcome>"
-    constraints:
-      - "<constraint or empty list>"
+    constraints: []
 "#,
         story_id = story.id,
         as_a = story.as_a,
