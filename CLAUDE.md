@@ -373,19 +373,18 @@ and `canopy-llm/src/skills/*.rs` — follows the same rules:
   Confirmed live: Stage 0's original constraint audit ("review for gaps") found 4 of 9 real gaps;
   rewriting it as an explicit field × constraint traversal found all 9. The same shift fixed
   Stage 1 behavior extraction, dependency review, and clustering review.
-- **When a model ignores a correct instruction, fix the prompt, not the code.** Verify with
-  `llm-debug.log` that the instruction actually reached the prompt as intended before concluding
-  it's a compliance problem rather than a missing-instruction problem. If it's genuinely a
-  compliance problem, the fix is to shorten and reposition the instruction — never a Rust-side
-  filter, override, or post-processing step that rewrites, corrects, or replaces the model's own
-  output, and not by default adding more prose either. A longer WRONG/CORRECT example is a last
-  resort after a short instruction has been tried and shown (with real evidence) to still fail —
-  not the first move. This is distinct from a **deterministic audit** — Rust code that compares an
-  already-generated artifact against an independently-known fact (existing domain vocabulary, a
-  coverage list, an ownership record) and fails loudly on disagreement without touching the
-  artifact's content (Entity Continuity, Event Continuity, coverage/contract/dependency checks).
-  Audits enforce an invariant; compensation papers over a compliance gap. The test: does the Rust
-  code change what the model produced, or only reject/accept it as-is?
+- **Prompts teach; they do not enforce.** The local model cannot be trusted to follow a correct,
+  well-placed instruction reliably (a paragraph break moved one compliance probability from 0.458
+  to 0.058; three escalating prompt fixes for one failure failed identically). Verify with
+  `llm-debug.log` that an instruction reached the prompt before blaming the model, but when
+  something must hold, enforce it with the output type, the filesystem, the compiler or the test
+  runner — see the escalation order under Principles. A prompt change needs a measured delta, not
+  an impression; a longer WRONG/CORRECT example is a last resort. Still forbidden: Rust code that
+  rewrites the *meaning* of model output (path injectors, semantic post-processors). Allowed and
+  encouraged: **deterministic audits** (compare an artifact against an independently-known fact and
+  reject), **restoring state** after a failed step, retrying with specific feedback, and
+  **rendering text from validated fields**. The test: does the Rust code change what the model
+  meant, or only accept, reject, restore or format it?
 
 Use the `canopy-prompt-reviewer` subagent (`.claude/agents/canopy-prompt-reviewer.md`) to check
 prompt/skill changes against these rules before installing.
@@ -421,9 +420,24 @@ A plan step description should name its layer responsibility using the verb that
 `Handles` (route), `Translates` (middleware). An ambiguous verb ("implements", "manages") is a
 signal the step is conflating responsibilities.
 
-**Escalation order when the model fails at something: tool, then prompt, then gated code —
-never skip a rung.** Every fix this project makes to a recurring model mistake falls into one of
-three tiers, tried in this order:
+**The model is an unreliable component inside a deterministic harness.** Escalation order when
+it fails at something — try in this order, and do not skip a rung. Rationale and evidence:
+`docs/design/new-course-from-java-harness-and-nexus2.md`.
+
+0. **Make the wrong answer unrepresentable.** Constrain output with a JSON schema
+   (`response_format`; enum-typed fields for closed sets) and render any downstream text from the
+   fields. A schema fixes *shape*, not *truth* — keep the grounding checks. Never send `tools` and
+   a schema in the same turn (the schema wins and tool calls silently become impossible).
+1. **Compute or look it up** (below).
+2. **Verify against ground truth, then recover deterministically.** Compile, run the test,
+   re-check the filesystem or an independently-known fact. On failure restore the step's state,
+   retry once with feedback naming what is wrong, then revert and record it. Never trust the
+   model's own report ("no change needed", `##CANOPY_DEVIATIONS##`).
+3. **Teach in the prompt, only with a measured delta** (paired runs, not one sample). A model
+   instruction is a hint, not a guarantee.
+
+Gated code that goes beyond restore/retry/audit/render still needs a proposal and human approval
+(see "Diagnosing Dogfooding Runs"). Tier 1 in detail:
 
 1. **Is this a tool call, or a stated fact?** If the answer is mechanically computable and the
    model needs to *decide when to ask* (the space of things it might need is too large to
