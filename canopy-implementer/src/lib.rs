@@ -7,9 +7,13 @@
 //! Everything that happens is reported as a typed [`observe::RunEvent`]; consumers (console, trace
 //! file, metrics, tests) are [`observe::RunObserver`]s of the same stream.
 
+pub mod build;
 pub mod files;
+pub mod implementer;
 pub mod llm;
 pub mod observe;
+pub mod prompt;
+pub mod snapshot;
 
 #[cfg(test)]
 mod testing;

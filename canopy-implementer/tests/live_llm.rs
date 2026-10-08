@@ -28,7 +28,11 @@ fn a_real_schema_constrained_call_is_fully_observed() {
         .with(recorder.clone())
         .with(Arc::new(TraceWriter::create(&trace_path, "live-smoke").unwrap()));
     let client = LlmClient::new(
-        ModelEndpoint { base_url: url, model, timeout: Duration::from_secs(300) },
+        ModelEndpoint {
+            base_url: url,
+            model,
+            timeout: Duration::from_secs(300),
+        },
         Sampling::qwen3(),
         Arc::new(observers),
     );
@@ -51,20 +55,35 @@ fn a_real_schema_constrained_call_is_fully_observed() {
 
     let events = recorder.events();
     assert!(matches!(events[0], RunEvent::LlmRequestSent(_)));
-    let RunEvent::LlmResponseReceived(got) = &events[1] else { panic!("{:?}", events[1]) };
+    let RunEvent::LlmResponseReceived(got) = &events[1] else {
+        panic!("{:?}", events[1])
+    };
     assert!(got.prompt_tokens > 0 && got.completion_tokens > 0 && got.elapsed_ms > 0);
     assert!(got.server.is_some(), "llama-server reports timings");
 
-    eprintln!("--- trace ({} lines) ---", std::fs::read_to_string(&trace_path).unwrap().lines().count());
+    eprintln!(
+        "--- trace ({} lines) ---",
+        std::fs::read_to_string(&trace_path).unwrap().lines().count()
+    );
     for line in std::fs::read_to_string(&trace_path).unwrap().lines() {
         let v: serde_json::Value = serde_json::from_str(line).unwrap();
         let e = &v["event"];
         match e["type"].as_str().unwrap() {
-            "llm_request_sent" => eprintln!("seq {} {} request  call={} purpose={}", v["seq"], v["ts"], e["call_id"], e["purpose"]),
+            "llm_request_sent" => eprintln!(
+                "seq {} {} request  call={} purpose={}",
+                v["seq"], v["ts"], e["call_id"], e["purpose"]
+            ),
             "llm_response_received" => eprintln!(
                 "seq {} {} response call={} finish={} tokens in/out={}/{} cached={} elapsed={}ms server={}",
-                v["seq"], v["ts"], e["call_id"], e["finish_reason"], e["prompt_tokens"], e["completion_tokens"],
-                e["cached_tokens"], e["elapsed_ms"], e["server"]
+                v["seq"],
+                v["ts"],
+                e["call_id"],
+                e["finish_reason"],
+                e["prompt_tokens"],
+                e["completion_tokens"],
+                e["cached_tokens"],
+                e["elapsed_ms"],
+                e["server"]
             ),
             other => eprintln!("seq {} {other}", v["seq"]),
         }

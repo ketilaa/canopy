@@ -37,7 +37,10 @@ impl FakeServer {
                 let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
                 let length = headers
                     .lines()
-                    .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap()))
+                    .find_map(|l| {
+                        l.strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap())
+                    })
                     .unwrap_or(0);
                 while buf.len() < header_end + length {
                     let n = stream.read(&mut chunk).unwrap_or(0);
@@ -46,7 +49,9 @@ impl FakeServer {
                     }
                     buf.extend_from_slice(&chunk[..n]);
                 }
-                seen.lock().unwrap().push(String::from_utf8_lossy(&buf[header_end..]).to_string());
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buf[header_end..]).to_string());
                 std::thread::sleep(delay);
                 let reason = if status == 200 { "OK" } else { "Error" };
                 let response = format!(

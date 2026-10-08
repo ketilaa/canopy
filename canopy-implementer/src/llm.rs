@@ -23,15 +23,24 @@ pub struct Message {
 
 impl Message {
     pub fn system(content: &str) -> Self {
-        Self { role: "system".into(), content: content.into() }
+        Self {
+            role: "system".into(),
+            content: content.into(),
+        }
     }
 
     pub fn user(content: &str) -> Self {
-        Self { role: "user".into(), content: content.into() }
+        Self {
+            role: "user".into(),
+            content: content.into(),
+        }
     }
 
     pub fn assistant(content: &str) -> Self {
-        Self { role: "assistant".into(), content: content.into() }
+        Self {
+            role: "assistant".into(),
+            content: content.into(),
+        }
     }
 }
 
@@ -48,7 +57,13 @@ pub struct Sampling {
 impl Sampling {
     /// Qwen's recommended settings (thinking mode defaults), with a completion cap.
     pub fn qwen3() -> Self {
-        Self { temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0.0, max_tokens: 2048 }
+        Self {
+            temperature: 0.6,
+            top_p: 0.95,
+            top_k: 20,
+            min_p: 0.0,
+            max_tokens: 2048,
+        }
     }
 }
 
@@ -88,6 +103,12 @@ pub struct LlmError {
     pub message: String,
 }
 
+/// Anything that can answer a schema-constrained request. The real implementation is [`LlmClient`];
+/// tests script one.
+pub trait Generator: Send + Sync {
+    fn complete_structured(&self, request: &StructuredRequest) -> Result<LlmResponse, LlmError>;
+}
+
 pub struct LlmClient {
     endpoint: ModelEndpoint,
     sampling: Sampling,
@@ -97,7 +118,12 @@ pub struct LlmClient {
 
 impl LlmClient {
     pub fn new(endpoint: ModelEndpoint, sampling: Sampling, observer: Arc<dyn RunObserver>) -> Self {
-        Self { endpoint, sampling, observer, next_call_id: AtomicU64::new(1) }
+        Self {
+            endpoint,
+            sampling,
+            observer,
+            next_call_id: AtomicU64::new(1),
+        }
     }
 
     pub fn complete_structured(&self, request: &StructuredRequest) -> Result<LlmResponse, LlmError> {
@@ -123,7 +149,12 @@ impl LlmClient {
                 body,
                 elapsed_ms: started.elapsed().as_millis() as u64,
             }));
-            LlmError { call_id, kind, status, message }
+            LlmError {
+                call_id,
+                kind,
+                status,
+                message,
+            }
         };
 
         let url = format!("{}/v1/chat/completions", self.endpoint.base_url);
@@ -134,21 +165,39 @@ impl LlmClient {
             .send_json(self.request_body(request));
         let text = match sent {
             Ok(response) => response.into_string().map_err(|e| {
-                let kind = if is_timeout_io(&e) { FailureKind::Timeout } else { FailureKind::Transport };
+                let kind = if is_timeout_io(&e) {
+                    FailureKind::Timeout
+                } else {
+                    FailureKind::Transport
+                };
                 fail(kind, None, e.to_string(), None)
             })?,
             Err(ureq::Error::Status(code, response)) => {
                 let body = response.into_string().unwrap_or_default();
-                return Err(fail(FailureKind::HttpStatus, Some(code), format!("HTTP {code}"), Some(body)));
+                return Err(fail(
+                    FailureKind::HttpStatus,
+                    Some(code),
+                    format!("HTTP {code}"),
+                    Some(body),
+                ));
             }
             Err(ureq::Error::Transport(transport)) => {
-                let kind = if is_timeout_transport(&transport) { FailureKind::Timeout } else { FailureKind::Transport };
+                let kind = if is_timeout_transport(&transport) {
+                    FailureKind::Timeout
+                } else {
+                    FailureKind::Transport
+                };
                 return Err(fail(kind, None, transport.to_string(), None));
             }
         };
 
         let Some(completion) = Completion::parse(&text) else {
-            return Err(fail(FailureKind::BadShape, None, "response has no choices[0].message.content".into(), Some(text)));
+            return Err(fail(
+                FailureKind::BadShape,
+                None,
+                "response has no choices[0].message.content".into(),
+                Some(text),
+            ));
         };
         self.observer.on(&RunEvent::LlmResponseReceived(LlmResponseReceived {
             call_id,
@@ -186,6 +235,12 @@ impl LlmClient {
                 "json_schema": { "name": request.schema_name, "strict": true, "schema": request.schema }
             }
         })
+    }
+}
+
+impl Generator for LlmClient {
+    fn complete_structured(&self, request: &StructuredRequest) -> Result<LlmResponse, LlmError> {
+        LlmClient::complete_structured(self, request)
     }
 }
 
@@ -274,7 +329,11 @@ mod tests {
     fn client(url: &str, timeout_ms: u64) -> (LlmClient, Arc<RecordingObserver>) {
         let observer = Arc::new(RecordingObserver::new());
         let client = LlmClient::new(
-            ModelEndpoint { base_url: url.into(), model: "qwen3-14b".into(), timeout: Duration::from_millis(timeout_ms) },
+            ModelEndpoint {
+                base_url: url.into(),
+                model: "qwen3-14b".into(),
+                timeout: Duration::from_millis(timeout_ms),
+            },
             Sampling::qwen3(),
             observer.clone(),
         );
@@ -299,19 +358,29 @@ mod tests {
 
         let events = observer.events();
         assert_eq!(events.len(), 2);
-        let RunEvent::LlmRequestSent(sent) = &events[0] else { panic!("first event: {:?}", events[0]) };
-        assert_eq!((sent.call_id, sent.purpose.as_str(), sent.model.as_str()), (1, "generate-files", "qwen3-14b"));
+        let RunEvent::LlmRequestSent(sent) = &events[0] else {
+            panic!("first event: {:?}", events[0])
+        };
+        assert_eq!(
+            (sent.call_id, sent.purpose.as_str(), sent.model.as_str()),
+            (1, "generate-files", "qwen3-14b")
+        );
         assert_eq!(sent.messages.len(), 2);
         assert_eq!(sent.schema_name, "files");
         assert_eq!(sent.sampling, Sampling::qwen3());
         assert!(!sent.thinking);
 
-        let RunEvent::LlmResponseReceived(got) = &events[1] else { panic!("second event: {:?}", events[1]) };
+        let RunEvent::LlmResponseReceived(got) = &events[1] else {
+            panic!("second event: {:?}", events[1])
+        };
         assert_eq!((got.call_id, got.purpose.as_str()), (1, "generate-files"));
         assert_eq!(got.model, "Qwen/Qwen3-14B-GGUF:Q4_K_M");
         assert_eq!(got.finish_reason, "stop");
         assert_eq!(got.content, "{\"files\":[]}");
-        assert_eq!((got.prompt_tokens, got.completion_tokens, got.cached_tokens), (74, 185, Some(12)));
+        assert_eq!(
+            (got.prompt_tokens, got.completion_tokens, got.cached_tokens),
+            (74, 185, Some(12))
+        );
         assert!(got.elapsed_ms >= 60, "elapsed {}", got.elapsed_ms);
         let server_timings = got.server.as_ref().unwrap();
         assert_eq!(server_timings.predicted_ms, 15648.1);
@@ -327,10 +396,16 @@ mod tests {
 
         let body: Value = serde_json::from_str(&server.requests.lock().unwrap()[0]).unwrap();
         assert_eq!(body["model"], "qwen3-14b");
-        assert_eq!(body["messages"][1], serde_json::json!({"role": "user", "content": "make files"}));
+        assert_eq!(
+            body["messages"][1],
+            serde_json::json!({"role": "user", "content": "make files"})
+        );
         assert_eq!(body["response_format"]["type"], "json_schema");
         assert_eq!(body["response_format"]["json_schema"]["name"], "files");
-        assert_eq!(body["response_format"]["json_schema"]["schema"], serde_json::json!({"type": "object"}));
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"],
+            serde_json::json!({"type": "object"})
+        );
         assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(body["temperature"], 0.6);
         assert_eq!(body["top_p"], 0.95);
@@ -358,7 +433,9 @@ mod tests {
 
         let events = observer.events();
         assert_eq!(events.len(), 2);
-        let RunEvent::LlmCallFailed(failed) = &events[1] else { panic!("{:?}", events[1]) };
+        let RunEvent::LlmCallFailed(failed) = &events[1] else {
+            panic!("{:?}", events[1])
+        };
         assert_eq!((failed.kind, failed.status), (FailureKind::HttpStatus, Some(500)));
         assert_eq!(failed.body.as_deref(), Some(r#"{"error":"boom"}"#));
         assert_eq!((failed.call_id, failed.purpose.as_str()), (1, "p"));
@@ -370,7 +447,9 @@ mod tests {
         let (client, observer) = client(&server.url, 5000);
         let err = client.complete_structured(&request("p")).unwrap_err();
         assert_eq!(err.kind, FailureKind::BadShape);
-        let RunEvent::LlmCallFailed(failed) = &observer.events()[1] else { panic!() };
+        let RunEvent::LlmCallFailed(failed) = &observer.events()[1] else {
+            panic!()
+        };
         assert_eq!(failed.body.as_deref(), Some(r#"{"choices":[]}"#));
     }
 
@@ -380,8 +459,14 @@ mod tests {
         let (client, observer) = client(&server.url, 200);
         let err = client.complete_structured(&request("p")).unwrap_err();
         assert_eq!(err.kind, FailureKind::Timeout);
-        let RunEvent::LlmCallFailed(failed) = &observer.events()[1] else { panic!() };
-        assert!(failed.elapsed_ms >= 150 && failed.elapsed_ms < 1400, "elapsed {}", failed.elapsed_ms);
+        let RunEvent::LlmCallFailed(failed) = &observer.events()[1] else {
+            panic!()
+        };
+        assert!(
+            failed.elapsed_ms >= 150 && failed.elapsed_ms < 1400,
+            "elapsed {}",
+            failed.elapsed_ms
+        );
     }
 
     #[test]

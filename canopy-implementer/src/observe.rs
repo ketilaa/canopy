@@ -73,12 +73,101 @@ pub struct LlmCallFailed {
     pub elapsed_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildKind {
+    /// Compiles main and test sources; runs no tests.
+    Compile,
+    /// Runs the test suite (which compiles first).
+    Test,
+}
+
+/// A build command the harness ran. The model never decides whether this happens.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CommandRan {
+    pub kind: BuildKind,
+    pub command: String,
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub elapsed_ms: u64,
+    /// Full combined output. The digest shown to the model is derived from this.
+    pub output: String,
+}
+
+/// The stage of an attempt at which it failed.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// The model call itself failed.
+    Llm,
+    /// The model's answer was cut off at the token limit.
+    Truncated,
+    /// The answer did not match the schema.
+    Parse,
+    /// A path in the answer was unsafe, or writing failed.
+    Write,
+    Compile,
+    Test,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StepStarted {
+    pub step_id: String,
+    pub instruction: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttemptStarted {
+    pub step_id: String,
+    pub attempt: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FilesWritten {
+    pub step_id: String,
+    pub attempt: u32,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttemptFailed {
+    pub step_id: String,
+    pub attempt: u32,
+    pub stage: Stage,
+    /// What the next attempt is told went wrong.
+    pub feedback: String,
+}
+
+/// The workspace was put back exactly as it was before the attempt wrote anything.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WorkspaceRestored {
+    pub step_id: String,
+    pub attempt: u32,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StepFinished {
+    pub step_id: String,
+    pub passed: bool,
+    pub attempts: u32,
+    pub elapsed_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
     LlmRequestSent(LlmRequestSent),
     LlmResponseReceived(LlmResponseReceived),
     LlmCallFailed(LlmCallFailed),
+    CommandRan(CommandRan),
+    StepStarted(StepStarted),
+    AttemptStarted(AttemptStarted),
+    FilesWritten(FilesWritten),
+    AttemptFailed(AttemptFailed),
+    WorkspaceRestored(WorkspaceRestored),
+    StepFinished(StepFinished),
 }
 
 pub trait RunObserver: Send + Sync {
@@ -166,7 +255,10 @@ impl TraceWriter {
             std::fs::create_dir_all(parent)?;
         }
         let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(Self { run_id: run_id.to_string(), inner: Mutex::new(TraceInner { file, seq: 0 }) })
+        Ok(Self {
+            run_id: run_id.to_string(),
+            inner: Mutex::new(TraceInner { file, seq: 0 }),
+        })
     }
 }
 
@@ -175,7 +267,12 @@ impl RunObserver for TraceWriter {
         use std::io::Write;
         let Ok(mut inner) = self.inner.lock() else { return };
         inner.seq += 1;
-        let envelope = Envelope { run_id: &self.run_id, seq: inner.seq, ts: now_iso(), event };
+        let envelope = Envelope {
+            run_id: &self.run_id,
+            seq: inner.seq,
+            ts: now_iso(),
+            event,
+        };
         if let Ok(mut line) = serde_json::to_string(&envelope) {
             line.push('\n');
             let _ = inner.file.write_all(line.as_bytes());
