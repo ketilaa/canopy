@@ -86,6 +86,25 @@ llama-server \
   - *Own tests weaker than the request* (vat 2 of 5): the loop passed (its own tests passed) but the hidden
     acceptance failed: the total still excluded VAT (expected 5000, was 4000); it changed the invoice but not
     the calculator that the total and the charge come from.
+- **confirmed** (rerun after the three message fixes and the subject hint, harness `15bf566`, clean tree; batches
+  `2026-10-08T19-42-23` naming, `T19-57-40` vat, `T20-06-38` hi; same tasks, 5 runs each). Scored passes before to
+  after: **hi 4/5 to 5/5, naming 1/5 to 0/5, vat 0/5 to 0/5.** What each change did:
+  - *No-test message now names the file to keep* (hi): the one failing run had been exactly this backfire; hi is
+    now 5/5, all first attempt. The mechanism matches the cause, but n=5 is thin.
+  - *Subject hint* (naming): it fired and was acted on, and that produced a new failure. In 3 of 5 runs the loop
+    "passed" on attempt 2, and **all 5 naming runs ended with an empty patch**: told the test exercises a class
+    it did not change ("either change it so the test passes, or correct the test"), the model reverted its
+    `Greeter` change, deleted its own trim test, and resubmitted files identical to disk. A submission that
+    changes nothing is accepted by every gate and the build passes, so the step counts as done. In run 4 the hint
+    was present on all 3 attempts and ignored. Whether the "or correct the test" wording invited the revert is
+    **suspected**, not shown.
+  - *Budget retry text and empty-submission text* (vat): no improvement. Attempt 1 is identical in all 5 runs
+    (glob, 8 reads, 4 re-reads, budget). Attempts 2 and 3 are now degenerate: the first action is
+    `submit_files({"files": []})` before reading anything, repeated 12 times despite refusals, 36 tool calls and
+    24 refusals per run, identical in all 5 runs. Before the fix those attempts re-read files instead; neither
+    shape writes anything.
+  - *Observation*: the model avoids producing the long submission: after reading everything it emits cheap calls
+    (re-reads, empty submits). Both vat and naming fail to a no-op or a stall, not to a wrong answer.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
