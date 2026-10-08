@@ -257,6 +257,13 @@ impl RunObserver for Console {
                     f.elapsed_ms as f64 / 1000.0
                 )
             }
+            RunEvent::ToolCalled(t) => println!(
+                "  tool {} {} -> {:?} ({} chars)",
+                t.tool,
+                t.arguments.chars().take(80).collect::<String>(),
+                t.outcome,
+                t.result.len()
+            ),
             RunEvent::StepStarted(_) | RunEvent::AttemptStarted(_) => {}
         }
     }

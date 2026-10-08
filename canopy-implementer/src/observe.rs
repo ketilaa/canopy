@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
-use crate::llm::{Message, Sampling};
+use crate::llm::{Sampling, ToolCall};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,7 +38,11 @@ pub struct LlmRequestSent {
     pub call_id: u64,
     pub purpose: String,
     pub model: String,
-    pub messages: Vec<Message>,
+    /// The messages exactly as sent on the wire, including tool calls and tool results.
+    pub messages: Vec<serde_json::Value>,
+    /// Names of the tools offered on this call (empty for schema-constrained calls).
+    pub tools: Vec<String>,
+    /// Empty and null when the call is not schema-constrained.
     pub schema_name: String,
     pub schema: serde_json::Value,
     pub sampling: Sampling,
@@ -53,6 +57,8 @@ pub struct LlmResponseReceived {
     pub model: String,
     pub finish_reason: String,
     pub content: String,
+    /// The tool calls the model asked for, if any.
+    pub tool_calls: Vec<ToolCall>,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cached_tokens: Option<u64>,
@@ -155,12 +161,27 @@ pub struct StepFinished {
     pub elapsed_ms: u64,
 }
 
+/// A tool call the model made, and what the harness answered.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ToolCalled {
+    pub step_id: String,
+    pub attempt: u32,
+    pub tool: String,
+    /// The raw JSON arguments as the model wrote them.
+    pub arguments: String,
+    pub outcome: ToolOutcome,
+    /// Exactly what the model was told.
+    pub result: String,
+    pub elapsed_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
     LlmRequestSent(LlmRequestSent),
     LlmResponseReceived(LlmResponseReceived),
     LlmCallFailed(LlmCallFailed),
+    ToolCalled(ToolCalled),
     CommandRan(CommandRan),
     StepStarted(StepStarted),
     AttemptStarted(AttemptStarted),
@@ -395,6 +416,12 @@ pub struct Metrics {
     pub failed_attempts_by_stage: std::collections::BTreeMap<String, u64>,
     pub steps_passed: u64,
     pub steps_failed: u64,
+    /// Tool calls by tool name (`glob`, `read_file`, `submit_files`).
+    pub tool_calls_by_name: std::collections::BTreeMap<String, u64>,
+    /// Tool calls the harness declined on policy.
+    pub tool_refusals: u64,
+    /// Tool calls that were themselves wrong: bad arguments, unknown tool, missing file.
+    pub tool_errors: u64,
 }
 
 /// Accumulates [`Metrics`] from the events it sees. Cheap to run next to any other observer.
@@ -449,6 +476,14 @@ impl RunObserver for MetricsObserver {
                     m.steps_failed += 1;
                 }
             }
+            RunEvent::ToolCalled(t) => {
+                *m.tool_calls_by_name.entry(t.tool.clone()).or_insert(0) += 1;
+                match t.outcome {
+                    ToolOutcome::Ok => {}
+                    ToolOutcome::Refused => m.tool_refusals += 1,
+                    ToolOutcome::Error => m.tool_errors += 1,
+                }
+            }
             RunEvent::FilesWritten(_) | RunEvent::WorkspaceRestored(_) | RunEvent::StepStarted(_) => {}
         }
     }
@@ -465,6 +500,7 @@ mod metrics_tests {
             model: "m".into(),
             finish_reason: "stop".into(),
             content: String::new(),
+            tool_calls: vec![],
             prompt_tokens: prompt,
             completion_tokens: completion,
             cached_tokens: cached,
@@ -566,6 +602,36 @@ mod metrics_tests {
     }
 
     #[test]
+    fn counts_tool_calls_by_name_and_separates_refusals_from_errors() {
+        let metrics = MetricsObserver::new();
+        let called = |tool: &str, outcome| {
+            RunEvent::ToolCalled(ToolCalled {
+                step_id: "s".into(),
+                attempt: 1,
+                tool: tool.into(),
+                arguments: "{}".into(),
+                outcome,
+                result: String::new(),
+                elapsed_ms: 1,
+            })
+        };
+        for event in [
+            called("glob", ToolOutcome::Ok),
+            called("read_file", ToolOutcome::Ok),
+            called("read_file", ToolOutcome::Refused),
+            called("read_file", ToolOutcome::Error),
+            called("submit_files", ToolOutcome::Refused),
+        ] {
+            metrics.on(&event);
+        }
+        let m = metrics.snapshot();
+        assert_eq!(m.tool_calls_by_name.get("read_file"), Some(&3));
+        assert_eq!(m.tool_calls_by_name.get("glob"), Some(&1));
+        assert_eq!(m.tool_calls_by_name.get("submit_files"), Some(&1));
+        assert_eq!((m.tool_refusals, m.tool_errors), (2, 1));
+    }
+
+    #[test]
     fn counts_every_request_sent_as_a_call() {
         let metrics = MetricsObserver::new();
         let sent = RunEvent::LlmRequestSent(LlmRequestSent {
@@ -573,6 +639,7 @@ mod metrics_tests {
             purpose: "p".into(),
             model: "m".into(),
             messages: vec![],
+            tools: vec![],
             schema_name: "s".into(),
             schema: serde_json::json!({}),
             sampling: Sampling::qwen3(),
