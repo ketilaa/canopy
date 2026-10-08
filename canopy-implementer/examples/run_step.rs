@@ -21,18 +21,35 @@ use canopy_implementer::llm::{LlmClient, ModelEndpoint, Sampling};
 use canopy_implementer::observe::{now_iso, Metrics, MetricsObserver, Observers, RunEvent, RunObserver, TraceWriter};
 use serde_json::json;
 
-const INSTRUCTION: &str = "Create a `Greeter` class in package `com.example.demo` with a method \
-`String greet(String name)` that returns `Hello, <name>!`, and throws `IllegalArgumentException` if the name is \
-blank. Create a `GreeterTest` class that tests both behaviours.";
+/// A step to run, the state to start it from, and how its result is scored.
+struct Task {
+    name: &'static str,
+    default_tag: &'static str,
+    instruction: &'static str,
+    context: &'static str,
+    /// Existing files the step reads or changes; the model is shown their current content.
+    files: &'static [&'static str],
+    /// Copied in after the run, never shown to the model. Scores what the model's own tests cannot.
+    hidden_test: &'static str,
+    /// Test methods present in the starting state that must still exist afterwards.
+    preserved_tests: &'static [&'static str],
+}
 
-const CONTEXT: &str = "Root package: com.example.demo\n\
+const HIDDEN_TEST_PATH: &str = "src/test/java/com/example/demo/GreeterHiddenTest.java";
+
+const CREATE: Task = Task {
+    name: "create",
+    default_tag: "baseline-00-scaffold",
+    instruction: "Create a `Greeter` class in package `com.example.demo` with a method \
+`String greet(String name)` that returns `Hello, <name>!`, and throws `IllegalArgumentException` if the name is \
+blank. Create a `GreeterTest` class that tests both behaviours.",
+    context: "Root package: com.example.demo\n\
 Main sources: src/main/java/com/example/demo/\n\
 Test sources: src/test/java/com/example/demo/\n\
 Build: Maven, Java 21, JUnit 5 (spring-boot-starter-test is on the classpath)\n\
-Existing files: src/main/java/com/example/demo/DemoApplication.java";
-
-/// Copied in after the run, never shown to the model. Scores what the model's own tests cannot.
-const HIDDEN_TEST: &str = r#"package com.example.demo;
+Existing files: src/main/java/com/example/demo/DemoApplication.java",
+    files: &[],
+    hidden_test: r#"package com.example.demo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -60,13 +77,76 @@ class GreeterHiddenTest {
         assertThrows(IllegalArgumentException.class, () -> new Greeter().greet("   "));
     }
 }
-"#;
-const HIDDEN_TEST_PATH: &str = "src/test/java/com/example/demo/GreeterHiddenTest.java";
+"#,
+    preserved_tests: &[],
+};
+
+const TRIM: Task = Task {
+    name: "trim",
+    default_tag: "candidate-01-greeter",
+    instruction: "Change `Greeter.greet` so that leading and trailing whitespace is removed from the name before it \
+is used: `greet(\"  Ada \")` must return `Hello, Ada!`. A blank name must still throw `IllegalArgumentException`. \
+Keep all existing behaviour and existing tests. Add a test for the new behaviour to `GreeterTest`.",
+    context: "Root package: com.example.demo\n\
+Main sources: src/main/java/com/example/demo/\n\
+Test sources: src/test/java/com/example/demo/\n\
+Build: Maven, Java 21, JUnit 5 (spring-boot-starter-test is on the classpath)\n\
+Existing files: src/main/java/com/example/demo/DemoApplication.java, \
+src/main/java/com/example/demo/Greeter.java, src/test/java/com/example/demo/GreeterTest.java",
+    files: &[
+        "src/main/java/com/example/demo/Greeter.java",
+        "src/test/java/com/example/demo/GreeterTest.java",
+    ],
+    hidden_test: r#"package com.example.demo;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import org.junit.jupiter.api.Test;
+
+class GreeterHiddenTest {
+    @Test
+    void greetsByName() {
+        assertEquals("Hello, Ada!", new Greeter().greet("Ada"));
+    }
+
+    @Test
+    void trimsSurroundingWhitespace() {
+        assertEquals("Hello, Ada!", new Greeter().greet("  Ada "));
+    }
+
+    @Test
+    void trimsTabsAndNewlinesToo() {
+        assertEquals("Hello, Grace!", new Greeter().greet("\tGrace\n"));
+    }
+
+    @Test
+    void stillRejectsAnEmptyName() {
+        assertThrows(IllegalArgumentException.class, () -> new Greeter().greet(""));
+    }
+
+    @Test
+    void stillRejectsABlankName() {
+        assertThrows(IllegalArgumentException.class, () -> new Greeter().greet("   "));
+    }
+}
+"#,
+    preserved_tests: &["testGreetWithValidName", "testGreetWithBlankName"],
+};
+
+fn task(name: &str) -> Result<Task, String> {
+    match name {
+        "create" => Ok(CREATE),
+        "trim" => Ok(TRIM),
+        other => Err(format!("unknown task {other}; known: create, trim")),
+    }
+}
 
 const USAGE: &str =
-    "usage: run_step [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
+    "usage: run_step [--task create|trim] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
 
 struct Config {
+    task: String,
     repo: PathBuf,
     tag: String,
     runs: u32,
@@ -79,8 +159,9 @@ struct Config {
 fn parse_args() -> Result<Config, String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut config = Config {
+        task: "create".into(),
         repo: crate_dir.parent().unwrap().join("dogfooding"),
-        tag: "baseline-00-scaffold".into(),
+        tag: String::new(),
         runs: 1,
         attempts: 3,
         url: "http://localhost:8080".into(),
@@ -94,6 +175,7 @@ fn parse_args() -> Result<Config, String> {
         }
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
         match flag.as_str() {
+            "--task" => config.task = value("--task")?,
             "--repo" => config.repo = value("--repo")?.into(),
             "--tag" => config.tag = value("--tag")?,
             "--runs" => config.runs = value("--runs")?.parse().map_err(|e| format!("--runs: {e}"))?,
@@ -103,6 +185,9 @@ fn parse_args() -> Result<Config, String> {
             "--out" => config.out = value("--out")?.into(),
             other => return Err(format!("unknown option {other}")),
         }
+    }
+    if config.tag.is_empty() {
+        config.tag = task(&config.task)?.default_tag.to_string();
     }
     Ok(config)
 }
@@ -197,19 +282,41 @@ fn count_own_tests(repo: &Path) -> usize {
     total
 }
 
+/// Everything under src/test/java, concatenated.
+fn test_sources(repo: &Path) -> String {
+    fn walk(dir: &Path, out: &mut String) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "java") {
+                out.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(&repo.join("src/test/java"), &mut out);
+    out
+}
+
 struct RunResult {
     n: u32,
     passed: bool,
     attempts: u32,
     acceptance: &'static str,
     own_tests: usize,
+    tests_added: usize,
+    kept_original: bool,
+    scored: bool,
     metrics: Metrics,
     step_ms: u64,
 }
 
-fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<RunResult, String> {
+fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u32) -> Result<RunResult, String> {
     let run_dir = batch_dir.join(format!("run-{n:02}"));
     reset(&config.repo, &config.tag)?;
+    let tests_before = count_own_tests(&config.repo);
     println!("\n== run {n}/{} ==", config.runs);
 
     let metrics = Arc::new(MetricsObserver::new());
@@ -235,9 +342,10 @@ fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<
     let implementer = Implementer::new(Box::new(client), Box::new(build), observers.clone(), config.attempts);
 
     let step = StepRequest {
-        id: "greeter".into(),
-        instruction: INSTRUCTION.into(),
-        context: CONTEXT.into(),
+        id: format!("greeter-{}", task.name),
+        instruction: task.instruction.into(),
+        context: task.context.into(),
+        files: task.files.iter().map(|f| f.to_string()).collect(),
     };
     let started = Instant::now();
     let outcome = implementer.run_step(&config.repo, &step);
@@ -251,6 +359,12 @@ fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<
 
     // What the run left behind, before the hidden test is added.
     let own_tests = count_own_tests(&config.repo);
+    let tests_added = own_tests.saturating_sub(tests_before);
+    let sources = test_sources(&config.repo);
+    let kept_original = task
+        .preserved_tests
+        .iter()
+        .all(|name| sources.contains(&format!("{name}(")));
     git(&config.repo, &["add", "-A"])?;
     let patch = git(&config.repo, &["diff", "--cached", "HEAD"])?;
     let files_changed: Vec<String> = git(&config.repo, &["diff", "--cached", "--name-only", "HEAD"])?
@@ -263,7 +377,7 @@ fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<
     // Score with the hidden acceptance test, only when the loop claims success.
     let (acceptance, acceptance_digest) = if passed {
         let path = config.repo.join(HIDDEN_TEST_PATH);
-        std::fs::write(&path, HIDDEN_TEST).map_err(|e| e.to_string())?;
+        std::fs::write(&path, task.hidden_test).map_err(|e| e.to_string())?;
         let outcome = CommandBuild::maven(Duration::from_secs(240), observers.clone()).test(&config.repo);
         if outcome.success {
             ("passed", String::new())
@@ -273,7 +387,10 @@ fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<
     } else {
         ("not_run", String::new())
     };
-    println!("  hidden acceptance: {acceptance}; own tests written: {own_tests}");
+    let scored = acceptance == "passed" && kept_original && tests_added >= 1;
+    println!(
+        "  hidden acceptance: {acceptance}; original tests kept: {kept_original}; tests added: {tests_added}; scored: {scored}"
+    );
 
     let summary = json!({
         "run": n,
@@ -284,6 +401,10 @@ fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<
         "acceptance": acceptance,
         "acceptance_digest": acceptance_digest,
         "own_tests": own_tests,
+        "tests_before": tests_before,
+        "tests_added": tests_added,
+        "original_tests_kept": kept_original,
+        "scored_pass": scored,
         "files_changed": files_changed,
         "metrics": metrics_after_step,
     });
@@ -299,6 +420,9 @@ fn run_one(config: &Config, batch_dir: &Path, batch_id: &str, n: u32) -> Result<
         attempts,
         acceptance,
         own_tests,
+        tests_added,
+        kept_original,
+        scored,
         metrics: metrics_after_step,
         step_ms,
     })
@@ -313,6 +437,7 @@ fn main() {
 
 fn real_main() -> Result<(), String> {
     let config = parse_args()?;
+    let task = task(&config.task)?;
     if !config.repo.join(".git").exists() {
         return Err(format!("{} is not a git repository", config.repo.display()));
     }
@@ -350,8 +475,10 @@ fn real_main() -> Result<(), String> {
         "sampling": Sampling::qwen3(),
         "max_attempts": config.attempts,
         "runs": config.runs,
-        "instruction": INSTRUCTION,
-        "context": CONTEXT,
+        "task": task.name,
+        "instruction": task.instruction,
+        "context": task.context,
+        "files_shown": task.files,
         "server": {
             "build_info": props["build_info"],
             "model_path": props["model_path"],
@@ -365,7 +492,8 @@ fn real_main() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     println!(
-        "batch {batch_id}: {} run(s) from {} ({}), model {}",
+        "batch {batch_id}: task {}, {} run(s) from {} ({}), model {}",
+        task.name,
         config.runs,
         config.tag,
         tag_commit.trim(),
@@ -374,25 +502,27 @@ fn real_main() -> Result<(), String> {
 
     let mut results = Vec::new();
     for n in 1..=config.runs {
-        results.push(run_one(&config, &batch_dir, &batch_id, n)?);
+        results.push(run_one(&config, &task, &batch_dir, &batch_id, n)?);
     }
 
     let mut csv = String::from(
-        "run,passed,attempts,acceptance,own_tests,llm_calls,prompt_tokens,completion_tokens,llm_s,build_s,step_s\n",
+        "run,passed,attempts,acceptance,kept_original,tests_added,scored,own_tests,llm_calls,prompt_tokens,completion_tokens,llm_s,build_s,step_s\n",
     );
     println!(
-        "\n{:>3} {:>7} {:>8} {:>10} {:>6} {:>6} {:>9} {:>7} {:>7}",
-        "run", "passed", "attempts", "acceptance", "tests", "calls", "tokens", "llm_s", "step_s"
+        "\n{:>3} {:>7} {:>8} {:>10} {:>5} {:>6} {:>6} {:>6} {:>9} {:>7} {:>7}",
+        "run", "passed", "attempts", "acceptance", "kept", "+tests", "scored", "calls", "tokens", "llm_s", "step_s"
     );
     for r in &results {
         let m = &r.metrics;
         println!(
-            "{:>3} {:>7} {:>8} {:>10} {:>6} {:>6} {:>4}/{:<4} {:>7.1} {:>7.1}",
+            "{:>3} {:>7} {:>8} {:>10} {:>5} {:>6} {:>6} {:>6} {:>4}/{:<4} {:>7.1} {:>7.1}",
             r.n,
             r.passed,
             r.attempts,
             r.acceptance,
-            r.own_tests,
+            r.kept_original,
+            r.tests_added,
+            r.scored,
             m.llm_calls,
             m.prompt_tokens,
             m.completion_tokens,
@@ -400,11 +530,14 @@ fn real_main() -> Result<(), String> {
             r.step_ms as f64 / 1000.0
         );
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{:.1},{:.1},{:.1}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{:.1}\n",
             r.n,
             r.passed,
             r.attempts,
             r.acceptance,
+            r.kept_original,
+            r.tests_added,
+            r.scored,
             r.own_tests,
             m.llm_calls,
             m.prompt_tokens,
@@ -415,9 +548,9 @@ fn real_main() -> Result<(), String> {
         ));
     }
     std::fs::write(batch_dir.join("results.csv"), csv).map_err(|e| e.to_string())?;
-    let scored = results.iter().filter(|r| r.acceptance == "passed").count();
+    let scored = results.iter().filter(|r| r.scored).count();
     println!(
-        "\n{scored}/{} runs passed the hidden acceptance test. Trace and summaries: {}",
+        "\n{scored}/{} runs scored: hidden acceptance passed, original tests kept, a test added. Trace and summaries: {}",
         results.len(),
         batch_dir.display()
     );

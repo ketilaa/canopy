@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::build::Build;
-use crate::files::GeneratedFiles;
+use crate::files::{GeneratedFile, GeneratedFiles};
 use crate::llm::{Generator, StructuredRequest};
 use crate::observe::{
     AttemptFailed, AttemptStarted, FilesWritten, RunEvent, RunObserver, Stage, StepFinished, StepStarted,
@@ -24,6 +24,8 @@ pub struct StepRequest {
     pub id: String,
     pub instruction: String,
     pub context: String,
+    /// Existing files the step reads or changes. Their current content is shown to the model.
+    pub files: Vec<String>,
 }
 
 /// Why an attempt failed, and what the next attempt is shown.
@@ -135,7 +137,7 @@ impl Implementer {
         };
         let request = StructuredRequest {
             purpose,
-            messages: prompt::messages(step, previous),
+            messages: prompt::messages(step, &read_current(root, &step.files), previous),
             schema_name: "files".into(),
             schema: GeneratedFiles::schema(),
             thinking: false,
@@ -176,6 +178,26 @@ impl Implementer {
         }
         Ok(())
     }
+}
+
+/// The content of the step's existing files, right now. A file that does not exist yet is skipped, and so is
+/// any path that would leave the workspace.
+fn read_current(root: &Path, paths: &[String]) -> Vec<GeneratedFile> {
+    paths
+        .iter()
+        .filter(|path| {
+            Path::new(path.as_str())
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        })
+        .filter_map(|path| {
+            let content = std::fs::read_to_string(root.join(path)).ok()?;
+            Some(GeneratedFile {
+                path: path.clone(),
+                content,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -302,6 +324,7 @@ mod tests {
             id: "s1".into(),
             instruction: "Create A.".into(),
             context: "pkg: x".into(),
+            files: vec![],
         }
     }
 
@@ -519,5 +542,61 @@ mod tests {
         });
         let finished = finished.unwrap();
         assert!(finished.passed && finished.attempts == 1 && finished.step_id == "s1");
+    }
+    fn step_changing(paths: &[&str]) -> StepRequest {
+        StepRequest {
+            files: paths.iter().map(|p| p.to_string()).collect(),
+            ..step()
+        }
+    }
+
+    #[test]
+    fn files_the_step_names_are_shown_to_the_model_as_they_are_on_disk_and_missing_ones_are_skipped() {
+        let rig = rig(vec![answer(&[("src/Existing.java", "v2")])], vec![], vec![], 3);
+        std::fs::create_dir_all(rig.dir.path().join("src")).unwrap();
+        std::fs::write(rig.dir.path().join("src/Existing.java"), "class Existing { /* v1 */ }").unwrap();
+
+        let step = step_changing(&["src/Existing.java", "src/NotYet.java"]);
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &step),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        let prompt = &rig.prompts.lock().unwrap()[0][1].content;
+        assert!(
+            prompt.contains("### src/Existing.java") && prompt.contains("/* v1 */"),
+            "{prompt}"
+        );
+        assert!(
+            !prompt.contains("NotYet"),
+            "a file that does not exist yet has nothing to show"
+        );
+    }
+
+    #[test]
+    fn a_retry_shows_the_original_files_not_the_failed_attempts_version_of_them() {
+        let rig = rig(
+            vec![
+                answer(&[("src/Existing.java", "class Existing { /* broken v2 */ }")]),
+                answer(&[("src/Existing.java", "v3")]),
+            ],
+            vec![outcome(BuildKind::Compile, false, "boom")],
+            vec![],
+            3,
+        );
+        std::fs::create_dir_all(rig.dir.path().join("src")).unwrap();
+        std::fs::write(rig.dir.path().join("src/Existing.java"), "class Existing { /* v1 */ }").unwrap();
+
+        rig.implementer
+            .run_step(rig.dir.path(), &step_changing(&["src/Existing.java"]));
+        let retry = &rig.prompts.lock().unwrap()[1][1].content;
+        let current = &retry[retry.find("## Current files").unwrap()..retry.find("## Your previous answer").unwrap()];
+        assert!(
+            current.contains("/* v1 */") && !current.contains("broken v2"),
+            "{current}"
+        );
+        assert!(
+            retry.contains("broken v2"),
+            "the failed attempt is still shown, as the previous answer"
+        );
     }
 }

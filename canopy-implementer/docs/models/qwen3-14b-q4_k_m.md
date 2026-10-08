@@ -41,6 +41,19 @@ llama-server \
   patches in 10 runs (7 and 3), differing by one extra `null`-name test. For a task this small a single run
   is almost as informative as ten, and the sweep says nothing about the retry path. The task is too easy to
   discriminate: the Greeter step does not exercise the recovery logic.
+- **confirmed** (batch `2026-10-08T14-14-55`, task `trim` from tag `candidate-01-greeter`, 10 runs; the model is shown
+  the current `Greeter.java` and `GreeterTest.java` in the prompt and returns both files complete): 10/10 scored
+  (hidden acceptance passed, both original tests kept, one test added), all on the first attempt, and all 10 patches
+  byte-identical: a one-line change (`name.trim()`) plus one new test. 590 prompt tokens, 398 completion tokens,
+  34 s model time, 38 s per step. No tools were needed: whole-file output plus the current content in the prompt was
+  enough for a change to an existing file of this size.
+- **confirmed** (2026-10-08, while serving the batches above): the server process has 9.4 GB resident (`ps` RSS), but
+  macOS `footprint` and Activity Monitor report only 964 MB, because the memory-mapped weights (8.4 GB file) are
+  file-backed and not counted as dirty memory. About 700 MB of that footprint is the KV cache, allocated up front
+  for `-c 8192` with q8_0 (about 87 KB per token), so memory does not grow with prompt length inside the window.
+- **suspected**: the speed and the clean runs reflect small prompts (272 to 590 tokens of 8192) and no thinking, not
+  an easy model. Generation speed (10-11 tokens/s) is set by output length. Quality at 4-8k tokens of context is
+  untested; java-harness saw failures near the context limit.
 - **unknown**: behavior of schema-constrained output with thinking enabled.
 - **unknown**: runaway decode on tool-call turns (java-harness saw this on another model/build);
   not relevant until tools are used.

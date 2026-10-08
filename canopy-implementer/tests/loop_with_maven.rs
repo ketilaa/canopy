@@ -100,6 +100,7 @@ fn a_compile_error_from_real_maven_is_fed_back_and_fixed() {
         id: "greeter".into(),
         instruction: "Create Greeter and its test.".into(),
         context: "Root package: com.example".into(),
+        files: vec![],
     };
     let outcome = implementer.run_step(dir.path(), &step);
 

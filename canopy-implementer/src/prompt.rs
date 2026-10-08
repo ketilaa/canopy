@@ -1,6 +1,7 @@
 //! What the model is told. Built from scratch for every call: no conversation is kept between
 //! calls, so a retry carries exactly what it needs and nothing stale.
 
+use crate::files::GeneratedFile;
 use crate::implementer::{Failure, StepRequest};
 use crate::llm::Message;
 use crate::observe::Stage;
@@ -8,13 +9,21 @@ use crate::observe::Stage;
 const RULES: &str = "\
 You write source files for a Java 21 Spring Boot 3.4 Maven project, one plan step at a time.
 ALWAYS return every file the step needs, each one complete.
+ALWAYS keep the existing code and tests of a file you change, except what the step asks you to change.
 ALWAYS use paths relative to the project root, such as src/main/java/<package path>/<Class>.java.
 ALWAYS put one public type in each file, in a file named after that type.
 ALWAYS write tests with JUnit 5 (org.junit.jupiter.api) under src/test/java, in the same package as the class under test.
 NEVER change pom.xml or any file the step does not name or require.";
 
-pub fn messages(step: &StepRequest, previous: Option<&Failure>) -> Vec<Message> {
+/// `current` is what the step's existing files contain right now (a file that does not exist yet is simply absent).
+pub fn messages(step: &StepRequest, current: &[GeneratedFile], previous: Option<&Failure>) -> Vec<Message> {
     let mut user = format!("## Step\n{}\n\n## Project\n{}\n", step.instruction, step.context);
+    if !current.is_empty() {
+        user.push_str("\n## Current files\n");
+        for file in current {
+            user.push_str(&format!("### {}\n```\n{}\n```\n", file.path, file.content));
+        }
+    }
     if let Some(failure) = previous {
         if let Some(files) = &failure.files {
             user.push_str("\n## Your previous answer\n");
@@ -49,6 +58,7 @@ mod tests {
             id: "s1".into(),
             instruction: "Create a Greeter class with greet(String).".into(),
             context: "Root package: com.example.demo".into(),
+            files: vec![],
         }
     }
 
@@ -67,7 +77,7 @@ mod tests {
 
     #[test]
     fn the_first_prompt_has_the_rules_the_step_and_the_project_and_nothing_about_failures() {
-        let m = messages(&step(), None);
+        let m = messages(&step(), &[], None);
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].role, "system");
         assert!(m[0].content.contains("ALWAYS") && m[0].content.contains("JUnit 5"));
@@ -79,7 +89,7 @@ mod tests {
 
     #[test]
     fn a_retry_after_a_compile_failure_shows_the_previous_files_and_the_errors() {
-        let m = messages(&step(), Some(&failure(Stage::Compile, "G.java:1:1: boom", true)));
+        let m = messages(&step(), &[], Some(&failure(Stage::Compile, "G.java:1:1: boom", true)));
         assert_eq!(
             m.len(),
             2,
@@ -94,7 +104,11 @@ mod tests {
 
     #[test]
     fn each_failure_stage_has_its_own_heading() {
-        let heading = |stage| messages(&step(), Some(&failure(stage, "x", false)))[1].content.clone();
+        let heading = |stage| {
+            messages(&step(), &[], Some(&failure(stage, "x", false)))[1]
+                .content
+                .clone()
+        };
         assert!(heading(Stage::Test).contains("The tests failed"));
         assert!(heading(Stage::Parse).contains("could not be used"));
         assert!(heading(Stage::Truncated).contains("cut off"));
@@ -104,8 +118,47 @@ mod tests {
 
     #[test]
     fn a_retry_without_files_does_not_show_a_previous_answer() {
-        let m = messages(&step(), Some(&failure(Stage::Parse, "not json", false)));
+        let m = messages(&step(), &[], Some(&failure(Stage::Parse, "not json", false)));
         assert!(!m[1].content.contains("previous answer"));
         assert!(m[1].content.contains("not json"));
+    }
+    fn greeter() -> GeneratedFile {
+        GeneratedFile {
+            path: "src/main/java/Greeter.java".into(),
+            content: "class Greeter { /* original */ }".into(),
+        }
+    }
+
+    #[test]
+    fn existing_files_are_shown_with_path_and_content() {
+        let m = messages(&step(), &[greeter()], None);
+        let user = &m[1].content;
+        assert!(user.contains("## Current files"));
+        assert!(user.contains("### src/main/java/Greeter.java"));
+        assert!(user.contains("class Greeter { /* original */ }"));
+    }
+
+    #[test]
+    fn there_is_no_current_files_section_when_the_step_changes_nothing_existing() {
+        assert!(!messages(&step(), &[], None)[1].content.contains("Current files"));
+    }
+
+    #[test]
+    fn a_retry_shows_the_current_files_and_the_previous_answer_as_different_things() {
+        let m = messages(&step(), &[greeter()], Some(&failure(Stage::Compile, "boom", true)));
+        let user = &m[1].content;
+        let current = user.find("## Current files").unwrap();
+        let previous = user.find("## Your previous answer").unwrap();
+        assert!(
+            current < previous,
+            "the state to change comes before the failed attempt at changing it"
+        );
+        assert!(user.contains("/* original */") && user.contains("class G {}"));
+    }
+
+    #[test]
+    fn the_rules_tell_the_model_to_keep_what_the_step_does_not_change() {
+        let rules = &messages(&step(), &[], None)[0].content;
+        assert!(rules.contains("ALWAYS keep"), "{rules}");
     }
 }
