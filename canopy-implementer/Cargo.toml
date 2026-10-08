@@ -1,0 +1,17 @@
+[package]
+name = "canopy-implementer"
+version = "0.1.0"
+edition = "2021"
+description = "Isolated Implementer: turns one plan step into files, checked by the build. Not yet part of canopy-cli."
+license.workspace = true
+
+# Deliberately depends on no other canopy crate. It is developed in isolation and brought into
+# canopy-cli only once it has proven itself on its own benchmark.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3"

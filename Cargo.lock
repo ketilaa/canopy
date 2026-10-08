@@ -120,6 +120,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "canopy-implementer"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ureq",
+]
+
+[[package]]
 name = "canopy-llm"
 version = "0.1.0"
 dependencies = [

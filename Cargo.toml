@@ -11,6 +11,8 @@ members = [
     "canopy-storage",
     "canopy-llm",
     "canopy-cli",
+    # Isolated Implementer — developed standalone, brought into canopy-cli when proven
+    "canopy-implementer",
 ]
 resolver = "2"
 
