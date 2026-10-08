@@ -10,7 +10,7 @@ Model id served: `Qwen/Qwen3-14B-GGUF:Q4_K_M` (as reported by `/v1/models`). Cac
 (commit a60f9ae), Apple Silicon, 32 GB RAM.
 
 ```
-/Users/ketil/code/ketilaa/llama.cpp-build/build/bin/llama-server \
+llama-server \
   -hf Qwen/Qwen3-14B-GGUF:Q4_K_M --offline \
   -c 8192 -np 1 -ctk q8_0 -ctv q8_0 -fa on \
   --jinja -n 2048 \
