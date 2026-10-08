@@ -375,3 +375,211 @@ mod tests {
         assert_eq!(&ts[19..20], ".");
     }
 }
+
+/// Totals derived from the event stream: what a run cost and where its failures were.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Metrics {
+    pub llm_calls: u64,
+    pub llm_failures: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub cached_tokens: u64,
+    /// Wall-clock time spent waiting for the model, including failed calls.
+    pub llm_ms: u64,
+    pub compile_runs: u64,
+    pub test_runs: u64,
+    /// Wall-clock time spent in the build tool.
+    pub build_ms: u64,
+    pub attempts: u64,
+    /// Failed attempts by the stage they failed at (`compile`, `test`, `parse`, ...).
+    pub failed_attempts_by_stage: std::collections::BTreeMap<String, u64>,
+    pub steps_passed: u64,
+    pub steps_failed: u64,
+}
+
+/// Accumulates [`Metrics`] from the events it sees. Cheap to run next to any other observer.
+#[derive(Default)]
+pub struct MetricsObserver {
+    metrics: Mutex<Metrics>,
+}
+
+impl MetricsObserver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn snapshot(&self) -> Metrics {
+        self.metrics.lock().unwrap().clone()
+    }
+}
+
+impl RunObserver for MetricsObserver {
+    fn on(&self, event: &RunEvent) {
+        let mut m = self.metrics.lock().unwrap();
+        match event {
+            RunEvent::LlmRequestSent(_) => m.llm_calls += 1,
+            RunEvent::LlmResponseReceived(r) => {
+                m.prompt_tokens += r.prompt_tokens;
+                m.completion_tokens += r.completion_tokens;
+                m.cached_tokens += r.cached_tokens.unwrap_or(0);
+                m.llm_ms += r.elapsed_ms;
+            }
+            RunEvent::LlmCallFailed(f) => {
+                m.llm_failures += 1;
+                m.llm_ms += f.elapsed_ms;
+            }
+            RunEvent::CommandRan(c) => {
+                match c.kind {
+                    BuildKind::Compile => m.compile_runs += 1,
+                    BuildKind::Test => m.test_runs += 1,
+                }
+                m.build_ms += c.elapsed_ms;
+            }
+            RunEvent::AttemptStarted(_) => m.attempts += 1,
+            RunEvent::AttemptFailed(f) => {
+                let stage = serde_json::to_value(f.stage)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string));
+                *m.failed_attempts_by_stage.entry(stage.unwrap_or_default()).or_insert(0) += 1;
+            }
+            RunEvent::StepFinished(f) => {
+                if f.passed {
+                    m.steps_passed += 1;
+                } else {
+                    m.steps_failed += 1;
+                }
+            }
+            RunEvent::FilesWritten(_) | RunEvent::WorkspaceRestored(_) | RunEvent::StepStarted(_) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+
+    fn response(prompt: u64, completion: u64, cached: Option<u64>, ms: u64) -> RunEvent {
+        RunEvent::LlmResponseReceived(LlmResponseReceived {
+            call_id: 1,
+            purpose: "p".into(),
+            model: "m".into(),
+            finish_reason: "stop".into(),
+            content: String::new(),
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            cached_tokens: cached,
+            elapsed_ms: ms,
+            server: None,
+        })
+    }
+
+    fn command(kind: BuildKind, ms: u64) -> RunEvent {
+        RunEvent::CommandRan(CommandRan {
+            kind,
+            command: "mvn".into(),
+            success: true,
+            exit_code: Some(0),
+            timed_out: false,
+            elapsed_ms: ms,
+            output: String::new(),
+        })
+    }
+
+    #[test]
+    fn totals_tokens_and_time_across_calls_including_failed_ones() {
+        let metrics = MetricsObserver::new();
+        for event in [
+            response(100, 50, Some(20), 1000),
+            response(200, 70, None, 2000),
+            RunEvent::LlmCallFailed(LlmCallFailed {
+                call_id: 3,
+                purpose: "p".into(),
+                kind: FailureKind::Timeout,
+                status: None,
+                message: "m".into(),
+                body: None,
+                elapsed_ms: 300,
+            }),
+        ] {
+            metrics.on(&event);
+        }
+        let m = metrics.snapshot();
+        assert_eq!((m.prompt_tokens, m.completion_tokens, m.cached_tokens), (300, 120, 20));
+        assert_eq!((m.llm_failures, m.llm_ms), (1, 3300));
+    }
+
+    #[test]
+    fn counts_builds_by_kind_with_their_time() {
+        let metrics = MetricsObserver::new();
+        metrics.on(&command(BuildKind::Compile, 1500));
+        metrics.on(&command(BuildKind::Compile, 1600));
+        metrics.on(&command(BuildKind::Test, 2000));
+        let m = metrics.snapshot();
+        assert_eq!((m.compile_runs, m.test_runs, m.build_ms), (2, 1, 5100));
+    }
+
+    #[test]
+    fn counts_attempts_failures_by_stage_and_step_results() {
+        let metrics = MetricsObserver::new();
+        let failed = |stage| {
+            RunEvent::AttemptFailed(AttemptFailed {
+                step_id: "s".into(),
+                attempt: 1,
+                stage,
+                feedback: String::new(),
+            })
+        };
+        let finished = |passed| {
+            RunEvent::StepFinished(StepFinished {
+                step_id: "s".into(),
+                passed,
+                attempts: 1,
+                elapsed_ms: 1,
+            })
+        };
+        for event in [
+            RunEvent::AttemptStarted(AttemptStarted {
+                step_id: "s".into(),
+                attempt: 1,
+            }),
+            failed(Stage::Compile),
+            RunEvent::AttemptStarted(AttemptStarted {
+                step_id: "s".into(),
+                attempt: 2,
+            }),
+            failed(Stage::Compile),
+            RunEvent::AttemptStarted(AttemptStarted {
+                step_id: "s".into(),
+                attempt: 3,
+            }),
+            failed(Stage::Test),
+            finished(false),
+            finished(true),
+        ] {
+            metrics.on(&event);
+        }
+        let m = metrics.snapshot();
+        assert_eq!(m.attempts, 3);
+        assert_eq!(m.failed_attempts_by_stage.get("compile"), Some(&2));
+        assert_eq!(m.failed_attempts_by_stage.get("test"), Some(&1));
+        assert_eq!((m.steps_passed, m.steps_failed), (1, 1));
+    }
+
+    #[test]
+    fn counts_every_request_sent_as_a_call() {
+        let metrics = MetricsObserver::new();
+        let sent = RunEvent::LlmRequestSent(LlmRequestSent {
+            call_id: 1,
+            purpose: "p".into(),
+            model: "m".into(),
+            messages: vec![],
+            schema_name: "s".into(),
+            schema: serde_json::json!({}),
+            sampling: Sampling::qwen3(),
+            thinking: false,
+        });
+        metrics.on(&sent);
+        metrics.on(&sent);
+        assert_eq!(metrics.snapshot().llm_calls, 2);
+    }
+}
