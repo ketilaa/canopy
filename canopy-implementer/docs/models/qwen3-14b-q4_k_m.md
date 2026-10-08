@@ -67,6 +67,28 @@ llama-server \
   without being forced, because the system prompt says to keep existing tests and to include a test for every
   behaviour. So read-before-mutate and the test-for-every-change gate are verified by scripted tests, not yet by
   the live model. To see them work live the prompt rules would have to be weakened on purpose.
+- **confirmed** (four pressure tasks, 5 runs each, harness `45608f4`, tools on, thinking off; batches
+  `2026-10-08T18-43-46` naming, `T19-01-12` vat, `T19-14-40` pasted, `T19-19-14` hi; single-run samples earlier the
+  same day agreed). Scored passes: **pasted 5/5, hi 4/5, naming 1/5, vat 0/5.** The two Greeter-only tasks are easy
+  (4 to 5 tool calls, about 50 s). The two repos with indirection or a ripple are where it breaks, and the failures
+  fall into a few distinct kinds, counted per run:
+  - *Budget exhaustion by dithering* (vat 3 of 5 runs, all 3 attempts each; naming 1 of 5): the model reads every
+    file once, then re-reads some, and spends the 12 tool calls without writing. It also calls `submit_files`
+    with `{"files": []}` (up to 4 times in one attempt). The retry text for a budget failure said "read the files
+    again before you change them", which is the opposite of what such a model needs.
+  - *Change in the wrong place, repeated* (naming 3 of 5): the trim goes into `Greeter` (`formatter.display(name.trim())`,
+    which also breaks the null-name test) while its own new test targets `NameFormatter.display`, which it never
+    changes. The failing test and values were reported exactly, three attempts in a row, and the answer was
+    repeated (2 distinct answers in 3 attempts).
+  - *Gate message that backfired* (hi 1 of 5): told "You changed Greeter but submitted no changed test", the model
+    dropped the Greeter change and submitted only the test, 3 attempts running (1 distinct answer). A test-only
+    submission is allowed by the gates, so it was built and failed on the unchanged class.
+  - *Own tests weaker than the request* (vat 2 of 5): the loop passed (its own tests passed) but the hidden
+    acceptance failed: the total still excluded VAT (expected 5000, was 4000); it changed the invoice but not
+    the calculator that the total and the charge come from.
+- **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
+  skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
+  empty-submission refusal is the gate that fires most.
 - **confirmed** (probe 2026-10-08, before the loop was built): tool calls are well formed on this build with
   thinking off, `tool_choice` left at the default, and the final answer as a `submit_files` tool call carrying
   complete files. No HTTP error from truncated arguments has been seen yet (cap is `-n 2048`).
