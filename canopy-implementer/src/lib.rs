@@ -13,7 +13,9 @@ pub mod implementer;
 pub mod llm;
 pub mod observe;
 pub mod prompt;
+pub mod sandbox;
 pub mod snapshot;
+pub mod tools;
 
 #[cfg(test)]
 mod testing;

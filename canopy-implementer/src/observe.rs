@@ -583,3 +583,14 @@ mod metrics_tests {
         assert_eq!(metrics.snapshot().llm_calls, 2);
     }
 }
+
+/// How a tool call ended, as seen by the model.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolOutcome {
+    Ok,
+    /// The harness declined on policy: outside the sandbox, too large, binary, not yet read.
+    Refused,
+    /// The call itself was wrong: bad arguments, an unknown tool, a missing file.
+    Error,
+}
