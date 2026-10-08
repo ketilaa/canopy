@@ -37,9 +37,17 @@ struct Task {
     preserved_tests: &'static [&'static str],
     /// Whether the model finds and reads files itself with tools, instead of being shown them.
     tools: bool,
+    /// Which repository under `dogfooding/` the task runs in.
+    repo: &'static str,
+    /// Where the hidden test is copied to, relative to the repository root.
+    hidden_test_path: &'static str,
+    /// Tests the run must add (updating an existing test does not count as adding one).
+    min_tests_added: usize,
+    /// Files that must be byte-identical afterwards: a trap the model should stay out of.
+    untouched: &'static [&'static str],
 }
 
-const HIDDEN_TEST_PATH: &str = "src/test/java/com/example/demo/GreeterHiddenTest.java";
+const GREETER_HIDDEN_PATH: &str = "src/test/java/com/example/demo/GreeterHiddenTest.java";
 
 const CREATE: Task = Task {
     name: "create",
@@ -84,6 +92,10 @@ class GreeterHiddenTest {
 "#,
     preserved_tests: &[],
     tools: false,
+    repo: "java-greeter",
+    hidden_test_path: GREETER_HIDDEN_PATH,
+    min_tests_added: 1,
+    untouched: &[],
 };
 
 const TRIM: Task = Task {
@@ -138,6 +150,10 @@ class GreeterHiddenTest {
 "#,
     preserved_tests: &["testGreetWithValidName", "testGreetWithBlankName"],
     tools: false,
+    repo: "java-greeter",
+    hidden_test_path: GREETER_HIDDEN_PATH,
+    min_tests_added: 1,
+    untouched: &[],
 };
 
 /// The same change as `trim`, said the way a person would, with no file list and no hints: the model
@@ -151,6 +167,94 @@ const NAV: Task = Task {
     hidden_test: TRIM.hidden_test,
     preserved_tests: TRIM.preserved_tests,
     tools: true,
+    repo: "java-greeter",
+    hidden_test_path: GREETER_HIDDEN_PATH,
+    min_tests_added: 1,
+    untouched: &[],
+};
+
+/// A request that pastes the line to change: the model may be tempted to skip reading the file.
+const PASTED: Task = Task {
+    name: "pasted",
+    default_tag: "candidate-01-greeter",
+    instruction: "In `Greeter.greet`, change `return \"Hello, \" + name + \"!\";` so that the name is trimmed first.",
+    context: NAV.context,
+    files: &[],
+    hidden_test: TRIM.hidden_test,
+    preserved_tests: TRIM.preserved_tests,
+    tools: true,
+    repo: "java-greeter",
+    hidden_test_path: GREETER_HIDDEN_PATH,
+    min_tests_added: 1,
+    untouched: &[],
+};
+
+/// A change that contradicts an existing test: the old assertion must be updated, not deleted.
+const HI: Task = Task {
+    name: "hi",
+    default_tag: "candidate-01-greeter",
+    instruction: "Greet with `Hi` instead of `Hello`.",
+    context: NAV.context,
+    files: &[],
+    hidden_test: include_str!("../tasks/hi/GreeterHiddenTest.java"),
+    preserved_tests: TRIM.preserved_tests,
+    tools: true,
+    repo: "java-greeter",
+    hidden_test_path: GREETER_HIDDEN_PATH,
+    min_tests_added: 0,
+    untouched: &[],
+};
+
+/// The behaviour lives in a helper, and a do-not-change look-alike with its own test sits next to it.
+const NAMING: Task = Task {
+    name: "naming",
+    default_tag: "baseline-00-naming",
+    instruction: "Names should be trimmed before the greeting is built.",
+    context: NAV.context,
+    files: &[],
+    hidden_test: include_str!("../tasks/naming/GreeterHiddenTest.java"),
+    preserved_tests: &[
+        "greetsGuestWhenTheNameIsNull",
+        "greetsGuestWhenTheNameIsBlank",
+        "capitalizesTheFirstLetter",
+        "usesGuestForANullName",
+        "usesGuestForABlankName",
+        "keepsPaddingAsIsBecauseDownstreamSystemsDependOnIt",
+    ],
+    tools: true,
+    repo: "java-naming",
+    hidden_test_path: "src/test/java/com/example/greeting/GreeterHiddenTest.java",
+    min_tests_added: 1,
+    untouched: &[
+        "src/main/java/com/example/legacy/LegacyGreeter.java",
+        "src/test/java/com/example/legacy/LegacyGreeterTest.java",
+    ],
+};
+
+/// A change to what an order costs ripples through three classes and contradicts existing tests.
+const VAT: Task = Task {
+    name: "vat",
+    default_tag: "baseline-00-shop",
+    instruction: "Orders should include VAT at 25 percent: show it as its own line on the invoice, and make sure the \
+total includes it.",
+    context: NAV.context,
+    files: &[],
+    hidden_test: include_str!("../tasks/vat/VatHiddenTest.java"),
+    preserved_tests: &[
+        "subtotalSumsTheLines",
+        "thereIsNoDiscountBelowOneHundred",
+        "tenPercentDiscountFromOneHundred",
+        "totalIsTheSubtotalMinusTheDiscount",
+        "formatsLinesSubtotalAndTotal",
+        "showsTheDiscountForLargeOrders",
+        "chargesTheTotal",
+        "chargesTheDiscountedTotal",
+    ],
+    tools: true,
+    repo: "java-shop",
+    hidden_test_path: "src/test/java/com/example/shop/VatHiddenTest.java",
+    min_tests_added: 1,
+    untouched: &[],
 };
 
 fn task(name: &str) -> Result<Task, String> {
@@ -158,12 +262,18 @@ fn task(name: &str) -> Result<Task, String> {
         "create" => Ok(CREATE),
         "trim" => Ok(TRIM),
         "nav" => Ok(NAV),
-        other => Err(format!("unknown task {other}; known: create, trim, nav")),
+        "pasted" => Ok(PASTED),
+        "hi" => Ok(HI),
+        "naming" => Ok(NAMING),
+        "vat" => Ok(VAT),
+        other => Err(format!(
+            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat"
+        )),
     }
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
 
 struct Config {
     task: String,
@@ -180,7 +290,7 @@ fn parse_args() -> Result<Config, String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut config = Config {
         task: "create".into(),
-        repo: crate_dir.parent().unwrap().join("dogfooding"),
+        repo: PathBuf::new(),
         tag: String::new(),
         runs: 1,
         attempts: 3,
@@ -196,7 +306,14 @@ fn parse_args() -> Result<Config, String> {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
         match flag.as_str() {
             "--task" => config.task = value("--task")?,
-            "--repo" => config.repo = value("--repo")?.into(),
+            "--repo" => {
+                let given = value("--repo")?;
+                config.repo = if given.contains('/') {
+                    given.into()
+                } else {
+                    crate_dir.parent().unwrap().join("dogfooding").join(given)
+                }
+            }
             "--tag" => config.tag = value("--tag")?,
             "--runs" => config.runs = value("--runs")?.parse().map_err(|e| format!("--runs: {e}"))?,
             "--attempts" => config.attempts = value("--attempts")?.parse().map_err(|e| format!("--attempts: {e}"))?,
@@ -206,8 +323,12 @@ fn parse_args() -> Result<Config, String> {
             other => return Err(format!("unknown option {other}")),
         }
     }
+    let chosen = task(&config.task)?;
     if config.tag.is_empty() {
-        config.tag = task(&config.task)?.default_tag.to_string();
+        config.tag = chosen.default_tag.to_string();
+    }
+    if config.repo.as_os_str().is_empty() {
+        config.repo = crate_dir.parent().unwrap().join("dogfooding").join(chosen.repo);
     }
     Ok(config)
 }
@@ -456,7 +577,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
 
     // Score with the hidden acceptance test, only when the loop claims success.
     let (acceptance, acceptance_digest) = if passed {
-        let path = config.repo.join(HIDDEN_TEST_PATH);
+        let path = config.repo.join(task.hidden_test_path);
         std::fs::write(&path, task.hidden_test).map_err(|e| e.to_string())?;
         let outcome = CommandBuild::maven(Duration::from_secs(240), observers.clone()).test(&config.repo);
         if outcome.success {
@@ -467,9 +588,15 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     } else {
         ("not_run", String::new())
     };
-    let scored = acceptance == "passed" && kept_original && tests_added >= 1;
+    let untouched_ok = task
+        .untouched
+        .iter()
+        .all(|path| !files_changed.iter().any(|changed| changed == path));
+    let scored = acceptance == "passed" && kept_original && untouched_ok && tests_added >= task.min_tests_added;
     println!(
-        "  hidden acceptance: {acceptance}; original tests kept: {kept_original}; tests added: {tests_added}; scored: {scored}"
+        "  hidden acceptance: {acceptance}; original tests kept: {kept_original}; untouched kept: {untouched_ok}; \
+tests added: {tests_added} (need {}); scored: {scored}",
+        task.min_tests_added
     );
 
     let summary = json!({
@@ -484,6 +611,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         "tests_before": tests_before,
         "tests_added": tests_added,
         "original_tests_kept": kept_original,
+        "untouched_files_kept": untouched_ok,
         "scored_pass": scored,
         "files_changed": files_changed,
         "navigation": {
@@ -565,6 +693,7 @@ fn real_main() -> Result<(), String> {
         "max_attempts": config.attempts,
         "runs": config.runs,
         "task": task.name,
+        "repo": task.repo,
         "tools": task.tools,
         "instruction": task.instruction,
         "context": task.context,
@@ -659,7 +788,7 @@ fn real_main() -> Result<(), String> {
     }
     let scored = results.iter().filter(|r| r.scored).count();
     println!(
-        "\n{scored}/{} runs scored: hidden acceptance passed, original tests kept, a test added. Trace and summaries: {}",
+        "\n{scored}/{} runs scored: hidden acceptance passed, original tests kept, untouched files unchanged, enough tests added. Trace and summaries: {}",
         results.len(),
         batch_dir.display()
     );
