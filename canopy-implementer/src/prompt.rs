@@ -16,6 +16,17 @@ ALWAYS write tests with JUnit 5 (org.junit.jupiter.api) under src/test/java, in 
 NEVER change pom.xml or any file the step does not name or require.";
 
 /// `current` is what the step's existing files contain right now (a file that does not exist yet is simply absent).
+const TOOL_RULES: &str = "\
+You change files in a Java 21 Spring Boot 3.4 Maven project, one task at a time.
+ALWAYS use glob and read_file to find and read the files you need.
+ALWAYS read an existing file with read_file before you change it.
+ALWAYS finish by calling submit_files with the complete content of every file you create or change.
+ALWAYS keep the existing code and tests of a file you change, except what the task asks you to change.
+ALWAYS include a test for every behaviour you add or change.
+ALWAYS put one public type in each file, in a file named after that type.
+ALWAYS write tests with JUnit 5 (org.junit.jupiter.api) under src/test/java, in the same package as the class under test.
+NEVER change pom.xml or any file the task does not require.";
+
 pub fn messages(step: &StepRequest, current: &[GeneratedFile], previous: Option<&Failure>) -> Vec<Message> {
     let mut user = format!("## Step\n{}\n\n## Project\n{}\n", step.instruction, step.context);
     if !current.is_empty() {
@@ -37,6 +48,23 @@ pub fn messages(step: &StepRequest, current: &[GeneratedFile], previous: Option<
     vec![Message::system(RULES), Message::user(&user)]
 }
 
+/// The rules and the task for a tool conversation. The model is not shown the files: it has to find
+/// and read them.
+pub fn tool_messages(step: &StepRequest, previous: Option<&Failure>) -> (String, String) {
+    let mut user = format!("## Task\n{}\n\n## Project\n{}\n", step.instruction, step.context);
+    if let Some(failure) = previous {
+        if let Some(files) = &failure.files {
+            user.push_str("\n## Your previous answer\n");
+            for file in &files.files {
+                user.push_str(&format!("### {}\n```\n{}\n```\n", file.path, file.content));
+            }
+        }
+        user.push_str(&format!("\n## {}\n{}\n", heading(failure.stage), failure.feedback));
+        user.push_str("\nStart again: read the files again before you change them, then call submit_files.\n");
+    }
+    (TOOL_RULES.to_string(), user)
+}
+
 fn heading(stage: Stage) -> &'static str {
     match stage {
         Stage::Compile => "The build failed to compile",
@@ -45,6 +73,8 @@ fn heading(stage: Stage) -> &'static str {
         Stage::Write => "Your answer could not be written",
         Stage::Truncated => "Your answer was cut off",
         Stage::Llm => "The model call failed",
+        Stage::Budget => "You used up your tool calls without submitting",
+        Stage::Protocol => "You did not call submit_files",
     }
 }
 
@@ -59,6 +89,7 @@ mod tests {
             instruction: "Create a Greeter class with greet(String).".into(),
             context: "Root package: com.example.demo".into(),
             files: vec![],
+            kind: Default::default(),
         }
     }
 
@@ -160,5 +191,30 @@ mod tests {
     fn the_rules_tell_the_model_to_keep_what_the_step_does_not_change() {
         let rules = &messages(&step(), &[], None)[0].content;
         assert!(rules.contains("ALWAYS keep"), "{rules}");
+    }
+    #[test]
+    fn the_tool_prompt_states_the_rules_the_task_and_the_project_and_does_not_show_files() {
+        let (system, user) = tool_messages(&step(), None);
+        for rule in [
+            "ALWAYS read an existing file with read_file before you change it",
+            "ALWAYS finish by calling submit_files",
+            "ALWAYS include a test for every behaviour you add or change",
+            "ALWAYS keep the existing code and tests",
+        ] {
+            assert!(system.contains(rule), "missing: {rule}\n{system}");
+        }
+        assert!(
+            user.contains("Create a Greeter class with greet(String).")
+                && user.contains("Root package: com.example.demo")
+        );
+        assert!(!user.contains("Current files") && !user.contains("previous answer"));
+    }
+
+    #[test]
+    fn a_tool_retry_shows_the_previous_answer_and_what_failed_and_says_to_read_again() {
+        let (_, user) = tool_messages(&step(), Some(&failure(Stage::Compile, "G.java:1:1: boom", true)));
+        assert!(user.contains("Your previous answer") && user.contains("class G {}"));
+        assert!(user.contains("The build failed to compile") && user.contains("G.java:1:1: boom"));
+        assert!(user.contains("read the files again"), "{user}");
     }
 }

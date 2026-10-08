@@ -9,6 +9,7 @@
 
 pub mod build;
 pub mod files;
+pub mod gates;
 pub mod implementer;
 pub mod llm;
 pub mod observe;

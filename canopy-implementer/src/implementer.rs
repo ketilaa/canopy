@@ -4,19 +4,22 @@
 //! harness compile and test. A failed attempt is undone exactly and the next attempt is told what
 //! went wrong. After the last attempt the workspace is as it was before the step began.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::build::Build;
 use crate::files::{GeneratedFile, GeneratedFiles};
-use crate::llm::{Generator, StructuredRequest};
+use crate::gates;
+use crate::llm::{ChatMessage, Generator, StructuredRequest, ToolGenerator, ToolRequest};
 use crate::observe::{
-    AttemptFailed, AttemptStarted, FilesWritten, RunEvent, RunObserver, Stage, StepFinished, StepStarted,
-    WorkspaceRestored,
+    AttemptFailed, AttemptStarted, FilesWritten, RunEvent, RunObserver, Stage, StepFinished, StepStarted, ToolCalled,
+    ToolOutcome, WorkspaceRestored,
 };
 use crate::prompt;
 use crate::snapshot::Snapshot;
+use crate::tools::ToolBox;
 
 /// One step of a plan: what to do, and the facts about the project it needs.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +29,17 @@ pub struct StepRequest {
     pub context: String,
     /// Existing files the step reads or changes. Their current content is shown to the model.
     pub files: Vec<String>,
+    pub kind: StepKind,
+}
+
+/// What kind of change a step is, declared by the plan and never by the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StepKind {
+    /// New or changed behaviour: production code must come with a test that mentions it.
+    #[default]
+    BehaviorChange,
+    /// Behaviour stays the same: no new test is required, and the existing tests must still pass.
+    Refactor,
 }
 
 /// Why an attempt failed, and what the next attempt is shown.
@@ -43,8 +57,40 @@ pub enum StepOutcome {
     Failed { attempts: u32, last_failure: String },
 }
 
+/// Bounds on one tool conversation, so a model that wanders cannot run forever.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToolLimits {
+    /// Tool calls the harness will carry out in one attempt, submissions included.
+    pub max_tool_calls: u32,
+    /// Model turns in one attempt.
+    pub max_turns: u32,
+    /// Times the model may answer in prose instead of calling a tool before the attempt is abandoned.
+    pub max_steers: u32,
+}
+
+impl Default for ToolLimits {
+    fn default() -> Self {
+        Self {
+            max_tool_calls: 12,
+            max_turns: 16,
+            max_steers: 2,
+        }
+    }
+}
+
+/// How the model produces its files.
+enum Mode {
+    /// One schema-constrained call per attempt; the step names the files to show.
+    Stateless(Box<dyn Generator>),
+    /// A short tool conversation per attempt: the model finds and reads files, then submits them.
+    Tools {
+        generator: Box<dyn ToolGenerator>,
+        limits: ToolLimits,
+    },
+}
+
 pub struct Implementer {
-    generator: Box<dyn Generator>,
+    mode: Mode,
     build: Box<dyn Build>,
     observer: Arc<dyn RunObserver>,
     max_attempts: u32,
@@ -58,7 +104,23 @@ impl Implementer {
         max_attempts: u32,
     ) -> Self {
         Self {
-            generator,
+            mode: Mode::Stateless(generator),
+            build,
+            observer,
+            max_attempts,
+        }
+    }
+
+    /// An Implementer whose model finds and reads the files it needs with tools.
+    pub fn with_tools(
+        generator: Box<dyn ToolGenerator>,
+        build: Box<dyn Build>,
+        observer: Arc<dyn RunObserver>,
+        max_attempts: u32,
+        limits: ToolLimits,
+    ) -> Self {
+        Self {
+            mode: Mode::Tools { generator, limits },
             build,
             observer,
             max_attempts,
@@ -119,7 +181,8 @@ impl Implementer {
         }));
     }
 
-    /// One attempt. Anything written is recorded in `snapshot`, so the caller can undo it.
+    /// One attempt: get files from the model, then write them and let the build judge them. Anything
+    /// written is recorded in `snapshot`, so the caller can undo it.
     fn attempt(
         &self,
         root: &Path,
@@ -128,8 +191,24 @@ impl Implementer {
         previous: Option<&Failure>,
         snapshot: &mut Snapshot,
     ) -> Result<(), Failure> {
-        let fail = |stage: Stage, feedback: String, files: Option<GeneratedFiles>| Failure { stage, feedback, files };
+        let files = match &self.mode {
+            Mode::Stateless(generator) => self.generate_stateless(generator.as_ref(), root, step, attempt, previous)?,
+            Mode::Tools { generator, limits } => {
+                self.generate_with_tools(generator.as_ref(), limits, root, step, attempt, previous)?
+            }
+        };
+        self.apply_and_check(root, step, attempt, files, snapshot)
+    }
 
+    /// One schema-constrained call; the files the step names are shown in the prompt.
+    fn generate_stateless(
+        &self,
+        generator: &dyn Generator,
+        root: &Path,
+        step: &StepRequest,
+        attempt: u32,
+        previous: Option<&Failure>,
+    ) -> Result<GeneratedFiles, Failure> {
         let purpose = if attempt == 1 {
             "generate-files".to_string()
         } else {
@@ -142,26 +221,175 @@ impl Implementer {
             schema: GeneratedFiles::schema(),
             thinking: false,
         };
-        let response = self
-            .generator
+        let response = generator
             .complete_structured(&request)
-            .map_err(|e| fail(Stage::Llm, e.to_string(), None))?;
+            .map_err(|e| failure(Stage::Llm, e.to_string(), None))?;
         if response.finish_reason == "length" {
-            return Err(fail(
+            return Err(failure(
                 Stage::Truncated,
                 "The answer hit the token limit before it was complete. Return fewer or shorter files.".into(),
                 None,
             ));
         }
-        let files = GeneratedFiles::parse(&response.content).map_err(|e| fail(Stage::Parse, e.to_string(), None))?;
+        GeneratedFiles::parse(&response.content).map_err(|e| failure(Stage::Parse, e.to_string(), None))
+    }
+
+    /// A tool conversation: the model finds and reads files, and ends by submitting. Nothing is
+    /// written here; a submission that breaks a rule is answered with the reason and the
+    /// conversation goes on.
+    fn generate_with_tools(
+        &self,
+        generator: &dyn ToolGenerator,
+        limits: &ToolLimits,
+        root: &Path,
+        step: &StepRequest,
+        attempt: u32,
+        previous: Option<&Failure>,
+    ) -> Result<GeneratedFiles, Failure> {
+        let toolbox = ToolBox::new(root);
+        let tools = ToolBox::specs();
+        let (system, task) = prompt::tool_messages(step, previous);
+        let mut messages = vec![ChatMessage::System(system), ChatMessage::User(task)];
+        let purpose = if attempt == 1 {
+            "navigate".to_string()
+        } else {
+            format!("navigate-retry-{}", attempt - 1)
+        };
+        let mut turns = 0;
+        let mut tool_calls_made = 0;
+        let mut steers = 0;
+        let mut seen: HashMap<String, u32> = HashMap::new();
+
+        loop {
+            if turns >= limits.max_turns {
+                return Err(failure(
+                    Stage::Budget,
+                    format!("You used {turns} turns without submitting."),
+                    None,
+                ));
+            }
+            turns += 1;
+            let turn = generator
+                .complete_with_tools(&ToolRequest {
+                    purpose: purpose.clone(),
+                    messages: messages.clone(),
+                    tools: tools.clone(),
+                    thinking: false,
+                })
+                .map_err(|e| failure(Stage::Llm, e.to_string(), None))?;
+            if turn.finish_reason == "length" {
+                return Err(failure(
+                    Stage::Truncated,
+                    "Your answer hit the token limit before it was complete. Submit fewer or shorter files.".into(),
+                    None,
+                ));
+            }
+            if turn.tool_calls.is_empty() {
+                steers += 1;
+                if steers > limits.max_steers {
+                    return Err(failure(
+                        Stage::Protocol,
+                        "You answered in prose instead of calling submit_files.".into(),
+                        None,
+                    ));
+                }
+                messages.push(ChatMessage::Assistant {
+                    content: turn.content,
+                    tool_calls: vec![],
+                });
+                messages.push(ChatMessage::User(
+                    "Do not answer in prose. Use glob and read_file to find what you need, then call submit_files \
+                     with the complete content of every file you create or change."
+                        .into(),
+                ));
+                continue;
+            }
+
+            messages.push(ChatMessage::Assistant {
+                content: turn.content.clone(),
+                tool_calls: turn.tool_calls.clone(),
+            });
+            for call in &turn.tool_calls {
+                tool_calls_made += 1;
+                if tool_calls_made > limits.max_tool_calls {
+                    return Err(failure(
+                        Stage::Budget,
+                        format!(
+                            "You used {} tool calls without a submission that could be built.",
+                            limits.max_tool_calls
+                        ),
+                        None,
+                    ));
+                }
+                let started = Instant::now();
+                let repeats = seen.entry(format!("{}|{}", call.name, call.arguments)).or_insert(0);
+                *repeats += 1;
+                let mut accepted: Option<GeneratedFiles> = None;
+                let (outcome, text) = if *repeats >= 3 {
+                    (
+                        ToolOutcome::Refused,
+                        "You already made exactly this call. Make a different call, or call submit_files.".to_string(),
+                    )
+                } else if call.name == "submit_files" {
+                    match GeneratedFiles::parse(&call.arguments) {
+                        Err(e) => (
+                            ToolOutcome::Error,
+                            format!(
+                                "The arguments of submit_files are not valid: {e}. Send \
+                                 {{\"files\": [{{\"path\": \"...\", \"content\": \"...\"}}]}}."
+                            ),
+                        ),
+                        Ok(files) => match gates::check_submission(&files, root, &|p| toolbox.has_read(p), step.kind) {
+                            Err(rejection) => (ToolOutcome::Refused, rejection.message()),
+                            Ok(()) => {
+                                accepted = Some(files);
+                                (
+                                    ToolOutcome::Ok,
+                                    "Submitted. The harness will now write the files, build and test.".to_string(),
+                                )
+                            }
+                        },
+                    }
+                } else {
+                    let result = toolbox.call(&call.name, &call.arguments);
+                    (result.outcome, result.text)
+                };
+                self.observer.on(&RunEvent::ToolCalled(ToolCalled {
+                    step_id: step.id.clone(),
+                    attempt,
+                    tool: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                    outcome,
+                    result: text.clone(),
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                }));
+                if let Some(files) = accepted {
+                    return Ok(files);
+                }
+                messages.push(ChatMessage::Tool {
+                    call_id: call.id.clone(),
+                    content: text,
+                });
+            }
+        }
+    }
+
+    /// Writes the files and lets the build judge them.
+    fn apply_and_check(
+        &self,
+        root: &Path,
+        step: &StepRequest,
+        attempt: u32,
+        files: GeneratedFiles,
+        snapshot: &mut Snapshot,
+    ) -> Result<(), Failure> {
         files
             .validate_paths()
-            .map_err(|e| fail(Stage::Write, e.to_string(), Some(files.clone())))?;
-
+            .map_err(|e| failure(Stage::Write, e.to_string(), Some(files.clone())))?;
         snapshot.capture(&files.paths());
         files
             .write_into(root)
-            .map_err(|e| fail(Stage::Write, e.to_string(), Some(files.clone())))?;
+            .map_err(|e| failure(Stage::Write, e.to_string(), Some(files.clone())))?;
         self.observer.on(&RunEvent::FilesWritten(FilesWritten {
             step_id: step.id.clone(),
             attempt,
@@ -170,14 +398,18 @@ impl Implementer {
 
         let compiled = self.build.compile(root);
         if !compiled.success {
-            return Err(fail(Stage::Compile, compiled.digest, Some(files)));
+            return Err(failure(Stage::Compile, compiled.digest, Some(files)));
         }
         let tested = self.build.test(root);
         if !tested.success {
-            return Err(fail(Stage::Test, tested.digest, Some(files)));
+            return Err(failure(Stage::Test, tested.digest, Some(files)));
         }
         Ok(())
     }
+}
+
+fn failure(stage: Stage, feedback: String, files: Option<GeneratedFiles>) -> Failure {
+    Failure { stage, feedback, files }
 }
 
 /// The content of the step's existing files, right now. A file that does not exist yet is skipped, and so is
@@ -325,6 +557,7 @@ mod tests {
             instruction: "Create A.".into(),
             context: "pkg: x".into(),
             files: vec![],
+            kind: Default::default(),
         }
     }
 
@@ -598,5 +831,507 @@ mod tests {
             retry.contains("broken v2"),
             "the failed attempt is still shown, as the previous answer"
         );
+    }
+    // ---- tool mode -------------------------------------------------------------------------------
+
+    use crate::llm::{ChatMessage, ToolCall, ToolGenerator, ToolRequest, ToolTurn};
+    use crate::observe::ToolOutcome;
+    use serde_json::{json, Value};
+
+    const GREETER: &str = "src/main/java/com/example/Greeter.java";
+    const GREETER_TEST: &str = "src/test/java/com/example/GreeterTest.java";
+    const OLD_GREETER: &str = "package com.example;\npublic class Greeter { }\n";
+    const OLD_TEST: &str = "package com.example;\nclass GreeterTest { void t() { new Greeter(); } }\n";
+    const NEW_GREETER: &str = "package com.example;\npublic class Greeter { /* trims */ }\n";
+    const NEW_TEST: &str =
+        "package com.example;\nclass GreeterTest { void t() { new Greeter(); } void trims() { new Greeter(); } }\n";
+
+    struct ScriptedTools {
+        turns: Mutex<VecDeque<Result<ToolTurn, LlmError>>>,
+        requests: Arc<Mutex<Vec<Vec<ChatMessage>>>>,
+    }
+
+    impl ToolGenerator for ScriptedTools {
+        fn complete_with_tools(&self, request: &ToolRequest) -> Result<ToolTurn, LlmError> {
+            self.requests.lock().unwrap().push(request.messages.clone());
+            self.turns
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("the script ran out of turns")
+        }
+    }
+
+    type Call = (&'static str, Value);
+
+    fn calls(list: Vec<Call>) -> Result<ToolTurn, LlmError> {
+        let tool_calls = list
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, args))| ToolCall {
+                id: format!("c{i}"),
+                name: name.to_string(),
+                arguments: args.to_string(),
+            })
+            .collect();
+        Ok(ToolTurn {
+            call_id: 1,
+            content: String::new(),
+            tool_calls,
+            finish_reason: "tool_calls".into(),
+            prompt_tokens: 10,
+            completion_tokens: 10,
+        })
+    }
+
+    fn prose(text: &str) -> Result<ToolTurn, LlmError> {
+        Ok(ToolTurn {
+            call_id: 1,
+            content: text.into(),
+            tool_calls: vec![],
+            finish_reason: "stop".into(),
+            prompt_tokens: 10,
+            completion_tokens: 10,
+        })
+    }
+
+    fn glob(pattern: &'static str) -> Call {
+        ("glob", json!({ "pattern": pattern }))
+    }
+
+    fn read_file(path: &'static str) -> Call {
+        ("read_file", json!({ "path": path }))
+    }
+
+    fn submit(files: &[(&str, &str)]) -> Call {
+        let files: Vec<_> = files.iter().map(|(p, c)| json!({ "path": p, "content": c })).collect();
+        ("submit_files", json!({ "files": files }))
+    }
+
+    struct ToolRig {
+        implementer: Implementer,
+        observer: Arc<RecordingObserver>,
+        requests: Arc<Mutex<Vec<Vec<ChatMessage>>>>,
+        compile_calls: Arc<Mutex<u32>>,
+        dir: tempfile::TempDir,
+    }
+
+    fn tool_rig(
+        turns: Vec<Result<ToolTurn, LlmError>>,
+        compiles: Vec<BuildOutcome>,
+        max_attempts: u32,
+        limits: ToolLimits,
+    ) -> ToolRig {
+        let observer = Arc::new(RecordingObserver::new());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let compile_calls = Arc::new(Mutex::new(0));
+        let implementer = Implementer::with_tools(
+            Box::new(ScriptedTools {
+                turns: Mutex::new(turns.into()),
+                requests: requests.clone(),
+            }),
+            Box::new(ScriptedBuild {
+                compiles: Mutex::new(compiles.into()),
+                tests: Mutex::new(VecDeque::new()),
+                compile_calls: compile_calls.clone(),
+            }),
+            observer.clone(),
+            max_attempts,
+            limits,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        for (rel, content) in [
+            (GREETER, OLD_GREETER),
+            (GREETER_TEST, OLD_TEST),
+            ("pom.xml", "<project/>"),
+        ] {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, content).unwrap();
+        }
+        ToolRig {
+            implementer,
+            observer,
+            requests,
+            compile_calls,
+            dir,
+        }
+    }
+
+    fn nav_step() -> StepRequest {
+        StepRequest {
+            id: "nav".into(),
+            instruction: "The Greeter should trim.".into(),
+            context: "Build: Maven".into(),
+            files: vec![],
+            kind: StepKind::BehaviorChange,
+        }
+    }
+
+    fn on_disk(rig: &ToolRig, rel: &str) -> String {
+        std::fs::read_to_string(rig.dir.path().join(rel)).unwrap()
+    }
+
+    /// (tool, outcome) for every tool call, in order.
+    fn tool_log(rig: &ToolRig) -> Vec<(String, ToolOutcome)> {
+        rig.observer
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                RunEvent::ToolCalled(t) => Some((t.tool, t.outcome)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn tool_result(rig: &ToolRig, index: usize) -> String {
+        rig.observer
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                RunEvent::ToolCalled(t) => Some(t.result),
+                _ => None,
+            })
+            .nth(index)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_model_finds_reads_and_submits_and_the_harness_writes_and_builds() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![glob("src/**/*.java")]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            3,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        assert_eq!(on_disk(&rig, GREETER), NEW_GREETER);
+        assert_eq!(on_disk(&rig, GREETER_TEST), NEW_TEST);
+        assert_eq!(
+            tool_log(&rig),
+            [
+                ("glob", ToolOutcome::Ok),
+                ("read_file", ToolOutcome::Ok),
+                ("read_file", ToolOutcome::Ok),
+                ("submit_files", ToolOutcome::Ok)
+            ]
+            .map(|(t, o)| (t.to_string(), o))
+        );
+        assert!(
+            tool_result(&rig, 0).contains("Greeter.java"),
+            "the model is told what glob found"
+        );
+        let requests = rig.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests[0].len(),
+            2,
+            "a conversation starts with the rules and the task"
+        );
+        assert!(matches!(&requests[1][3], ChatMessage::Tool { content, .. } if content.contains("Greeter.java")));
+    }
+
+    #[test]
+    fn a_submission_that_changes_an_unread_file_is_refused_writes_nothing_and_the_conversation_goes_on() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            3,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        let log = tool_log(&rig);
+        assert_eq!(log[0], ("submit_files".to_string(), ToolOutcome::Refused));
+        assert!(
+            tool_result(&rig, 0).contains("have not read"),
+            "{}",
+            tool_result(&rig, 0)
+        );
+        assert_eq!(
+            *rig.compile_calls.lock().unwrap(),
+            1,
+            "the refused submission never reached the build"
+        );
+        assert_eq!(
+            rig.observer
+                .events()
+                .iter()
+                .filter(|e| matches!(e, RunEvent::AttemptFailed(_)))
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_new_file_with_its_test_needs_no_reading() {
+        let new_class = "package com.example;\npublic class Farewell { }\n";
+        let new_test = "package com.example;\nclass FarewellTest { void t() { new Farewell(); } }\n";
+        let rig = tool_rig(
+            vec![calls(vec![submit(&[
+                ("src/main/java/com/example/Farewell.java", new_class),
+                ("src/test/java/com/example/FarewellTest.java", new_test),
+            ])])],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
+    }
+
+    #[test]
+    fn production_code_without_a_test_is_refused_and_a_refactor_is_not_asked_for_one() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER)])]),
+                calls(vec![read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        assert!(
+            tool_result(&rig, 1).contains("ALWAYS include a test"),
+            "{}",
+            tool_result(&rig, 1)
+        );
+
+        let refactor = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        let step = StepRequest {
+            kind: StepKind::Refactor,
+            ..nav_step()
+        };
+        assert_eq!(
+            refactor.implementer.run_step(refactor.dir.path(), &step),
+            StepOutcome::Passed { attempts: 1 }
+        );
+    }
+
+    #[test]
+    fn a_prose_answer_is_steered_back_to_submitting_and_persistent_prose_fails_the_attempt() {
+        let ok_files = [
+            ("src/main/java/com/example/F.java", "public class F { }"),
+            ("src/test/java/com/example/FTest.java", "class FTest { F f; }"),
+        ];
+        let rig = tool_rig(
+            vec![prose("Sure, here is what I would do."), calls(vec![submit(&ok_files)])],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        let second = &rig.requests.lock().unwrap()[1];
+        assert!(
+            matches!(second.last(), Some(ChatMessage::User(m)) if m.contains("submit_files")),
+            "{second:?}"
+        );
+
+        let stubborn = tool_rig(
+            vec![prose("a"), prose("b"), prose("c")],
+            vec![],
+            1,
+            ToolLimits {
+                max_steers: 2,
+                ..ToolLimits::default()
+            },
+        );
+        let result = stubborn.implementer.run_step(stubborn.dir.path(), &nav_step());
+        assert!(matches!(result, StepOutcome::Failed { attempts: 1, .. }), "{result:?}");
+        assert!(stubborn
+            .observer
+            .events()
+            .iter()
+            .any(|e| matches!(e, RunEvent::AttemptFailed(f) if f.stage == Stage::Protocol)));
+    }
+
+    #[test]
+    fn using_up_the_tool_calls_fails_the_attempt_and_leaves_the_workspace_untouched() {
+        let limits = ToolLimits {
+            max_tool_calls: 3,
+            ..ToolLimits::default()
+        };
+        let rig = tool_rig(
+            vec![
+                calls(vec![glob("a*")]),
+                calls(vec![glob("b*")]),
+                calls(vec![glob("c*")]),
+                calls(vec![glob("d*")]),
+            ],
+            vec![],
+            1,
+            limits,
+        );
+        let result = rig.implementer.run_step(rig.dir.path(), &nav_step());
+        assert!(matches!(result, StepOutcome::Failed { .. }));
+        assert!(rig
+            .observer
+            .events()
+            .iter()
+            .any(|e| matches!(e, RunEvent::AttemptFailed(f) if f.stage == Stage::Budget)));
+        assert_eq!(on_disk(&rig, GREETER), OLD_GREETER);
+        assert_eq!(tool_log(&rig).len(), 3, "the call over the budget is not carried out");
+    }
+
+    #[test]
+    fn the_same_call_a_third_time_is_refused_with_a_hint() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![glob("src/**")]),
+                calls(vec![glob("src/**")]),
+                calls(vec![glob("src/**")]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        rig.implementer.run_step(rig.dir.path(), &nav_step());
+        let log = tool_log(&rig);
+        assert_eq!(log[2], ("glob".to_string(), ToolOutcome::Refused));
+        assert!(
+            tool_result(&rig, 2).contains("already made"),
+            "{}",
+            tool_result(&rig, 2)
+        );
+    }
+
+    #[test]
+    fn sandbox_violations_and_unknown_tools_are_answered_not_fatal() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![
+                    read_file("../outside.txt"),
+                    read_file("/etc/passwd"),
+                    ("delete_file", json!({})),
+                ]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        let log = tool_log(&rig);
+        assert_eq!(
+            &log[..3],
+            &[
+                ("read_file".to_string(), ToolOutcome::Refused),
+                ("read_file".to_string(), ToolOutcome::Refused),
+                ("delete_file".to_string(), ToolOutcome::Error)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_build_restores_the_workspace_and_the_retry_is_a_fresh_conversation_that_must_read_again() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, "broken"), (GREETER_TEST, NEW_TEST)])]),
+                // second attempt: tries to submit without reading first
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![outcome(BuildKind::Compile, false, "Greeter.java:1:1: boom")],
+            2,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 2 }
+        );
+        let requests = rig.requests.lock().unwrap();
+        // Attempt 1 made two model calls (requests 0 and 1); request 2 starts attempt 2.
+        assert_eq!(requests[2].len(), 2, "no history is carried over");
+        let ChatMessage::User(task) = &requests[2][1] else {
+            panic!()
+        };
+        assert!(
+            task.contains("Your previous answer") && task.contains("boom") && task.contains("broken"),
+            "{task}"
+        );
+        assert!(
+            tool_result(&rig, 3).contains("have not read"),
+            "the read set starts empty again: {}",
+            tool_result(&rig, 3)
+        );
+    }
+
+    #[test]
+    fn a_truncated_turn_and_a_failed_model_call_each_fail_the_attempt_and_are_retried() {
+        let mut cut = calls(vec![submit(&[(GREETER, "x")])]).unwrap();
+        cut.finish_reason = "length".into();
+        let err = LlmError {
+            call_id: 1,
+            kind: FailureKind::HttpStatus,
+            status: Some(500),
+            message: "parse".into(),
+        };
+        let rig = tool_rig(
+            vec![
+                Ok(cut),
+                Err(err),
+                calls(vec![submit(&[
+                    ("src/main/java/com/example/F.java", "public class F { }"),
+                    ("src/test/java/com/example/FTest.java", "class FTest { F f; }"),
+                ])]),
+            ],
+            vec![],
+            3,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 3 }
+        );
+        let stages: Vec<Stage> = rig
+            .observer
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                RunEvent::AttemptFailed(f) => Some(f.stage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stages, [Stage::Truncated, Stage::Llm]);
     }
 }

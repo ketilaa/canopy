@@ -353,6 +353,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         instruction: task.instruction.into(),
         context: task.context.into(),
         files: task.files.iter().map(|f| f.to_string()).collect(),
+        kind: Default::default(),
     };
     let started = Instant::now();
     let outcome = implementer.run_step(&config.repo, &step);

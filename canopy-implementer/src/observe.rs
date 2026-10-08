@@ -115,6 +115,10 @@ pub enum Stage {
     Write,
     Compile,
     Test,
+    /// The model used up its tool calls or turns without submitting.
+    Budget,
+    /// The model kept answering in prose instead of calling a tool.
+    Protocol,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
