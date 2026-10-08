@@ -16,9 +16,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use canopy_implementer::build::{Build, CommandBuild};
-use canopy_implementer::implementer::{Implementer, StepOutcome, StepRequest};
+use canopy_implementer::implementer::{Implementer, StepOutcome, StepRequest, ToolLimits};
 use canopy_implementer::llm::{LlmClient, ModelEndpoint, Sampling};
-use canopy_implementer::observe::{now_iso, Metrics, MetricsObserver, Observers, RunEvent, RunObserver, TraceWriter};
+use canopy_implementer::observe::{
+    now_iso, Metrics, MetricsObserver, Observers, RecordingObserver, RunEvent, RunObserver, ToolOutcome, TraceWriter,
+};
 use serde_json::json;
 
 /// A step to run, the state to start it from, and how its result is scored.
@@ -33,6 +35,8 @@ struct Task {
     hidden_test: &'static str,
     /// Test methods present in the starting state that must still exist afterwards.
     preserved_tests: &'static [&'static str],
+    /// Whether the model finds and reads files itself with tools, instead of being shown them.
+    tools: bool,
 }
 
 const HIDDEN_TEST_PATH: &str = "src/test/java/com/example/demo/GreeterHiddenTest.java";
@@ -79,6 +83,7 @@ class GreeterHiddenTest {
 }
 "#,
     preserved_tests: &[],
+    tools: false,
 };
 
 const TRIM: Task = Task {
@@ -132,18 +137,33 @@ class GreeterHiddenTest {
 }
 "#,
     preserved_tests: &["testGreetWithValidName", "testGreetWithBlankName"],
+    tools: false,
+};
+
+/// The same change as `trim`, said the way a person would, with no file list and no hints: the model
+/// has to find the files and read them itself.
+const NAV: Task = Task {
+    name: "nav",
+    default_tag: "candidate-01-greeter",
+    instruction: "The Greeter should trim the name before returning the greeting in the greet method.",
+    context: "Build: Maven, Java 21, JUnit 5 (spring-boot-starter-test is on the classpath)",
+    files: &[],
+    hidden_test: TRIM.hidden_test,
+    preserved_tests: TRIM.preserved_tests,
+    tools: true,
 };
 
 fn task(name: &str) -> Result<Task, String> {
     match name {
         "create" => Ok(CREATE),
         "trim" => Ok(TRIM),
-        other => Err(format!("unknown task {other}; known: create, trim")),
+        "nav" => Ok(NAV),
+        other => Err(format!("unknown task {other}; known: create, trim, nav")),
     }
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
+    "usage: run_step [--task create|trim|nav] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
 
 struct Config {
     task: String,
@@ -307,6 +327,44 @@ fn test_sources(repo: &Path) -> String {
     out
 }
 
+/// What the event stream says about how the model found its way around.
+#[derive(Default)]
+struct Navigation {
+    tool_calls: usize,
+    files_read: Vec<String>,
+    read_production: bool,
+    read_test: bool,
+    refused_submissions: usize,
+    /// Calls that got the model nothing: refused, erroneous, or a glob that matched no file.
+    wasted_calls: usize,
+}
+
+fn navigation(events: &[RunEvent]) -> Navigation {
+    let mut nav = Navigation::default();
+    for event in events {
+        let RunEvent::ToolCalled(call) = event else { continue };
+        nav.tool_calls += 1;
+        if call.outcome != ToolOutcome::Ok || (call.tool == "glob" && call.result.starts_with("No files match")) {
+            nav.wasted_calls += 1;
+        }
+        if call.tool == "submit_files" && call.outcome == ToolOutcome::Refused {
+            nav.refused_submissions += 1;
+        }
+        if call.tool == "read_file" && call.outcome == ToolOutcome::Ok {
+            let path = serde_json::from_str::<serde_json::Value>(&call.arguments)
+                .ok()
+                .and_then(|v| v["path"].as_str().map(|p| p.trim_start_matches("./").to_string()))
+                .unwrap_or_default();
+            nav.read_production |= path.starts_with("src/main/");
+            nav.read_test |= path.starts_with("src/test/");
+            if !nav.files_read.contains(&path) {
+                nav.files_read.push(path);
+            }
+        }
+    }
+    nav
+}
+
 struct RunResult {
     n: u32,
     passed: bool,
@@ -318,6 +376,7 @@ struct RunResult {
     scored: bool,
     metrics: Metrics,
     step_ms: u64,
+    nav: Navigation,
 }
 
 fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u32) -> Result<RunResult, String> {
@@ -327,12 +386,14 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     println!("\n== run {n}/{} ==", config.runs);
 
     let metrics = Arc::new(MetricsObserver::new());
+    let recorder = Arc::new(RecordingObserver::new());
     let trace = TraceWriter::create(&run_dir.join("events.jsonl"), &format!("{batch_id}/run-{n:02}"))
         .map_err(|e| e.to_string())?;
     let observers: Arc<Observers> = Arc::new(
         Observers::new()
             .with(Arc::new(trace))
             .with(metrics.clone())
+            .with(recorder.clone())
             .with(Arc::new(Console)),
     );
 
@@ -346,7 +407,17 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         observers.clone(),
     );
     let build = CommandBuild::maven(Duration::from_secs(240), observers.clone());
-    let implementer = Implementer::new(Box::new(client), Box::new(build), observers.clone(), config.attempts);
+    let implementer = if task.tools {
+        Implementer::with_tools(
+            Box::new(client),
+            Box::new(build),
+            observers.clone(),
+            config.attempts,
+            ToolLimits::default(),
+        )
+    } else {
+        Implementer::new(Box::new(client), Box::new(build), observers.clone(), config.attempts)
+    };
 
     let step = StepRequest {
         id: format!("greeter-{}", task.name),
@@ -359,6 +430,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     let outcome = implementer.run_step(&config.repo, &step);
     let step_ms = started.elapsed().as_millis() as u64;
     let metrics_after_step = metrics.snapshot();
+    let nav = navigation(&recorder.events());
 
     let (passed, attempts) = match &outcome {
         StepOutcome::Passed { attempts } => (true, *attempts),
@@ -414,6 +486,14 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         "original_tests_kept": kept_original,
         "scored_pass": scored,
         "files_changed": files_changed,
+        "navigation": {
+            "tool_calls": nav.tool_calls,
+            "files_read": nav.files_read,
+            "read_production": nav.read_production,
+            "read_test": nav.read_test,
+            "refused_submissions": nav.refused_submissions,
+            "wasted_calls": nav.wasted_calls,
+        },
         "metrics": metrics_after_step,
     });
     std::fs::write(
@@ -433,6 +513,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         scored,
         metrics: metrics_after_step,
         step_ms,
+        nav,
     })
 }
 
@@ -484,6 +565,7 @@ fn real_main() -> Result<(), String> {
         "max_attempts": config.attempts,
         "runs": config.runs,
         "task": task.name,
+        "tools": task.tools,
         "instruction": task.instruction,
         "context": task.context,
         "files_shown": task.files,
@@ -556,6 +638,25 @@ fn real_main() -> Result<(), String> {
         ));
     }
     std::fs::write(batch_dir.join("results.csv"), csv).map_err(|e| e.to_string())?;
+    if task.tools {
+        println!(
+            "\n{:>3} {:>6} {:>5} {:>9} {:>9} {:>8} {:>7}   files read",
+            "run", "calls", "reads", "read_prod", "read_test", "refused", "wasted"
+        );
+        for r in &results {
+            println!(
+                "{:>3} {:>6} {:>5} {:>9} {:>9} {:>8} {:>7}   {}",
+                r.n,
+                r.nav.tool_calls,
+                r.nav.files_read.len(),
+                r.nav.read_production,
+                r.nav.read_test,
+                r.nav.refused_submissions,
+                r.nav.wasted_calls,
+                r.nav.files_read.join(", ")
+            );
+        }
+    }
     let scored = results.iter().filter(|r| r.scored).count();
     println!(
         "\n{scored}/{} runs scored: hidden acceptance passed, original tests kept, a test added. Trace and summaries: {}",
