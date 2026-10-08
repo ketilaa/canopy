@@ -10,6 +10,7 @@
 pub mod build;
 pub mod files;
 pub mod gates;
+pub mod hints;
 pub mod implementer;
 pub mod llm;
 pub mod observe;

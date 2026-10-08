@@ -60,7 +60,16 @@ pub fn tool_messages(step: &StepRequest, previous: Option<&Failure>) -> (String,
             }
         }
         user.push_str(&format!("\n## {}\n{}\n", heading(failure.stage), failure.feedback));
-        user.push_str("\nStart again: read the files again before you change them, then call submit_files.\n");
+        user.push_str(match failure.stage {
+            Stage::Budget => {
+                "\nYou spent your tool calls reading. Read each file you need at most once, then call submit_files \
+                 with your change.\n"
+            }
+            Stage::Protocol => {
+                "\nDo not answer in prose. Read what you need, then call submit_files with the complete files.\n"
+            }
+            _ => "\nStart again: read the files again before you change them, then call submit_files.\n",
+        });
     }
     (TOOL_RULES.to_string(), user)
 }
@@ -216,5 +225,23 @@ mod tests {
         assert!(user.contains("Your previous answer") && user.contains("class G {}"));
         assert!(user.contains("The build failed to compile") && user.contains("G.java:1:1: boom"));
         assert!(user.contains("read the files again"), "{user}");
+    }
+    #[test]
+    fn a_budget_retry_says_to_read_each_file_once_and_then_submit_not_to_read_again() {
+        let (_, user) = tool_messages(&step(), Some(&failure(Stage::Budget, "You used 12 tool calls.", false)));
+        assert!(user.contains("at most once") && user.contains("submit_files"), "{user}");
+        assert!(!user.contains("read the files again"), "{user}");
+    }
+
+    #[test]
+    fn a_protocol_retry_says_not_to_answer_in_prose() {
+        let (_, user) = tool_messages(
+            &step(),
+            Some(&failure(Stage::Protocol, "You answered in prose.", false)),
+        );
+        assert!(
+            user.contains("Do not answer in prose") && user.contains("submit_files"),
+            "{user}"
+        );
     }
 }

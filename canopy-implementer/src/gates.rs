@@ -17,7 +17,9 @@ pub enum Rejection {
     Unsafe(String),
     /// Existing files the model submits changes to without having read them.
     Unread(Vec<String>),
-    /// Production code changed and no test changed with it.
+    /// Nothing was submitted.
+    Empty,
+    /// Production code changed and no test changed with it; holds the changed production paths.
     NoTest(Vec<String>),
     /// Production code changed and no changed test mentions it.
     TestsUnrelated(Vec<String>),
@@ -33,12 +35,25 @@ impl Rejection {
                  Call read_file on each one, then call submit_files again.",
                 paths.join(", ")
             ),
-            Rejection::NoTest(classes) => format!(
-                "Not submitted. You changed {} but submitted no changed test. ALWAYS include a test for every \
-                 behaviour you change: read the existing test file (find it with glob), add a test for the \
-                 behaviour, and call submit_files again with all your files.",
-                classes.join(", ")
-            ),
+            Rejection::Empty => "Not submitted: you submitted no files. If you have read what you need, write your \
+                 change now: call submit_files with the complete content of every file you change, and a test for \
+                 the behaviour."
+                .to_string(),
+            Rejection::NoTest(paths) => {
+                let classes: Vec<String> = paths
+                    .iter()
+                    .filter_map(|p| Path::new(p).file_stem())
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .collect();
+                format!(
+                    "Not submitted. You changed {classes} but submitted no changed test. Submit your change to {paths} \
+                     and a test that exercises {classes} together, in one submit_files call. ALWAYS include a test for \
+                     every behaviour you change: read the existing test file (find it with glob), add a test for the \
+                     behaviour, and submit all the files.",
+                    classes = classes.join(", "),
+                    paths = paths.join(", ")
+                )
+            }
             Rejection::TestsUnrelated(classes) => format!(
                 "Not submitted. No changed test mentions {}. Add a test that exercises it, then call \
                  submit_files again with all your files.",
@@ -57,7 +72,7 @@ pub fn check_submission(
     kind: StepKind,
 ) -> Result<(), Rejection> {
     if files.files.is_empty() {
-        return Err(Rejection::Unsafe("you submitted no files".to_string()));
+        return Err(Rejection::Empty);
     }
     // (normalised path, content, already exists)
     let mut entries: Vec<(String, &str, bool)> = Vec::new();
@@ -90,10 +105,14 @@ pub fn check_submission(
             !*exists || std::fs::read_to_string(root.join(relative)).map_or(true, |on_disk| on_disk != *content)
         })
         .collect();
-    let production: Vec<String> = changed
+    let production_paths: Vec<String> = changed
         .iter()
         .filter(|(relative, _, _)| is_production(relative))
-        .filter_map(|(relative, _, _)| Path::new(relative).file_stem())
+        .map(|(relative, _, _)| relative.clone())
+        .collect();
+    let production: Vec<String> = production_paths
+        .iter()
+        .filter_map(|relative| Path::new(relative).file_stem())
         .map(|stem| stem.to_string_lossy().into_owned())
         .collect();
     if production.is_empty() {
@@ -105,7 +124,7 @@ pub fn check_submission(
         .map(|(_, content, _)| *content)
         .collect();
     if tests.is_empty() {
-        return Err(Rejection::NoTest(production));
+        return Err(Rejection::NoTest(production_paths));
     }
     let unrelated: Vec<String> = production
         .into_iter()
@@ -305,9 +324,11 @@ mod tests {
     fn an_empty_submission_is_rejected_not_treated_as_success() {
         let dir = repo();
         let r = check(&dir, &[], &[], StepKind::BehaviorChange);
+        assert_eq!(r, Err(Rejection::Empty));
+        let message = r.unwrap_err().message();
         assert!(
-            matches!(r, Err(Rejection::Unsafe(ref m)) if m.contains("no files")),
-            "{r:?}"
+            message.contains("write your change now") && message.contains("complete content"),
+            "{message}"
         );
     }
 
@@ -330,8 +351,13 @@ mod tests {
     fn changed_production_code_without_any_changed_test_is_rejected() {
         let dir = repo();
         let r = check(&dir, &[(GREETER, NEW_GREETER)], &[GREETER], StepKind::BehaviorChange);
-        assert_eq!(r, Err(Rejection::NoTest(vec!["Greeter".to_string()])));
-        assert!(r.unwrap_err().message().contains("ALWAYS include a test"));
+        assert_eq!(r, Err(Rejection::NoTest(vec![GREETER.to_string()])));
+        let message = r.unwrap_err().message();
+        assert!(message.contains("ALWAYS include a test"), "{message}");
+        assert!(
+            message.contains(GREETER) && message.contains("together"),
+            "names the file to keep: {message}"
+        );
     }
 
     #[test]
@@ -344,7 +370,7 @@ mod tests {
             &[GREETER, GREETER_TEST],
             StepKind::BehaviorChange,
         );
-        assert_eq!(r, Err(Rejection::NoTest(vec!["Greeter".to_string()])));
+        assert_eq!(r, Err(Rejection::NoTest(vec![GREETER.to_string()])));
     }
 
     #[test]

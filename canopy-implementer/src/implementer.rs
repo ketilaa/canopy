@@ -12,6 +12,7 @@ use std::time::Instant;
 use crate::build::Build;
 use crate::files::{GeneratedFile, GeneratedFiles};
 use crate::gates;
+use crate::hints;
 use crate::llm::{ChatMessage, Generator, StructuredRequest, ToolGenerator, ToolRequest};
 use crate::observe::{
     AttemptFailed, AttemptStarted, FilesWritten, RunEvent, RunObserver, Stage, StepFinished, StepStarted, ToolCalled,
@@ -402,7 +403,12 @@ impl Implementer {
         }
         let tested = self.build.test(root);
         if !tested.success {
-            return Err(failure(Stage::Test, tested.digest, Some(files)));
+            // The digest is what the build said; the hint is a fact the harness adds after it.
+            let feedback = match hints::subject_hint(&tested.digest, &files.paths(), root) {
+                Some(hint) => format!("{}\n\n{hint}", tested.digest),
+                None => tested.digest,
+            };
+            return Err(failure(Stage::Test, feedback, Some(files)));
         }
         Ok(())
     }
@@ -922,6 +928,16 @@ mod tests {
         max_attempts: u32,
         limits: ToolLimits,
     ) -> ToolRig {
+        tool_rig_with_tests(turns, compiles, vec![], max_attempts, limits)
+    }
+
+    fn tool_rig_with_tests(
+        turns: Vec<Result<ToolTurn, LlmError>>,
+        compiles: Vec<BuildOutcome>,
+        tests: Vec<BuildOutcome>,
+        max_attempts: u32,
+        limits: ToolLimits,
+    ) -> ToolRig {
         let observer = Arc::new(RecordingObserver::new());
         let requests = Arc::new(Mutex::new(Vec::new()));
         let compile_calls = Arc::new(Mutex::new(0));
@@ -932,7 +948,7 @@ mod tests {
             }),
             Box::new(ScriptedBuild {
                 compiles: Mutex::new(compiles.into()),
-                tests: Mutex::new(VecDeque::new()),
+                tests: Mutex::new(tests.into()),
                 compile_calls: compile_calls.clone(),
             }),
             observer.clone(),
@@ -943,6 +959,10 @@ mod tests {
         for (rel, content) in [
             (GREETER, OLD_GREETER),
             (GREETER_TEST, OLD_TEST),
+            (
+                "src/main/java/com/example/Formatter.java",
+                "package com.example;\npublic class Formatter { }\n",
+            ),
             ("pom.xml", "<project/>"),
         ] {
             let p = dir.path().join(rel);
@@ -1333,5 +1353,75 @@ mod tests {
             })
             .collect();
         assert_eq!(stages, [Stage::Truncated, Stage::Llm]);
+    }
+    #[test]
+    fn a_test_failure_in_a_class_the_model_did_not_change_is_reported_with_a_hint_to_the_model() {
+        let digest = "FormatterTest.trims:5 expected: <Ada> but was: <  ada  >\nTests run: 4, Failures: 1";
+        let rig = tool_rig_with_tests(
+            vec![
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            vec![outcome(BuildKind::Test, false, digest)],
+            2,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 2 }
+        );
+
+        let feedback = rig
+            .observer
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                RunEvent::AttemptFailed(f) => Some(f.feedback),
+                _ => None,
+            })
+            .expect("the first attempt failed");
+        assert!(
+            feedback.starts_with(digest),
+            "the digest comes first, unchanged: {feedback}"
+        );
+        assert!(
+            feedback.contains("FormatterTest tests Formatter") && feedback.contains("did not change"),
+            "{feedback}"
+        );
+        let retry = rig.requests.lock().unwrap()[2].clone();
+        let ChatMessage::User(task) = &retry[1] else { panic!() };
+        assert!(
+            task.contains("FormatterTest tests Formatter"),
+            "the model is told: {task}"
+        );
+    }
+
+    #[test]
+    fn no_hint_is_added_when_the_failing_tests_class_was_changed() {
+        let digest = "GreeterTest.t:5 expected: <1> but was: <2>";
+        let rig = tool_rig_with_tests(
+            vec![
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            vec![outcome(BuildKind::Test, false, digest)],
+            1,
+            ToolLimits::default(),
+        );
+        rig.implementer.run_step(rig.dir.path(), &nav_step());
+        let feedback = rig
+            .observer
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                RunEvent::AttemptFailed(f) => Some(f.feedback),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(feedback, digest);
     }
 }
