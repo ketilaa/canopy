@@ -32,6 +32,15 @@ Model id served: `Qwen/Qwen3-14B-GGUF:Q4_K_M` (as reported by `/v1/models`). Cac
   disabled. A one-class-plus-test answer came back as valid `{files:[{path,content}]}`, no
   `reasoning_content`, `finish_reason: stop`; 74 prompt + 185 completion tokens in 15.6 s
   (11.8 tokens/s generation, 80 tokens/s prompt eval).
+- **confirmed** (batch `2026-10-08T14-01-21`, harness `095d93a`, repo tag `baseline-00-scaffold`, 10 runs of the
+  Greeter step: one class, one test, a blank-name rule): 10/10 passed on the first attempt and passed the
+  hidden acceptance test; 0 retries, 0 failures at any stage. One model call per run (272 prompt tokens,
+  282 or 337 completion tokens), 24-30 s of model time at 10-11 tokens/s, builds 1.8-2.3 s each, step total
+  28-34 s. Prompt cache: 271 of 272 prompt tokens cached after the first run.
+- **confirmed** (same batch): at temperature 0.6 the outputs were nearly deterministic: only 2 distinct
+  patches in 10 runs (7 and 3), differing by one extra `null`-name test. For a task this small a single run
+  is almost as informative as ten, and the sweep says nothing about the retry path. The task is too easy to
+  discriminate: the Greeter step does not exercise the recovery logic.
 - **unknown**: behavior of schema-constrained output with thinking enabled.
 - **unknown**: runaway decode on tool-call turns (java-harness saw this on another model/build);
   not relevant until tools are used.
