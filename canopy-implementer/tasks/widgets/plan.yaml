@@ -55,7 +55,7 @@ steps:
       InMemoryWidgetRepository repository = new InMemoryWidgetRepository(); and the service with
       new WidgetService(repository). Write tests that create returns a widget with the given name and a
       generated id, that the widget was saved, checked by calling repository.findById(widget.id()) on the
-      repository you created, and that an invalid name throws IllegalArgumentException.
+      repository you created, and that create throws IllegalArgumentException for each of these invalid names: null, "" (empty), "   " (spaces only) and a name of 51 characters. A name that contains spaces but has other characters is valid; do not test it as invalid.
     create:
       - src/main/java/com/example/widgets/service/WidgetService.java
       - src/test/java/com/example/widgets/service/WidgetServiceTest.java
@@ -69,10 +69,10 @@ steps:
       with a constructor that takes a WidgetService and no other dependency. POST /widgets takes a JSON
       body with a name, read into a small record CreateWidgetRequest(String name) in the same package,
       calls WidgetService.create, and answers status 201 with the created widget as JSON containing id
-      and name. When the service throws IllegalArgumentException, answer status 400. The controller must
-      use only the service and never the repository. Add WidgetControllerTest, using MockMvc with
-      MockMvcBuilders.standaloneSetup over a WidgetService built on InMemoryWidgetRepository, with tests
-      for 201 with an id and the name, for 400 on a blank name, and for 400 on a missing name.
+      and name. The controller must use only the service and never the repository. Add
+      WidgetControllerTest, using MockMvc with MockMvcBuilders.standaloneSetup over a WidgetController
+      built on new WidgetService(new InMemoryWidgetRepository()), with one test: posting the name
+      "Alpha" gives status 201 and a JSON body with an id and the name "Alpha".
     create:
       - src/main/java/com/example/widgets/web/CreateWidgetRequest.java
       - src/main/java/com/example/widgets/web/WidgetController.java
@@ -80,5 +80,16 @@ steps:
     read_only:
       - src/main/java/com/example/widgets/domain/Widget.java
       - src/main/java/com/example/widgets/service/WidgetService.java
-      - src/main/java/com/example/widgets/repository/WidgetRepository.java
       - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java
+  - id: widgets-5-validation
+    instruction: >
+      When WidgetService.create throws IllegalArgumentException, POST /widgets must answer status 400.
+      Change WidgetController to catch it and answer 400. Add two tests to WidgetControllerTest, keeping
+      the existing test: posting a JSON body with the name "" gives status 400, and posting an empty JSON
+      body {} (no name) gives status 400.
+    modify:
+      - src/main/java/com/example/widgets/web/WidgetController.java
+      - src/test/java/com/example/widgets/web/WidgetControllerTest.java
+    read_only:
+      - src/main/java/com/example/widgets/service/WidgetService.java
+      - src/main/java/com/example/widgets/web/CreateWidgetRequest.java

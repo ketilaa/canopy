@@ -37,7 +37,7 @@ The planned tasks run a hand-written plan (`tasks/<name>/plan.yaml`) of small st
 |---|---|---|
 | `naming-planned` | `java-naming@baseline-00-naming` | 2 steps: change `NameFormatter`, then add a `Greeter` test. Same hidden test and scoring as `naming`. |
 | `vat-planned` | `java-shop@baseline-00-shop` | 4 steps in expand-then-contract order: add the new calculator methods, switch the invoice, switch the charge, then switch the old total. Same hidden test and scoring as `vat`. |
-| `widgets-planned` | `java-widgets@baseline-00-widgets` | 4 steps: domain record, in-memory repository, service, REST controller. The plan and its hidden test (the real application over HTTP) are written and validated; runner wiring and structure checks are pending. |
+| `widgets-planned` | `java-widgets@baseline-00-widgets` | 5 steps: domain record, in-memory repository, service, controller (201 path only), then 400 validation. Hidden test: the real application over HTTP. |
 
 A plan is validated before any model run by applying a reference change step by step in a scratch copy: the build must be green after every step and the hidden test must pass at the end.
 
