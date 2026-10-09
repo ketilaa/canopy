@@ -172,6 +172,25 @@ llama-server \
     cannot pass.
   - The model still did no arithmetic of its own here: the planner supplied the figures. Whether a planner can
     derive them is the open question.
+- **confirmed** (the REST vertical, a 4-step scoped plan: domain record, in-memory repository, service, controller;
+  harness `ed5b1a1` for a single first run and `80c4323` for the batch below). First run: steps 1 and 2 first
+  attempt (about a minute each), step 3 failed three times on a `getWidgetRepository()` the model's test called
+  but never added to the service; the step had not said how the test reaches the repository. After stating that
+  wiring (plan v2, step 3 only), batch `2026-10-09T10-45-54`, 3 runs: **0/3 scored**, furthest run 3 of 4 steps.
+  Time per run 7 to 29 minutes (run 2: 16662 completion tokens). Failure kinds:
+  - *Missing imports in model-written code* (all 3 runs): `cannot find symbol: class UUID` in a repository
+    interface, `class Optional` in two service tests. Each cost one or more attempts.
+  - *Test inventing a requirement* (run 3, step 3, three attempts): the test asserted that
+    `service.create("invalid name with space")` throws, though a name with a space is valid under the rule.
+    The step said only "an invalid name throws" without listing the invalid inputs.
+  - *Output over the completion cap* (run 2, step 4): the controller, its request record and a MockMvc test in
+    one answer hit the 2048-token cap (`truncated`), after a budget and a stuck attempt.
+  - Steps 1 and 2 passed first attempt in most runs. The domain step has no model-written dependency; later
+    steps build on the model's own earlier code, so an error there is carried forward.
+  What the plan has to contain, from this and the vat sweeps: the wiring between production code and its tests
+  (constructors, how a side effect is observed), the concrete inputs and expected results of every test
+  (invalid inputs listed, existing assertions restated), and a step small enough that its answer fits the
+  completion cap.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
