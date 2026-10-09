@@ -50,10 +50,12 @@ steps:
       In the package com.example.widgets.service, create WidgetService, annotated with @Service, with a
       constructor that takes a WidgetRepository. Add the method Widget create(String name), which creates
       a widget with Widget.create(name), saves it through the repository, and returns the saved widget. An
-      invalid name makes it throw IllegalArgumentException. Add WidgetServiceTest, using
-      InMemoryWidgetRepository, with tests that create returns a widget with the given name and a
-      generated id, that the widget can then be found through the repository, and that an invalid name
-      throws IllegalArgumentException.
+      invalid name makes it throw IllegalArgumentException. WidgetService must not get a getter for its
+      repository. Add WidgetServiceTest. In the test, create the repository yourself with
+      InMemoryWidgetRepository repository = new InMemoryWidgetRepository(); and the service with
+      new WidgetService(repository). Write tests that create returns a widget with the given name and a
+      generated id, that the widget was saved, checked by calling repository.findById(widget.id()) on the
+      repository you created, and that an invalid name throws IllegalArgumentException.
     create:
       - src/main/java/com/example/widgets/service/WidgetService.java
       - src/test/java/com/example/widgets/service/WidgetServiceTest.java
