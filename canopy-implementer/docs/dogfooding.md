@@ -50,8 +50,9 @@ The planner, not the Implementer, decides which files a step touches and where n
 - `read_only`: existing files the step depends on, shown but not changeable.
 
 The Implementer keeps its tools and may still explore, but it may only *write* files listed under `modify` or
-`create`, and must create every `create` file. A submission with any other file, or without a required new
-file, is refused with the reason. Files shown up front count as read. A step with none of these lists is
+`create`, and must create every `create` file. A submission with any other file, without a required new
+file, or that leaves a `modify` file identical to what is on disk (or omits it), is refused with the reason: `modify`
+means the planner decided the file has to change, and a file that only needs to be looked at is `read_only`. Files shown up front count as read. A step with none of these lists is
 unscoped and behaves as before.
 
 Before any step runs, the orchestrator checks the plan against the repository as it is: every `modify` and

@@ -51,8 +51,10 @@ steps:
   - id: vat-3-charge
     instruction: >
       Make OrderService.amountToCharge return totalWithVatCents instead of totalCents. Update
-      OrderServiceTest to the new expected amounts. For example the amount to charge for 3 Gizmo at 10.00
-      is 3750 cents and for 5 Sprocket at 30.00 is 16875 cents.
+      OrderServiceTest to the new expected amounts: the existing test chargesTheTotal (2 Widget at 2000)
+      now expects 5000 instead of 4000, and chargesTheDiscountedTotal (10 Gadget at 2000) now expects
+      22500 instead of 18000. Also add a test with these examples: the amount to charge for 3 Gizmo at
+      10.00 is 3750 cents and for 5 Sprocket at 30.00 is 16875 cents.
     modify:
       - src/main/java/com/example/shop/OrderService.java
       - src/test/java/com/example/shop/OrderServiceTest.java
@@ -63,8 +65,10 @@ steps:
   - id: vat-4-total
     instruction: >
       Change PriceCalculator.totalCents so that it returns totalWithVatCents(order), which includes VAT.
-      Update the tests in PriceCalculatorTest that expect the old totals. For example totalCents for
-      3 Gizmo at 1000 is now 3750, and for 5 Sprocket at 3000 is now 16875.
+      Update the tests in PriceCalculatorTest that expect the old totals: totalIsTheSubtotalMinusTheDiscount
+      now expects 5000 instead of 4000 for the order of 2 Widget at 2000, and 22500 instead of 18000 for the
+      order of 10 Gadget at 2000. For example totalCents for 3 Gizmo at 1000 is now 3750, and for
+      5 Sprocket at 3000 is now 16875.
     modify:
       - src/main/java/com/example/shop/PriceCalculator.java
       - src/test/java/com/example/shop/PriceCalculatorTest.java

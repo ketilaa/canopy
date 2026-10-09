@@ -25,6 +25,8 @@ pub enum Rejection {
     MissingCreate(Vec<String>),
     /// Files the step must create that already exist.
     CreateExists(Vec<String>),
+    /// Files the planner said must change, which the submission leaves identical or omits.
+    ModifyUnchanged(Vec<String>),
     /// Every submitted file is identical to what is already there.
     NoChange,
     /// Production code changed and no test changed with it; holds the changed production paths.
@@ -63,6 +65,16 @@ impl Rejection {
                     list(&scope.create)
                 )
             }
+            Rejection::ModifyUnchanged(paths) => format!(
+                "Not submitted: {} must change in this step, but your submission leaves {} identical to what is \
+                 already there or does not include {}. Change {} as the task describes and submit {} with your \
+                 other files.",
+                paths.join(", "),
+                if paths.len() == 1 { "it" } else { "them" },
+                if paths.len() == 1 { "it" } else { "them" },
+                if paths.len() == 1 { "it" } else { "them" },
+                if paths.len() == 1 { "it" } else { "them" },
+            ),
             Rejection::MissingCreate(paths) => format!(
                 "Not submitted: you did not create {}. This step requires each of them, at exactly that path. \
                  Submit them together with your other files.",
@@ -145,6 +157,28 @@ pub fn check_scope(files: &GeneratedFiles, scope: &Scope, root: &Path) -> Result
         .collect();
     if !existing.is_empty() {
         return Err(Rejection::CreateExists(existing));
+    }
+    // The planner lists a file under `modify` because it has to change; one the model leaves alone, or
+    // gives back as it was, means the step is not done.
+    let unchanged: Vec<String> = scope
+        .modify
+        .iter()
+        .filter(|path| {
+            let submitted_content = files
+                .files
+                .iter()
+                .zip(&submitted)
+                .find(|(_, normalised)| normalised == path)
+                .map(|(file, _)| file.content.as_str());
+            match submitted_content {
+                None => true,
+                Some(content) => std::fs::read_to_string(root.join(path)).is_ok_and(|on_disk| on_disk == content),
+            }
+        })
+        .cloned()
+        .collect();
+    if !unchanged.is_empty() {
+        return Err(Rejection::ModifyUnchanged(unchanged));
     }
     Ok(())
 }
@@ -640,5 +674,43 @@ mod tests {
         let r = check_scope(&files(&[(GREETER, NEW_GREETER)]), &scope(&[], &[GREETER]), dir.path());
         assert_eq!(r, Err(Rejection::CreateExists(vec![GREETER.to_string()])));
         assert!(r.unwrap_err().message().contains("already exists"));
+    }
+    #[test]
+    fn a_file_the_planner_said_must_change_but_the_submission_leaves_identical_is_refused() {
+        let dir = repo();
+        let unchanged_test = std::fs::read_to_string(dir.path().join(GREETER_TEST)).unwrap();
+        let r = check_scope(
+            &files(&[(GREETER, NEW_GREETER), (GREETER_TEST, &unchanged_test)]),
+            &scope(&[GREETER, GREETER_TEST], &[]),
+            dir.path(),
+        );
+        assert_eq!(r, Err(Rejection::ModifyUnchanged(vec![GREETER_TEST.to_string()])));
+        let message = r.unwrap_err().message();
+        assert!(
+            message.contains("must change") && message.contains(GREETER_TEST),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_file_the_planner_said_must_change_but_the_submission_omits_is_refused_too() {
+        let dir = repo();
+        let r = check_scope(
+            &files(&[(GREETER, NEW_GREETER)]),
+            &scope(&[GREETER, GREETER_TEST], &[]),
+            dir.path(),
+        );
+        assert_eq!(r, Err(Rejection::ModifyUnchanged(vec![GREETER_TEST.to_string()])));
+    }
+
+    #[test]
+    fn the_modify_check_comes_after_the_scope_and_create_checks() {
+        let dir = repo();
+        let r = check_scope(
+            &files(&[(GREETER, NEW_GREETER), ("src/other/Extra.java", "class Extra {}")]),
+            &scope(&[GREETER, GREETER_TEST], &[]),
+            dir.path(),
+        );
+        assert!(matches!(r, Err(Rejection::OutOfScope { .. })), "{r:?}");
     }
 }
