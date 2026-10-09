@@ -68,6 +68,13 @@ pub fn tool_messages(step: &StepRequest, previous: Option<&Failure>) -> (String,
             Stage::Protocol => {
                 "\nDo not answer in prose. Read what you need, then call submit_files with the complete files.\n"
             }
+            Stage::Stuck => {
+                "\nDo not repeat a call. Read what you need once, then call submit_files with your change.\n"
+            }
+            Stage::NoChange => {
+                "\nYour files were identical to what is already there. Read the files again, make the change the \
+                 task asks for, and call submit_files with the files that differ.\n"
+            }
             _ => "\nStart again: read the files again before you change them, then call submit_files.\n",
         });
     }
@@ -84,6 +91,8 @@ fn heading(stage: Stage) -> &'static str {
         Stage::Llm => "The model call failed",
         Stage::Budget => "You used up your tool calls without submitting",
         Stage::Protocol => "You did not call submit_files",
+        Stage::Stuck => "You repeated the same call without making progress",
+        Stage::NoChange => "Your submission changed nothing",
     }
 }
 
@@ -243,5 +252,18 @@ mod tests {
             user.contains("Do not answer in prose") && user.contains("submit_files"),
             "{user}"
         );
+    }
+    #[test]
+    fn a_stuck_retry_says_not_to_repeat_a_call_and_a_no_change_retry_says_to_make_the_change() {
+        let (_, stuck) = tool_messages(
+            &step(),
+            Some(&failure(Stage::Stuck, "You repeated glob 3 times.", false)),
+        );
+        assert!(
+            stuck.contains("Do not repeat a call") && stuck.contains("submit_files"),
+            "{stuck}"
+        );
+        let (_, nochange) = tool_messages(&step(), Some(&failure(Stage::NoChange, "identical", true)));
+        assert!(nochange.contains("make the change"), "{nochange}");
     }
 }

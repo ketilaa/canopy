@@ -119,6 +119,10 @@ pub enum Stage {
     Budget,
     /// The model kept answering in prose instead of calling a tool.
     Protocol,
+    /// The model repeated the same tool call until the harness ended the attempt.
+    Stuck,
+    /// Every submitted file was identical to what is already there: nothing would change.
+    NoChange,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -326,7 +326,9 @@ impl Implementer {
                 let repeats = seen.entry(format!("{}|{}", call.name, call.arguments)).or_insert(0);
                 *repeats += 1;
                 let mut accepted: Option<GeneratedFiles> = None;
-                let (outcome, text) = if *repeats >= 3 {
+                let times = *repeats;
+                let stuck = times >= 3;
+                let (outcome, text) = if stuck {
                     (
                         ToolOutcome::Refused,
                         "You already made exactly this call. Make a different call, or call submit_files.".to_string(),
@@ -364,6 +366,16 @@ impl Implementer {
                     result: text.clone(),
                     elapsed_ms: started.elapsed().as_millis() as u64,
                 }));
+                if stuck {
+                    return Err(failure(
+                        Stage::Stuck,
+                        format!(
+                            "You made exactly the same {} call {times} times without making progress.",
+                            call.name
+                        ),
+                        None,
+                    ));
+                }
                 if let Some(files) = accepted {
                     return Ok(files);
                 }
@@ -387,6 +399,19 @@ impl Implementer {
         files
             .validate_paths()
             .map_err(|e| failure(Stage::Write, e.to_string(), Some(files.clone())))?;
+        // A submission identical to what is on disk is not a step done. The tool conversation refuses it
+        // earlier; this covers the single-call mode and is the last line of defence.
+        let changes_something = files
+            .files
+            .iter()
+            .any(|f| std::fs::read_to_string(root.join(&f.path)).map_or(true, |on_disk| on_disk != f.content));
+        if !changes_something {
+            return Err(failure(
+                Stage::NoChange,
+                "Every file you submitted is identical to what is already there, so nothing changed.".into(),
+                Some(files),
+            ));
+        }
         snapshot.capture(&files.paths());
         files
             .write_into(root)
@@ -1226,26 +1251,118 @@ mod tests {
     }
 
     #[test]
-    fn the_same_call_a_third_time_is_refused_with_a_hint() {
+    fn the_same_call_a_third_time_ends_the_attempt_and_the_retry_starts_fresh() {
         let rig = tool_rig(
             vec![
                 calls(vec![glob("src/**")]),
                 calls(vec![glob("src/**")]),
                 calls(vec![glob("src/**")]),
+                // attempt 2, a fresh conversation
                 calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            2,
+            ToolLimits::default(),
+        );
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 2 }
+        );
+        let stages: Vec<Stage> = rig
+            .observer
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                RunEvent::AttemptFailed(f) => Some(f.stage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stages, [Stage::Stuck]);
+        assert_eq!(
+            tool_log(&rig)[2],
+            ("glob".to_string(), ToolOutcome::Refused),
+            "the third call is recorded"
+        );
+        assert_eq!(
+            rig.requests.lock().unwrap().len(),
+            5,
+            "three turns in attempt 1, not a dozen"
+        );
+        assert_eq!(
+            rig.requests.lock().unwrap()[3].len(),
+            2,
+            "attempt 2 starts with no history"
+        );
+    }
+
+    #[test]
+    fn a_model_that_keeps_submitting_nothing_is_stopped_after_three_identical_empty_submissions() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![submit(&[])]),
+                calls(vec![submit(&[])]),
+                calls(vec![submit(&[])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        let result = rig.implementer.run_step(rig.dir.path(), &nav_step());
+        assert!(matches!(result, StepOutcome::Failed { attempts: 1, .. }), "{result:?}");
+        assert_eq!(rig.requests.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_stateless_answer_identical_to_the_files_on_disk_is_a_no_change_failure_not_a_pass() {
+        let rig = rig(
+            vec![
+                answer(&[("src/Existing.java", "same")]),
+                answer(&[("src/Existing.java", "v2")]),
+            ],
+            vec![],
+            vec![],
+            3,
+        );
+        std::fs::create_dir_all(rig.dir.path().join("src")).unwrap();
+        std::fs::write(rig.dir.path().join("src/Existing.java"), "same").unwrap();
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &step()),
+            StepOutcome::Passed { attempts: 2 }
+        );
+        assert!(
+            tags(&rig.observer).contains(&"attempt_failed:1:nochange".to_string()),
+            "{:?}",
+            tags(&rig.observer)
+        );
+        assert_eq!(
+            *rig.compile_calls.lock().unwrap(),
+            1,
+            "the no-op never reached the build"
+        );
+    }
+
+    #[test]
+    fn a_tool_submission_identical_to_disk_is_refused_in_the_conversation() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER)]),
+                calls(vec![submit(&[(GREETER, OLD_GREETER)])]),
+                calls(vec![read_file(GREETER_TEST)]),
                 calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
             ],
             vec![],
             1,
             ToolLimits::default(),
         );
-        rig.implementer.run_step(rig.dir.path(), &nav_step());
-        let log = tool_log(&rig);
-        assert_eq!(log[2], ("glob".to_string(), ToolOutcome::Refused));
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 1 }
+        );
         assert!(
-            tool_result(&rig, 2).contains("already made"),
+            tool_result(&rig, 1).contains("nothing would change"),
             "{}",
-            tool_result(&rig, 2)
+            tool_result(&rig, 1)
         );
     }
 

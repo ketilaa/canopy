@@ -19,6 +19,8 @@ pub enum Rejection {
     Unread(Vec<String>),
     /// Nothing was submitted.
     Empty,
+    /// Every submitted file is identical to what is already there.
+    NoChange,
     /// Production code changed and no test changed with it; holds the changed production paths.
     NoTest(Vec<String>),
     /// Production code changed and no changed test mentions it.
@@ -35,6 +37,10 @@ impl Rejection {
                  Call read_file on each one, then call submit_files again.",
                 paths.join(", ")
             ),
+            Rejection::NoChange => "Not submitted: every file you submitted is identical to what is already there, so \
+                 nothing would change. The task asks for a change: make it, with a test for it, and call \
+                 submit_files with the files that differ."
+                .to_string(),
             Rejection::Empty => "Not submitted: you submitted no files. If you have read what you need, write your \
                  change now: call submit_files with the complete content of every file you change, and a test for \
                  the behaviour."
@@ -95,16 +101,18 @@ pub fn check_submission(
     if !unread.is_empty() {
         return Err(Rejection::Unread(unread));
     }
-    if kind == StepKind::Refactor {
-        return Ok(());
-    }
-
     let changed: Vec<&(String, &str, bool)> = entries
         .iter()
         .filter(|(relative, content, exists)| {
             !*exists || std::fs::read_to_string(root.join(relative)).map_or(true, |on_disk| on_disk != *content)
         })
         .collect();
+    if changed.is_empty() {
+        return Err(Rejection::NoChange);
+    }
+    if kind == StepKind::Refactor {
+        return Ok(());
+    }
     let production_paths: Vec<String> = changed
         .iter()
         .filter(|(relative, _, _)| is_production(relative))
@@ -428,5 +436,48 @@ mod tests {
             StepKind::BehaviorChange,
         );
         assert_eq!(r, Ok(()));
+    }
+    #[test]
+    fn a_submission_identical_to_what_is_on_disk_changes_nothing_and_is_rejected() {
+        let dir = repo();
+        let on_disk = std::fs::read_to_string(dir.path().join(GREETER)).unwrap();
+        let r = check(&dir, &[(GREETER, &on_disk)], &[GREETER], StepKind::BehaviorChange);
+        assert_eq!(r, Err(Rejection::NoChange));
+        let message = r.unwrap_err().message();
+        assert!(
+            message.contains("identical") && message.contains("nothing would change"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_refactor_must_change_something_too() {
+        let dir = repo();
+        let on_disk = std::fs::read_to_string(dir.path().join(GREETER)).unwrap();
+        assert_eq!(
+            check(&dir, &[(GREETER, &on_disk)], &[GREETER], StepKind::Refactor),
+            Err(Rejection::NoChange)
+        );
+    }
+
+    #[test]
+    fn one_changed_file_among_identical_ones_is_a_change() {
+        let dir = repo();
+        let unchanged_test = std::fs::read_to_string(dir.path().join(GREETER_TEST)).unwrap();
+        let r = check(
+            &dir,
+            &[(GREETER, NEW_GREETER), (GREETER_TEST, &unchanged_test)],
+            &[GREETER, GREETER_TEST],
+            StepKind::Refactor,
+        );
+        assert_eq!(r, Ok(()));
+    }
+
+    #[test]
+    fn unread_files_are_still_reported_before_the_no_change_check() {
+        let dir = repo();
+        let on_disk = std::fs::read_to_string(dir.path().join(GREETER)).unwrap();
+        let r = check(&dir, &[(GREETER, &on_disk)], &[], StepKind::BehaviorChange);
+        assert_eq!(r, Err(Rejection::Unread(vec![GREETER.to_string()])));
     }
 }
