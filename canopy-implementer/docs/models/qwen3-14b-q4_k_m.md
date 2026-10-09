@@ -139,6 +139,22 @@ llama-server \
   `PriceCalculator.Order` type invented to make a call compile, and wrong expected values again.
   So the models behaviour is: it dithers while reading, and after a failed attempt it stops using the existing
   code and writes from imagination.
+- **confirmed** (step contract v2: the planner lists `modify`, `create` and `read_only` files per step, shown up
+  front, with a scope gate; the Implementer keeps its tools; harness `02105aa`, clean tree; batches
+  `2026-10-09T08-50-14` naming-planned x3 and `T08-54-35` vat-planned x5). **naming-planned 3/3** (no
+  regression). **vat-planned 0/5, but the failures moved.** Steps 1 and 2 passed on the first attempt in 5 of 5
+  runs (step 1 had failed in 5 of 5 under the previous contract), so the orientation failures (wrong class,
+  invented package, circling reads, unseen APIs) are gone. What remains is *updating existing tests whose
+  expected values changed*:
+  - Step 3, 4 of 5 runs: the production change was correct (`amountToCharge` returns `totalWithVatCents`), the
+    new example tests were added, but the old assertions (4000, 18000) were kept and the identical answer was
+    resubmitted three times, although the build said `expected <18000> but was <22500>`. The plan's examples
+    were for other orders than the ones in the existing tests, so the model was never told what the existing
+    tests should now expect, and it did not take the actual value from the feedback.
+  - Step 4, run 5: after a failed attempt the model **reverted the production change** and dropped the new
+    assertions, passed its own tests, and failed the hidden test (expected 5000, was 4000): the revert-to-pass
+    pattern again, this time in a step where other files still differed from disk, so the no-change gate did
+    not apply.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
