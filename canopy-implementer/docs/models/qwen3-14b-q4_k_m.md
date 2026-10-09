@@ -212,6 +212,16 @@ llama-server \
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (widgets-planned plan v5 + the no-test coverage-through-a-covered-class gate, harness `c031940`,
+  Java 21.0.7, clean; batch `2026-10-09T13-42-27`, 3 runs): **2/3 scored**, hidden test passed in both,
+  15 and 19 tests added; steps 1 to 3 first attempt in all three runs, step 5 first attempt in both runs that
+  reached it. Step 4 with the exact MockMvc setup: run 1 two attempts (the first a budget stop), run 3 three
+  attempts, run 2 failed. The gate no longer refused anything in this batch. The one remaining step-4 cause is
+  the same in all three runs: `WidgetControllerTest.java:17:80: cannot find symbol: class WidgetService`, a
+  missing import of a class in another package that the plan names; after that error the model repeated the
+  same glob three times (stuck) instead of adding the import. Totals for this plan so far: v2 0/3, v3 1/3,
+  v4 1/1 on JDK 25 and 0/3 on JDK 21, v5 2/3; the plan, the gate and the JDK changed between batches, so the
+  progression is not one variable.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
