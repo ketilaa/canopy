@@ -1,7 +1,20 @@
 id: vat
-story: >
+story: |
   Orders should include VAT at 25 percent: show it as its own line on the invoice, and make sure the
   total includes it.
+
+  Feature: VAT on orders
+    Scenario Outline: VAT is added to the order total
+      Given an order of <quantity> x "<item>" at <unit price>
+      When the invoice is produced
+      Then the invoice shows a VAT line of <vat>
+      And the total including VAT is <total>
+
+      Examples:
+        | quantity | item     | unit price | vat   | total  |
+        | 3        | Gizmo    | 10.00      | 7.50  | 37.50  |
+        | 5        | Sprocket | 30.00      | 33.75 | 168.75 |
+        | 1        | Washer   | 9.99       | 2.49  | 12.48  |
 steps:
   - id: vat-1-calculator
     instruction: >
@@ -9,17 +22,26 @@ steps:
       after the discount (subtotalCents minus discountCents), in cents, rounded down.
       totalWithVatCents(Order order) returns subtotalCents minus discountCents plus vatCents; compute it
       from those three methods and do not call totalCents. Do not change totalCents. Add tests for both
-      new methods to PriceCalculatorTest.
+      new methods to PriceCalculatorTest, using these examples (amounts in cents): an order of 3 Gizmo at
+      1000 has subtotal 3000, no discount, VAT 750 and total with VAT 3750; an order of 5 Sprocket at 3000
+      has subtotal 15000, discount 1500, VAT 3375 and total with VAT 16875; an order of 1 Washer at 999
+      has VAT 249 (rounded down) and total with VAT 1248.
   - id: vat-2-invoice
     instruction: >
       In InvoiceFormatter, add a line "VAT 25%: <amount>" after the subtotal and discount lines and before
       the total line, using vatCents, and make the "Total:" line show totalWithVatCents instead of
-      totalCents. Update InvoiceFormatterTest so that its expected invoices match.
+      totalCents. Update InvoiceFormatterTest so that its expected invoices match. For example the
+      invoice for 3 Gizmo at 10.00 is "Gizmo x3  30.00", "Subtotal: 30.00", "VAT 25%: 7.50",
+      "Total: 37.50", and the invoice for 5 Sprocket at 30.00 is "Sprocket x5  150.00",
+      "Subtotal: 150.00", "Discount: -15.00", "VAT 25%: 33.75", "Total: 168.75", each line ending with a
+      newline.
   - id: vat-3-charge
     instruction: >
       Make OrderService.amountToCharge return totalWithVatCents instead of totalCents. Update
-      OrderServiceTest to the new expected amounts.
+      OrderServiceTest to the new expected amounts. For example the amount to charge for 3 Gizmo at 10.00
+      is 3750 cents and for 5 Sprocket at 30.00 is 16875 cents.
   - id: vat-4-total
     instruction: >
       Change PriceCalculator.totalCents so that it returns totalWithVatCents(order), which includes VAT.
-      Update the tests in PriceCalculatorTest that expect the old totals.
+      Update the tests in PriceCalculatorTest that expect the old totals. For example totalCents for
+      3 Gizmo at 1000 is now 3750, and for 5 Sprocket at 3000 is now 16875.

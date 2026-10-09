@@ -157,4 +157,17 @@ steps:
         let unknown = "id: p\nsteps:\n  - {id: a, instruction: x, kind: rewrite}\n";
         assert!(matches!(Plan::from_yaml(unknown), Err(PlanError::Parse(_))));
     }
+    #[test]
+    fn every_plan_we_ship_for_a_dogfooding_task_is_valid() {
+        for (name, text) in [
+            ("vat", include_str!("../tasks/vat/plan.yaml")),
+            ("naming", include_str!("../tasks/naming/plan.yaml")),
+            ("widgets", include_str!("../tasks/widgets/plan.yaml")),
+        ] {
+            let plan = Plan::from_yaml(text).unwrap_or_else(|e| panic!("plan {name}: {e}"));
+            assert_eq!(plan.id, name);
+            assert!(plan.steps.len() >= 2, "plan {name} should have several small steps");
+            assert!(plan.story.is_some(), "plan {name} keeps its story for the record");
+        }
+    }
 }
