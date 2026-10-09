@@ -809,8 +809,15 @@ fn real_main() -> Result<(), String> {
         .ok()
         .and_then(|r| r.into_json().ok())
         .unwrap_or(json!(null));
+    // The JVM Maven runs on decides what compiles and what Mockito can mock.
+    let maven = std::process::Command::new("mvn")
+        .arg("-version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
     let batch = json!({
         "batch": batch_id,
+        "maven": maven,
         "started_at": now_iso(),
         "harness_commit": harness_commit.trim(),
         "harness_dirty": harness_dirty,
