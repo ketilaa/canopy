@@ -21,6 +21,8 @@ use canopy_implementer::llm::{LlmClient, ModelEndpoint, Sampling};
 use canopy_implementer::observe::{
     now_iso, Metrics, MetricsObserver, Observers, RecordingObserver, RunEvent, RunObserver, ToolOutcome, TraceWriter,
 };
+use canopy_implementer::orchestrator::Orchestrator;
+use canopy_implementer::plan::Plan;
 use serde_json::json;
 
 /// A step to run, the state to start it from, and how its result is scored.
@@ -257,6 +259,27 @@ total includes it.",
     untouched: &[],
 };
 
+/// The same story and scoring as `vat`, but a hand-written plan of small steps is run one after another.
+const VAT_PLANNED: Task = Task {
+    name: "vat-planned",
+    ..VAT
+};
+
+/// The same story and scoring as `naming`, run as a hand-written plan.
+const NAMING_PLANNED: Task = Task {
+    name: "naming-planned",
+    ..NAMING
+};
+
+/// The hand-written plan for a task, if it has one. The Implementer sees one step at a time, never the plan.
+fn plan_for(task_name: &str) -> Option<&'static str> {
+    match task_name {
+        "vat-planned" => Some(include_str!("../tasks/vat/plan.yaml")),
+        "naming-planned" => Some(include_str!("../tasks/naming/plan.yaml")),
+        _ => None,
+    }
+}
+
 fn task(name: &str) -> Result<Task, String> {
     match name {
         "create" => Ok(CREATE),
@@ -266,14 +289,16 @@ fn task(name: &str) -> Result<Task, String> {
         "hi" => Ok(HI),
         "naming" => Ok(NAMING),
         "vat" => Ok(VAT),
+        "vat-planned" => Ok(VAT_PLANNED),
+        "naming-planned" => Ok(NAMING_PLANNED),
         other => Err(format!(
-            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat"
+            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned"
         )),
     }
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
 
 struct Config {
     task: String,
@@ -404,6 +429,23 @@ impl RunObserver for Console {
                 t.arguments.chars().take(80).collect::<String>(),
                 t.outcome,
                 t.result.len()
+            ),
+            RunEvent::PlanStarted(p) => println!(
+                "== plan {}: {} step(s): {}",
+                p.plan_id,
+                p.step_ids.len(),
+                p.step_ids.join(", ")
+            ),
+            RunEvent::PlanFinished(p) => println!(
+                "== plan {}: {} ({} of {} steps){}",
+                p.plan_id,
+                if p.passed { "PASSED" } else { "STOPPED" },
+                p.steps_passed,
+                p.steps_total,
+                p.failed_step
+                    .as_ref()
+                    .map(|s| format!(", failed at {s}"))
+                    .unwrap_or_default()
             ),
             RunEvent::StepStarted(_) | RunEvent::AttemptStarted(_) => {}
         }
@@ -540,23 +582,50 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         Implementer::new(Box::new(client), Box::new(build), observers.clone(), config.attempts)
     };
 
-    let step = StepRequest {
-        id: format!("greeter-{}", task.name),
-        instruction: task.instruction.into(),
-        context: task.context.into(),
-        files: task.files.iter().map(|f| f.to_string()).collect(),
-        kind: Default::default(),
-    };
     let started = Instant::now();
-    let outcome = implementer.run_step(&config.repo, &step);
+    let (passed, attempts, last_failure, plan_summary) = match plan_for(task.name) {
+        Some(yaml) => {
+            let plan = Plan::from_yaml(yaml).map_err(|e| e.to_string())?;
+            let outcome =
+                Orchestrator::new(Box::new(implementer), observers.clone()).run(&config.repo, &plan, task.context);
+            let attempts_of = |o: &StepOutcome| match o {
+                StepOutcome::Passed { attempts } | StepOutcome::Failed { attempts, .. } => *attempts,
+            };
+            let attempts: u32 = outcome.results.iter().map(|r| attempts_of(&r.outcome)).sum();
+            let last_failure = outcome.results.last().and_then(|r| match &r.outcome {
+                StepOutcome::Failed { last_failure, .. } => Some(last_failure.clone()),
+                StepOutcome::Passed { .. } => None,
+            });
+            let summary = json!({
+                "id": plan.id,
+                "steps": outcome.results.iter().map(|r| json!({
+                    "id": r.id,
+                    "passed": matches!(r.outcome, StepOutcome::Passed { .. }),
+                    "attempts": attempts_of(&r.outcome),
+                })).collect::<Vec<_>>(),
+                "skipped": outcome.skipped,
+            });
+            (outcome.passed(), attempts, last_failure, summary)
+        }
+        None => {
+            let step = StepRequest {
+                id: format!("greeter-{}", task.name),
+                instruction: task.instruction.into(),
+                context: task.context.into(),
+                files: task.files.iter().map(|f| f.to_string()).collect(),
+                kind: Default::default(),
+            };
+            match implementer.run_step(&config.repo, &step) {
+                StepOutcome::Passed { attempts } => (true, attempts, None, serde_json::Value::Null),
+                StepOutcome::Failed { attempts, last_failure } => {
+                    (false, attempts, Some(last_failure), serde_json::Value::Null)
+                }
+            }
+        }
+    };
     let step_ms = started.elapsed().as_millis() as u64;
     let metrics_after_step = metrics.snapshot();
     let nav = navigation(&recorder.events());
-
-    let (passed, attempts) = match &outcome {
-        StepOutcome::Passed { attempts } => (true, *attempts),
-        StepOutcome::Failed { attempts, .. } => (false, *attempts),
-    };
 
     // What the run left behind, before the hidden test is added.
     let own_tests = count_own_tests(&config.repo);
@@ -603,7 +672,8 @@ tests added: {tests_added} (need {}); scored: {scored}",
         "run": n,
         "passed": passed,
         "attempts": attempts,
-        "last_failure": match &outcome { StepOutcome::Failed { last_failure, .. } => json!(last_failure), _ => json!(null) },
+        "last_failure": last_failure,
+        "plan": plan_summary,
         "step_ms": step_ms,
         "acceptance": acceptance,
         "acceptance_digest": acceptance_digest,

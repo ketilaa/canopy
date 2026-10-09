@@ -18,6 +18,7 @@ use crate::observe::{
     AttemptFailed, AttemptStarted, FilesWritten, RunEvent, RunObserver, Stage, StepFinished, StepStarted, ToolCalled,
     ToolOutcome, WorkspaceRestored,
 };
+use crate::orchestrator::StepRunner;
 use crate::prompt;
 use crate::snapshot::Snapshot;
 use crate::tools::ToolBox;
@@ -34,7 +35,8 @@ pub struct StepRequest {
 }
 
 /// What kind of change a step is, declared by the plan and never by the model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepKind {
     /// New or changed behaviour: production code must come with a test that mentions it.
     #[default]
@@ -436,6 +438,12 @@ impl Implementer {
             return Err(failure(Stage::Test, feedback, Some(files)));
         }
         Ok(())
+    }
+}
+
+impl StepRunner for Implementer {
+    fn run_step(&self, root: &Path, step: &StepRequest) -> StepOutcome {
+        Implementer::run_step(self, root, step)
     }
 }
 

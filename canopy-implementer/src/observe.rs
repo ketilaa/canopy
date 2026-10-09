@@ -169,6 +169,24 @@ pub struct StepFinished {
     pub elapsed_ms: u64,
 }
 
+/// A plan began: the steps it will run, in order.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlanStarted {
+    pub plan_id: String,
+    pub step_ids: Vec<String>,
+}
+
+/// A plan ended, either having run every step or having stopped at the first one that failed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlanFinished {
+    pub plan_id: String,
+    pub passed: bool,
+    pub steps_passed: usize,
+    pub steps_total: usize,
+    pub failed_step: Option<String>,
+    pub elapsed_ms: u64,
+}
+
 /// A tool call the model made, and what the harness answered.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolCalled {
@@ -190,6 +208,8 @@ pub enum RunEvent {
     LlmResponseReceived(LlmResponseReceived),
     LlmCallFailed(LlmCallFailed),
     ToolCalled(ToolCalled),
+    PlanStarted(PlanStarted),
+    PlanFinished(PlanFinished),
     CommandRan(CommandRan),
     StepStarted(StepStarted),
     AttemptStarted(AttemptStarted),
@@ -492,7 +512,11 @@ impl RunObserver for MetricsObserver {
                     ToolOutcome::Error => m.tool_errors += 1,
                 }
             }
-            RunEvent::FilesWritten(_) | RunEvent::WorkspaceRestored(_) | RunEvent::StepStarted(_) => {}
+            RunEvent::FilesWritten(_)
+            | RunEvent::WorkspaceRestored(_)
+            | RunEvent::StepStarted(_)
+            | RunEvent::PlanStarted(_)
+            | RunEvent::PlanFinished(_) => {}
         }
     }
 }

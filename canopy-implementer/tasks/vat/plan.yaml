@@ -1,0 +1,25 @@
+id: vat
+story: >
+  Orders should include VAT at 25 percent: show it as its own line on the invoice, and make sure the
+  total includes it.
+steps:
+  - id: vat-1-calculator
+    instruction: >
+      Add two methods to PriceCalculator. vatCents(Order order) returns 25 percent of the order amount
+      after the discount (subtotalCents minus discountCents), in cents, rounded down.
+      totalWithVatCents(Order order) returns subtotalCents minus discountCents plus vatCents; compute it
+      from those three methods and do not call totalCents. Do not change totalCents. Add tests for both
+      new methods to PriceCalculatorTest.
+  - id: vat-2-invoice
+    instruction: >
+      In InvoiceFormatter, add a line "VAT 25%: <amount>" after the subtotal and discount lines and before
+      the total line, using vatCents, and make the "Total:" line show totalWithVatCents instead of
+      totalCents. Update InvoiceFormatterTest so that its expected invoices match.
+  - id: vat-3-charge
+    instruction: >
+      Make OrderService.amountToCharge return totalWithVatCents instead of totalCents. Update
+      OrderServiceTest to the new expected amounts.
+  - id: vat-4-total
+    instruction: >
+      Change PriceCalculator.totalCents so that it returns totalWithVatCents(order), which includes VAT.
+      Update the tests in PriceCalculatorTest that expect the old totals.

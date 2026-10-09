@@ -14,6 +14,8 @@ pub mod hints;
 pub mod implementer;
 pub mod llm;
 pub mod observe;
+pub mod orchestrator;
+pub mod plan;
 pub mod prompt;
 pub mod sandbox;
 pub mod snapshot;
