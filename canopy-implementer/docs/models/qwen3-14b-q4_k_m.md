@@ -191,6 +191,14 @@ llama-server \
   (constructors, how a side effect is observed), the concrete inputs and expected results of every test
   (invalid inputs listed, existing assertions restated), and a step small enough that its answer fits the
   completion cap.
+- **confirmed** (widgets-planned plan v3, five steps: the controller split into a 201 step and a 400 modify step,
+  step 3 lists its invalid test inputs; harness `f7049e4`, clean; batch `2026-10-09T11-52-14`, 3 runs):
+  **1/3 scored** (run 3 passed all five steps and the hidden HTTP test, 20 tests added). Steps 1 to 3 passed in
+  every run, step 3 on the first attempt in all three, so naming the invalid inputs worked for that step.
+  Runs 1 and 2 stopped at step 4: run 2 wrote `@WebMvcTest` with `@MockBean` although the step said
+  `standaloneSetup`, and Mockito cannot mock `WidgetService` on this Java 25 JVM (the context never loads, the
+  same error on attempts 2 and 3); run 1 had a missing `HttpStatus` import, a glob loop (stuck) and an
+  unclosed string literal in a JSON body. Step 4 as worded left the test setup to the model.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.

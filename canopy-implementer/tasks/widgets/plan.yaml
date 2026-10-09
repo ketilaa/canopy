@@ -69,10 +69,13 @@ steps:
       with a constructor that takes a WidgetService and no other dependency. POST /widgets takes a JSON
       body with a name, read into a small record CreateWidgetRequest(String name) in the same package,
       calls WidgetService.create, and answers status 201 with the created widget as JSON containing id
-      and name. The controller must use only the service and never the repository. Add
-      WidgetControllerTest, using MockMvc with MockMvcBuilders.standaloneSetup over a WidgetController
-      built on new WidgetService(new InMemoryWidgetRepository()), with one test: posting the name
-      "Alpha" gives status 201 and a JSON body with an id and the name "Alpha".
+      and name, using ResponseEntity and org.springframework.http.HttpStatus. The controller must use only
+      the service and never the repository. Add WidgetControllerTest as a plain JUnit 5 test class with no
+      Spring annotations and no Mockito. Build the MockMvc like this: MockMvc mvc =
+      MockMvcBuilders.standaloneSetup(new WidgetController(new WidgetService(new InMemoryWidgetRepository()))).build();
+      Write one test: perform post("/widgets") with contentType(MediaType.APPLICATION_JSON) and the content
+      "{\"name\":\"Alpha\"}", and expect status().isCreated(), jsonPath("$.id").exists() and
+      jsonPath("$.name").value("Alpha").
     create:
       - src/main/java/com/example/widgets/web/CreateWidgetRequest.java
       - src/main/java/com/example/widgets/web/WidgetController.java
