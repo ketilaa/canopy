@@ -199,6 +199,19 @@ llama-server \
   `standaloneSetup`, and Mockito cannot mock `WidgetService` on this Java 25 JVM (the context never loads, the
   same error on attempts 2 and 3); run 1 had a missing `HttpStatus` import, a glob loop (stuck) and an
   unclosed string literal in a JSON body. Step 4 as worded left the test setup to the model.
+- **confirmed** (widgets-planned plan v4, step 4 states the MockMvc setup, JSON literal and import). Not a clean
+  batch: the first v4 batch was stopped when the JDK default changed mid-sweep (run 1, JDK 25: 5/5 steps, hidden
+  test passed, scored; run 2 straddled the switch and is discarded). Batch `2026-10-09T12-59-50`, harness
+  `0b5a027`+ (batch record now carries `mvn -version`: Java 21.0.7), 3 runs: **0/3 scored**. Step 3 passed first
+  attempt in 2/2 runs that reached it; run 1 failed at step 1 (a JSON string with a bad quote, then a missing
+  `UUID` import, then a budget stop); runs 2 and 3 failed at step 4:
+  - attempt 1 of step 4 ended in `budget` in both: the first submission was refused by the no-test gate ("No
+    changed test mentions CreateWidgetRequest"), a request record the controller test only reaches through JSON,
+    after which the model went looking for its own refused files (read_file on paths that did not exist, glob,
+    repeat) until 12 tool calls were used. The gate is a deterministic audit that gives a false refusal for a
+    class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
+  - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
+    step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
