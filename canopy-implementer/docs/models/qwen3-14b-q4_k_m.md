@@ -127,6 +127,18 @@ llama-server \
   - *Observation*: an expected value in a test is only as good as whoever computed it; when the model computes
     it, the test can pass or fail for reasons unrelated to the requirement. Concrete examples belong in the
     plan step (or the Gherkin), supplied by whoever wrote the spec.
+- **confirmed** (vat plan v2, concrete examples in every step with numbers different from the hidden test's;
+  harness `acd85e9`, clean tree, batch `2026-10-09T07-54-05`, 5 runs): **0/5, and all 5 runs stopped at step 1**
+  (v1 got through step 1 in 2 of 5; at n=5 that is within noise, so the honest reading is that the examples did
+  not help). Failures per attempt, 15 attempts: attempt 1 ended on `stuck` (the same `read_file` or `glob` call
+  three times) or `budget` in 5 of 5 runs; attempt 2 was a compile error in 4 of 5 runs, every one the same
+  thing: the model wrote a **new** `PriceCalculator.java` under an invented package
+  (`com/example/pricecalculator/`), where `Order` cannot be found, instead of changing the existing one in
+  `com/example/shop/`. The read-before-mutate gate does not apply, because a file at an invented path does not
+  exist yet. Other failures: `new Order()` with no arguments in a test (the record needs a list of items), a nested
+  `PriceCalculator.Order` type invented to make a call compile, and wrong expected values again.
+  So the models behaviour is: it dithers while reading, and after a failed attempt it stops using the existing
+  code and writes from imagination.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
