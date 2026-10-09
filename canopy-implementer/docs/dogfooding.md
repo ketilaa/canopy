@@ -15,6 +15,7 @@ Reset a repository to a state: `git checkout -q -f --detach <tag> && git clean -
 | `java-greeter` | `baseline-00-scaffold`, `candidate-01-greeter` | The empty scaffold, and a `Greeter` with `GreeterTest` that the Implementer itself produced (a real run's patch, applied unchanged). |
 | `java-naming` | `baseline-00-naming` | `Greeter` delegates how a name is shown to `format.NameFormatter`. `legacy.LegacyGreeter` looks similar, is marked do-not-change, and its test pins its exact output. |
 | `java-shop` | `baseline-00-shop` | `PriceCalculator` computes an order total that `InvoiceFormatter` prints and `OrderService` charges; the invoice test pins the exact output. |
+| `java-widgets` | `baseline-00-widgets` | An empty Spring Boot web application (application class and a web starter). The base for a full vertical slice built as a plan: domain object, in-memory repository, service, REST controller. |
 
 ## Tasks
 
@@ -29,6 +30,16 @@ Run with `cargo run -p canopy-implementer --example run_step -- --task <name> --
 | `hi` | `java-greeter@candidate-01-greeter` | "Greet with `Hi` instead of `Hello`." | A change that contradicts existing tests, which must be updated, not deleted. |
 | `naming` | `java-naming@baseline-00-naming` | "Names should be trimmed before the greeting is built." | Indirection through a helper; a do-not-change look-alike with its own test; a null-handling trap in a careless fix. |
 | `vat` | `java-shop@baseline-00-shop` | "Orders should include VAT at 25 percent: show it as its own line on the invoice, and make sure the total includes it." | A cross-file ripple (calculator, invoice, charge) that contradicts three existing tests. |
+
+The planned tasks run a hand-written plan (`tasks/<name>/plan.yaml`) of small steps, one after another, each on top of the last, instead of one request:
+
+| Task | State | Plan |
+|---|---|---|
+| `naming-planned` | `java-naming@baseline-00-naming` | 2 steps: change `NameFormatter`, then add a `Greeter` test. Same hidden test and scoring as `naming`. |
+| `vat-planned` | `java-shop@baseline-00-shop` | 4 steps in expand-then-contract order: add the new calculator methods, switch the invoice, switch the charge, then switch the old total. Same hidden test and scoring as `vat`. |
+| `widgets-planned` | `java-widgets@baseline-00-widgets` | 4 steps: domain record, in-memory repository, service, REST controller. The plan and its hidden test (the real application over HTTP) are written and validated; runner wiring and structure checks are pending. |
+
+A plan is validated before any model run by applying a reference change step by step in a scratch copy: the build must be green after every step and the hidden test must pass at the end.
 
 `nav`, `pasted`, `hi`, `naming` and `vat` use tools. Every request is a plain sentence with no file list.
 

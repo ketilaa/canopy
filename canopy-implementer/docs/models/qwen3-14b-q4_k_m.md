@@ -107,6 +107,26 @@ llama-server \
     shape writes anything.
   - *Observation*: the model avoids producing the long submission: after reading everything it emits cheap calls
     (re-reads, empty submits). Both vat and naming fail to a no-op or a stall, not to a wrong answer.
+- **confirmed** (hand-written plans run by the mini orchestrator, harness `7ccae36`, 5 runs each; batches
+  `2026-10-09T07-08-05` naming-planned and `T07-15-00` vat-planned; the vat-planned batch records `dirty=true`
+  only because untracked plan files for a different task existed in the crate while it ran; they are not
+  compiled into the runner and cannot have changed behaviour). Scored passes: **naming-planned 5/5**
+  (against 1/5 and 0/5 as a single step; 2 steps, both first attempt, about 80 s, 7 tool calls, every run
+  identical) and **vat-planned 0/5** (4 of 20 possible steps passed: runs 1 and 5 passed steps 1 and 2 and failed
+  step 3; runs 2 to 4 failed step 1). Decomposition fixed the task whose difficulty was *where* to put a change;
+  it did not fix the task whose difficulty is *numbers and unseen APIs*. The vat-planned failures:
+  - *Wrong expected values in the model's own tests* (3 of 5 runs: steps 3 in runs 1 and 5, step 1 in run 2).
+    The production code was correct (5000 and 22500, matching a reference solution) but the tests expected
+    4400 and 20700, or 0 for a VAT of 1000. The feedback said `expected <4400> but was <5000>` and the model
+    resubmitted the same wrong numbers three times. It cannot do the arithmetic, and it did not use the actual
+    value it was given.
+  - *Invented API and paths* (2 of 5 runs, step 1): a `PriceCalculator.java` written under a `demo` package that
+    does not exist in this repository, then a call to `order.getItems()` on a record whose accessor is `items()`.
+    The gate requires that a file being changed was read; nothing requires that the types a new line depends on
+    were read.
+  - *Observation*: an expected value in a test is only as good as whoever computed it; when the model computes
+    it, the test can pass or fail for reasons unrelated to the requirement. Concrete examples belong in the
+    plan step (or the Gherkin), supplied by whoever wrote the spec.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
