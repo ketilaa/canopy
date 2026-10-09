@@ -232,10 +232,14 @@ pub fn check_submission(
         .filter(|(relative, _, _)| is_production(relative))
         .map(|(relative, _, _)| relative.clone())
         .collect();
-    let production: Vec<String> = production_paths
+    let production: Vec<(String, &str)> = changed
         .iter()
-        .filter_map(|relative| Path::new(relative).file_stem())
-        .map(|stem| stem.to_string_lossy().into_owned())
+        .filter(|(relative, _, _)| is_production(relative))
+        .filter_map(|(relative, content, _)| {
+            Path::new(relative)
+                .file_stem()
+                .map(|stem| (stem.to_string_lossy().into_owned(), *content))
+        })
         .collect();
     if production.is_empty() {
         return Ok(());
@@ -248,14 +252,45 @@ pub fn check_submission(
     if tests.is_empty() {
         return Err(Rejection::NoTest(production_paths));
     }
-    let unrelated: Vec<String> = production
-        .into_iter()
-        .filter(|class| !tests.iter().any(|test| mentions_word(test, class)))
-        .collect();
+    let unrelated = uncovered(&production, &tests);
     if unrelated.is_empty() {
         Ok(())
     } else {
         Err(Rejection::TestsUnrelated(unrelated))
+    }
+}
+
+/// The changed production classes no changed test reaches. A class is reached when a changed test mentions it,
+/// or when a changed production class that is itself reached mentions it (a request record the test only
+/// exercises through the controller that takes it). Only classes changed in this submission count.
+fn uncovered(production: &[(String, &str)], tests: &[&str]) -> Vec<String> {
+    let mut covered: Vec<bool> = production
+        .iter()
+        .map(|(class, _)| tests.iter().any(|test| mentions_word(test, class)))
+        .collect();
+    loop {
+        let mut grew = false;
+        for i in 0..production.len() {
+            if covered[i] {
+                continue;
+            }
+            let reached = production
+                .iter()
+                .zip(&covered)
+                .any(|((_, content), is_covered)| *is_covered && mentions_word(content, &production[i].0));
+            if reached {
+                covered[i] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            return production
+                .iter()
+                .zip(&covered)
+                .filter(|(_, is_covered)| !**is_covered)
+                .map(|((class, _), _)| class.clone())
+                .collect();
+        }
     }
 }
 
@@ -524,6 +559,81 @@ mod tests {
             StepKind::BehaviorChange,
         );
         assert_eq!(r, Err(Rejection::TestsUnrelated(vec!["Greeter".to_string()])));
+    }
+
+    const REQUEST: &str = "src/main/java/com/example/Request.java";
+    const CONTROLLER: &str = "src/main/java/com/example/Controller.java";
+    const CONTROLLER_TEST: &str = "src/test/java/com/example/ControllerTest.java";
+
+    #[test]
+    fn a_class_used_only_by_a_covered_changed_class_counts_as_covered() {
+        let dir = repo();
+        let r = check(
+            &dir,
+            &[
+                (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
+                (CONTROLLER, "package com.example;\nclass Controller { void post(Request r) { } }\n"),
+                (CONTROLLER_TEST, "package com.example;\nclass ControllerTest { void t() { new Controller(); } }\n"),
+            ],
+            &[],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(r, Ok(()));
+    }
+
+    #[test]
+    fn coverage_through_another_class_follows_a_chain() {
+        let dir = repo();
+        let r = check(
+            &dir,
+            &[
+                (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
+                (
+                    "src/main/java/com/example/Mapper.java",
+                    "package com.example;\nclass Mapper { Request map() { return null; } }\n",
+                ),
+                (CONTROLLER, "package com.example;\nclass Controller { Mapper m; }\n"),
+                (CONTROLLER_TEST, "package com.example;\nclass ControllerTest { void t() { new Controller(); } }\n"),
+            ],
+            &[],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(r, Ok(()));
+    }
+
+    #[test]
+    fn a_class_used_only_by_an_uncovered_changed_class_is_still_unrelated() {
+        let dir = repo();
+        let r = check(
+            &dir,
+            &[
+                (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
+                (CONTROLLER, "package com.example;\nclass Controller { void post(Request r) { } }\n"),
+                ("src/test/java/com/example/OtherTest.java", "class OtherTest { }\n"),
+            ],
+            &[],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(
+            r,
+            Err(Rejection::TestsUnrelated(vec!["Request".to_string(), "Controller".to_string()]))
+        );
+    }
+
+    #[test]
+    fn a_class_mentioned_only_by_an_unchanged_class_is_not_covered() {
+        let dir = repo();
+        // Greeter exists on disk and is not in the submission; Request is new and mentioned by nobody changed.
+        let r = check(
+            &dir,
+            &[
+                (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
+                (GREETER_TEST, "package com.example;\nclass GreeterTest { void t() { new Greeter(); new Greeter(); } }\n"),
+            ],
+            &[GREETER_TEST],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(r, Err(Rejection::TestsUnrelated(vec!["Request".to_string()])));
     }
 
     #[test]
