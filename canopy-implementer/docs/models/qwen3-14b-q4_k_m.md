@@ -155,6 +155,23 @@ llama-server \
     assertions, passed its own tests, and failed the hidden test (expected 5000, was 4000): the revert-to-pass
     pattern again, this time in a step where other files still differed from disk, so the no-change gate did
     not apply.
+- **confirmed** (vat plan v3 plus the "modify means must change" gate; harness `ee6d5c0`, clean tree, batch
+  `2026-10-09T10-06-29`, 5 runs): **vat-planned 5/5**, every step on the first attempt in every run (20 of 20 step
+  passes, 0 failed attempts), hidden acceptance passed in all five, 345 to 390 s per run. Progression on the same
+  task: 0/5 as a single step, 0/5 as plan v1 (4 of 20 steps), 0/5 as plan v2 with examples, 0/5 as plan v2 with
+  scoped files (10 of 20 steps), **5/5** with plan v3.
+  What can and cannot be concluded:
+  - The "modify means must change" gate fired **0 times**, so it contributed nothing to this result; it is
+    verified by unit tests only.
+  - The change that moved the result is the plan text: steps 3 and 4 now state what the existing tests change to
+    (5000 instead of 4000, 22500 instead of 18000). Step 3 had failed 3 attempts in 4 of 5 runs without it and
+    passed first attempt in 5 of 5 with it. That is a large effect, but it comes from a plan that was rewritten
+    after seeing the failures, so it shows what a good plan contains, not that a planner would write it.
+  - The stated figures coincide with the hidden test's, because the hidden test reuses the existing fixtures.
+    The plan's new examples use different numbers and the hidden test checks the rule, so copying an example
+    cannot pass.
+  - The model still did no arithmetic of its own here: the planner supplied the figures. Whether a planner can
+    derive them is the open question.
 - **confirmed** (same batches): the read-before-mutate gate fired live: on a retry in a fresh conversation the model
   skipped reading and tried to submit, and was refused with the right reason. The no-test gate also fired (hi). The
   empty-submission refusal is the gate that fires most.
