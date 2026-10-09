@@ -6,6 +6,13 @@ steps:
       In NameFormatter.display, remove leading and trailing whitespace from the name before checking
       whether it is blank and before capitalizing it, so that display("  ada ") returns "Ada". A null or
       blank name must still return "guest". Add a test for a padded name to NameFormatterTest.
+    modify:
+      - src/main/java/com/example/greeting/format/NameFormatter.java
+      - src/test/java/com/example/greeting/format/NameFormatterTest.java
   - id: naming-2-greeter
     instruction: >
       Add a test to GreeterTest that checks greet("  ada ") returns "Hello, Ada!".
+    modify:
+      - src/test/java/com/example/greeting/GreeterTest.java
+    read_only:
+      - src/main/java/com/example/greeting/Greeter.java

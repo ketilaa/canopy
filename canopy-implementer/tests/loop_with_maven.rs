@@ -102,6 +102,7 @@ fn a_compile_error_from_real_maven_is_fed_back_and_fixed() {
         context: "Root package: com.example".into(),
         files: vec![],
         kind: Default::default(),
+        scope: Default::default(),
     };
     let outcome = implementer.run_step(dir.path(), &step);
 

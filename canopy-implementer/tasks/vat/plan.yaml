@@ -26,6 +26,12 @@ steps:
       1000 has subtotal 3000, no discount, VAT 750 and total with VAT 3750; an order of 5 Sprocket at 3000
       has subtotal 15000, discount 1500, VAT 3375 and total with VAT 16875; an order of 1 Washer at 999
       has VAT 249 (rounded down) and total with VAT 1248.
+    modify:
+      - src/main/java/com/example/shop/PriceCalculator.java
+      - src/test/java/com/example/shop/PriceCalculatorTest.java
+    read_only:
+      - src/main/java/com/example/shop/Order.java
+      - src/main/java/com/example/shop/Item.java
   - id: vat-2-invoice
     instruction: >
       In InvoiceFormatter, add a line "VAT 25%: <amount>" after the subtotal and discount lines and before
@@ -35,13 +41,33 @@ steps:
       "Total: 37.50", and the invoice for 5 Sprocket at 30.00 is "Sprocket x5  150.00",
       "Subtotal: 150.00", "Discount: -15.00", "VAT 25%: 33.75", "Total: 168.75", each line ending with a
       newline.
+    modify:
+      - src/main/java/com/example/shop/InvoiceFormatter.java
+      - src/test/java/com/example/shop/InvoiceFormatterTest.java
+    read_only:
+      - src/main/java/com/example/shop/PriceCalculator.java
+      - src/main/java/com/example/shop/Order.java
+      - src/main/java/com/example/shop/Item.java
   - id: vat-3-charge
     instruction: >
       Make OrderService.amountToCharge return totalWithVatCents instead of totalCents. Update
       OrderServiceTest to the new expected amounts. For example the amount to charge for 3 Gizmo at 10.00
       is 3750 cents and for 5 Sprocket at 30.00 is 16875 cents.
+    modify:
+      - src/main/java/com/example/shop/OrderService.java
+      - src/test/java/com/example/shop/OrderServiceTest.java
+    read_only:
+      - src/main/java/com/example/shop/PriceCalculator.java
+      - src/main/java/com/example/shop/Order.java
+      - src/main/java/com/example/shop/Item.java
   - id: vat-4-total
     instruction: >
       Change PriceCalculator.totalCents so that it returns totalWithVatCents(order), which includes VAT.
       Update the tests in PriceCalculatorTest that expect the old totals. For example totalCents for
       3 Gizmo at 1000 is now 3750, and for 5 Sprocket at 3000 is now 16875.
+    modify:
+      - src/main/java/com/example/shop/PriceCalculator.java
+      - src/test/java/com/example/shop/PriceCalculatorTest.java
+    read_only:
+      - src/main/java/com/example/shop/Order.java
+      - src/main/java/com/example/shop/Item.java

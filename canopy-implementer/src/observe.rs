@@ -184,6 +184,8 @@ pub struct PlanFinished {
     pub steps_passed: usize,
     pub steps_total: usize,
     pub failed_step: Option<String>,
+    /// Problems found with the plan before any step ran.
+    pub issues: Vec<String>,
     pub elapsed_ms: u64,
 }
 

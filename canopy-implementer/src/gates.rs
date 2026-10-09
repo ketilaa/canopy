@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::files::GeneratedFiles;
-use crate::implementer::StepKind;
+use crate::implementer::{Scope, StepKind};
 use crate::sandbox::RepoPath;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +19,12 @@ pub enum Rejection {
     Unread(Vec<String>),
     /// Nothing was submitted.
     Empty,
+    /// Files outside the step's scope.
+    OutOfScope { paths: Vec<String>, scope: Scope },
+    /// Files the step must create that were not submitted.
+    MissingCreate(Vec<String>),
+    /// Files the step must create that already exist.
+    CreateExists(Vec<String>),
     /// Every submitted file is identical to what is already there.
     NoChange,
     /// Production code changed and no test changed with it; holds the changed production paths.
@@ -35,6 +41,36 @@ impl Rejection {
             Rejection::Unread(paths) => format!(
                 "Not submitted. These files already exist and you have not read them: {}. \
                  Call read_file on each one, then call submit_files again.",
+                paths.join(", ")
+            ),
+            Rejection::OutOfScope { paths, scope } => {
+                let list = |items: &[String]| {
+                    if items.is_empty() {
+                        "nothing".to_string()
+                    } else {
+                        items.join(", ")
+                    }
+                };
+                format!(
+                    "Not submitted: {} not among the files for this step. You may only change {} and create {}. \
+                     Submit only those files, each at exactly its path.",
+                    if paths.len() == 1 {
+                        format!("{} is", paths[0])
+                    } else {
+                        format!("{} are", paths.join(", "))
+                    },
+                    list(&scope.modify),
+                    list(&scope.create)
+                )
+            }
+            Rejection::MissingCreate(paths) => format!(
+                "Not submitted: you did not create {}. This step requires each of them, at exactly that path. \
+                 Submit them together with your other files.",
+                paths.join(", ")
+            ),
+            Rejection::CreateExists(paths) => format!(
+                "Not submitted: {} already exists, but this step is meant to create it. Change the files you \
+                 were given instead of creating it again.",
                 paths.join(", ")
             ),
             Rejection::NoChange => "Not submitted: every file you submitted is identical to what is already there, so \
@@ -67,6 +103,50 @@ impl Rejection {
             ),
         }
     }
+}
+
+/// Checks a submission against the files the planner allowed this step to touch.
+pub fn check_scope(files: &GeneratedFiles, scope: &Scope, root: &Path) -> Result<(), Rejection> {
+    let submitted: Vec<String> = files
+        .files
+        .iter()
+        .map(|f| {
+            RepoPath::parse(&f.path)
+                .map(|p| p.as_str())
+                .unwrap_or_else(|_| f.path.clone())
+        })
+        .collect();
+    let allowed: BTreeSet<&str> = scope.modify.iter().chain(&scope.create).map(String::as_str).collect();
+    let outside: Vec<String> = submitted
+        .iter()
+        .filter(|p| !allowed.contains(p.as_str()))
+        .cloned()
+        .collect();
+    if !outside.is_empty() {
+        return Err(Rejection::OutOfScope {
+            paths: outside,
+            scope: scope.clone(),
+        });
+    }
+    let missing: Vec<String> = scope
+        .create
+        .iter()
+        .filter(|p| !submitted.contains(p))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        return Err(Rejection::MissingCreate(missing));
+    }
+    let existing: Vec<String> = scope
+        .create
+        .iter()
+        .filter(|p| std::fs::symlink_metadata(root.join(p)).is_ok())
+        .cloned()
+        .collect();
+    if !existing.is_empty() {
+        return Err(Rejection::CreateExists(existing));
+    }
+    Ok(())
 }
 
 /// Checks a submission against the repository at `root`. `has_read` says whether a normalised
@@ -479,5 +559,86 @@ mod tests {
         let on_disk = std::fs::read_to_string(dir.path().join(GREETER)).unwrap();
         let r = check(&dir, &[(GREETER, &on_disk)], &[], StepKind::BehaviorChange);
         assert_eq!(r, Err(Rejection::Unread(vec![GREETER.to_string()])));
+    }
+    fn scope(modify: &[&str], create: &[&str]) -> Scope {
+        Scope {
+            modify: modify.iter().map(|s| s.to_string()).collect(),
+            create: create.iter().map(|s| s.to_string()).collect(),
+            read_only: vec![],
+        }
+    }
+
+    const FAREWELL: &str = "src/main/java/com/example/Farewell.java";
+
+    #[test]
+    fn a_submission_inside_the_scope_is_fine() {
+        let dir = repo();
+        let r = check_scope(
+            &files(&[
+                (GREETER, NEW_GREETER),
+                (GREETER_TEST, NEW_TEST),
+                (FAREWELL, "class Farewell {}"),
+            ]),
+            &scope(&[GREETER, GREETER_TEST], &[FAREWELL]),
+            dir.path(),
+        );
+        assert_eq!(r, Ok(()));
+    }
+
+    #[test]
+    fn a_file_outside_the_scope_is_refused_and_the_message_lists_what_is_allowed() {
+        let dir = repo();
+        let r = check_scope(
+            &files(&[
+                (GREETER, NEW_GREETER),
+                ("src/main/java/com/other/Invented.java", "class Invented {}"),
+            ]),
+            &scope(&[GREETER], &[]),
+            dir.path(),
+        );
+        let Err(rejection @ Rejection::OutOfScope { .. }) = r else {
+            panic!("{r:?}")
+        };
+        let message = rejection.message();
+        assert!(
+            message.contains("src/main/java/com/other/Invented.java") && message.contains("not among the files"),
+            "{message}"
+        );
+        assert!(message.contains(GREETER), "the allowed files are named: {message}");
+    }
+
+    #[test]
+    fn a_path_in_another_spelling_still_matches_the_scope() {
+        let dir = repo();
+        let r = check_scope(
+            &files(&[(&format!("./{GREETER}"), NEW_GREETER)]),
+            &scope(&[GREETER], &[]),
+            dir.path(),
+        );
+        assert_eq!(r, Ok(()));
+    }
+
+    #[test]
+    fn a_file_the_step_must_create_but_the_submission_lacks_is_refused() {
+        let dir = repo();
+        let r = check_scope(
+            &files(&[(GREETER, NEW_GREETER)]),
+            &scope(&[GREETER], &[FAREWELL]),
+            dir.path(),
+        );
+        assert_eq!(r, Err(Rejection::MissingCreate(vec![FAREWELL.to_string()])));
+        let message = r.unwrap_err().message();
+        assert!(
+            message.contains("did not create") && message.contains(FAREWELL),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_file_the_step_must_create_that_already_exists_is_refused() {
+        let dir = repo();
+        let r = check_scope(&files(&[(GREETER, NEW_GREETER)]), &scope(&[], &[GREETER]), dir.path());
+        assert_eq!(r, Err(Rejection::CreateExists(vec![GREETER.to_string()])));
+        assert!(r.unwrap_err().message().contains("already exists"));
     }
 }

@@ -41,6 +41,24 @@ The planned tasks run a hand-written plan (`tasks/<name>/plan.yaml`) of small st
 
 A plan is validated before any model run by applying a reference change step by step in a scratch copy: the build must be green after every step and the hidden test must pass at the end.
 
+### The step contract
+
+The planner, not the Implementer, decides which files a step touches and where new classes go. A step lists:
+
+- `modify`: existing files to change. Their content is shown to the Implementer up front.
+- `create`: new files, at the exact paths the planner chose.
+- `read_only`: existing files the step depends on, shown but not changeable.
+
+The Implementer keeps its tools and may still explore, but it may only *write* files listed under `modify` or
+`create`, and must create every `create` file. A submission with any other file, or without a required new
+file, is refused with the reason. Files shown up front count as read. A step with none of these lists is
+unscoped and behaves as before.
+
+Before any step runs, the orchestrator checks the plan against the repository as it is: every `modify` and
+`read_only` file exists (or an earlier step creates it), and no `create` file exists. A plan that fails is
+not run; the problems are in the trace. This is the deterministic half of what a plan reviewer ("sceptic")
+would check.
+
 `nav`, `pasted`, `hi`, `naming` and `vat` use tools. Every request is a plain sentence with no file list.
 
 ## Scoring

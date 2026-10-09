@@ -6,7 +6,8 @@
 
 use serde::Deserialize;
 
-use crate::implementer::{StepKind, StepRequest};
+use crate::implementer::{Scope, StepKind, StepRequest};
+use crate::sandbox::RepoPath;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PlanStep {
@@ -18,6 +19,9 @@ pub struct PlanStep {
     /// Replaces the project facts for this step only.
     #[serde(default)]
     pub context: Option<String>,
+    /// The files the planner decided this step may touch.
+    #[serde(flatten)]
+    pub scope: Scope,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -41,11 +45,15 @@ pub enum PlanError {
     EmptyInstruction(String),
     #[error("a step has an empty id")]
     EmptyId,
+    #[error("step {step:?}: path {path:?} is not allowed: {reason}")]
+    BadPath { step: String, path: String, reason: String },
+    #[error("step {step:?}: path {path:?} is listed more than once or in more than one list")]
+    ScopeOverlap { step: String, path: String },
 }
 
 impl Plan {
     pub fn from_yaml(text: &str) -> Result<Self, PlanError> {
-        let plan: Plan = serde_yaml::from_str(text).map_err(|e| PlanError::Parse(e.to_string()))?;
+        let mut plan: Plan = serde_yaml::from_str(text).map_err(|e| PlanError::Parse(e.to_string()))?;
         if plan.steps.is_empty() {
             return Err(PlanError::NoSteps);
         }
@@ -61,7 +69,63 @@ impl Plan {
                 return Err(PlanError::EmptyInstruction(step.id.clone()));
             }
         }
+        for step in &mut plan.steps {
+            let step_id = step.id.clone();
+            let mut seen = std::collections::HashSet::new();
+            for list in [
+                &mut step.scope.modify,
+                &mut step.scope.create,
+                &mut step.scope.read_only,
+            ] {
+                for path in list.iter_mut() {
+                    let parsed = RepoPath::parse(path).map_err(|e| PlanError::BadPath {
+                        step: step_id.clone(),
+                        path: path.clone(),
+                        reason: e.to_string(),
+                    })?;
+                    let normalised = parsed.as_str();
+                    if !seen.insert(normalised.clone()) {
+                        return Err(PlanError::ScopeOverlap {
+                            step: step_id,
+                            path: normalised,
+                        });
+                    }
+                    *path = normalised;
+                }
+            }
+        }
         Ok(plan)
+    }
+
+    /// Checks the plan against the repository as it is now, before any step runs: every file a step
+    /// modifies or reads exists (or is created by an earlier step), and every file a step creates does
+    /// not. Returns what is wrong, in step order; empty means the plan can be run.
+    pub fn verify_against(&self, root: &std::path::Path) -> Vec<String> {
+        let mut created: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let exists = |path: &str, created: &std::collections::HashSet<String>| {
+            created.contains(path) || std::fs::symlink_metadata(root.join(path)).is_ok()
+        };
+        let mut issues = Vec::new();
+        for step in &self.steps {
+            for path in step.scope.modify.iter().chain(&step.scope.read_only) {
+                if !exists(path, &created) {
+                    issues.push(format!(
+                        "step {}: {path} does not exist, and no earlier step creates it",
+                        step.id
+                    ));
+                }
+            }
+            for path in &step.scope.create {
+                if exists(path, &created) {
+                    issues.push(format!(
+                        "step {}: {path} already exists, but the step is meant to create it",
+                        step.id
+                    ));
+                }
+            }
+            created.extend(step.scope.create.iter().cloned());
+        }
+        issues
     }
 
     /// The requests to hand to the Implementer, in order. `project_context` is the standing facts every
@@ -75,6 +139,7 @@ impl Plan {
                 context: step.context.clone().unwrap_or_else(|| project_context.to_string()),
                 files: vec![],
                 kind: step.kind,
+                scope: step.scope.clone(),
             })
             .collect()
     }
@@ -169,5 +234,136 @@ steps:
             assert!(plan.steps.len() >= 2, "plan {name} should have several small steps");
             assert!(plan.story.is_some(), "plan {name} keeps its story for the record");
         }
+    }
+    const SCOPED: &str = r#"
+id: p
+steps:
+  - id: a
+    instruction: x
+    modify: [src/main/A.java]
+    create: [src/main/B.java]
+    read_only: [src/main/C.java]
+  - id: b
+    instruction: y
+"#;
+
+    #[test]
+    fn a_step_can_name_the_files_it_may_modify_create_and_read_and_the_request_carries_them() {
+        let plan = Plan::from_yaml(SCOPED).unwrap();
+        assert_eq!(plan.steps[0].scope.modify, ["src/main/A.java"]);
+        assert_eq!(plan.steps[0].scope.create, ["src/main/B.java"]);
+        assert_eq!(plan.steps[0].scope.read_only, ["src/main/C.java"]);
+        assert!(plan.steps[1].scope.is_empty(), "a step without files is unscoped");
+        let requests = plan.step_requests("facts");
+        assert_eq!(requests[0].scope, plan.steps[0].scope);
+        assert!(requests[1].scope.is_empty());
+    }
+
+    #[test]
+    fn unsafe_or_empty_paths_in_a_scope_are_rejected_and_the_others_are_normalised() {
+        for bad in ["/etc/passwd", "../x", "", ".git/config"] {
+            let text = format!("id: p\nsteps:\n  - {{id: a, instruction: x, modify: ['{bad}']}}\n");
+            assert!(
+                matches!(Plan::from_yaml(&text), Err(PlanError::BadPath { .. })),
+                "{bad:?}"
+            );
+        }
+        let plan = Plan::from_yaml("id: p\nsteps:\n  - {id: a, instruction: x, modify: ['./src/A.java']}\n").unwrap();
+        assert_eq!(
+            plan.steps[0].scope.modify,
+            ["src/A.java"],
+            "a leading ./ is normalised away"
+        );
+    }
+
+    #[test]
+    fn the_same_file_twice_or_in_two_lists_of_one_step_is_rejected() {
+        let both = "id: p\nsteps:\n  - {id: a, instruction: x, modify: [src/A.java], create: [src/A.java]}\n";
+        assert!(matches!(Plan::from_yaml(both), Err(PlanError::ScopeOverlap { .. })));
+        let twice = "id: p\nsteps:\n  - {id: a, instruction: x, modify: [src/A.java, ./src/A.java]}\n";
+        assert!(matches!(Plan::from_yaml(twice), Err(PlanError::ScopeOverlap { .. })));
+        let read_and_change =
+            "id: p\nsteps:\n  - {id: a, instruction: x, modify: [src/A.java], read_only: [src/A.java]}\n";
+        assert!(matches!(
+            Plan::from_yaml(read_and_change),
+            Err(PlanError::ScopeOverlap { .. })
+        ));
+    }
+
+    fn repo(files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for f in files {
+            let p = dir.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "x").unwrap();
+        }
+        dir
+    }
+
+    fn two_steps() -> Plan {
+        Plan::from_yaml(
+            "id: p\nsteps:\n  - {id: one, instruction: x, modify: [src/A.java], create: [src/B.java]}\n  - {id: two, instruction: y, modify: [src/B.java], read_only: [src/A.java]}\n",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_plan_whose_files_exist_or_are_created_in_time_has_no_issues() {
+        let dir = repo(&["src/A.java"]);
+        assert_eq!(two_steps().verify_against(dir.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_file_to_modify_or_read_that_does_not_exist_is_reported_with_the_step() {
+        let dir = repo(&[]);
+        let issues = two_steps().verify_against(dir.path());
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("one") && i.contains("src/A.java") && i.contains("does not exist")),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_to_create_that_already_exists_is_reported() {
+        let dir = repo(&["src/A.java", "src/B.java"]);
+        let issues = two_steps().verify_against(dir.path());
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("one") && i.contains("src/B.java") && i.contains("already exists")),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn using_a_file_before_the_step_that_creates_it_is_reported() {
+        let dir = repo(&["src/A.java"]);
+        let plan = Plan::from_yaml(
+            "id: p\nsteps:\n  - {id: first, instruction: x, modify: [src/B.java]}\n  - {id: second, instruction: y, create: [src/B.java]}\n",
+        )
+        .unwrap();
+        let issues = plan.verify_against(dir.path());
+        assert!(
+            issues.iter().any(|i| i.contains("first") && i.contains("src/B.java")),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn two_steps_creating_the_same_file_is_reported() {
+        let dir = repo(&[]);
+        let plan = Plan::from_yaml(
+            "id: p\nsteps:\n  - {id: first, instruction: x, create: [src/B.java]}\n  - {id: second, instruction: y, create: [src/B.java]}\n",
+        )
+        .unwrap();
+        let issues = plan.verify_against(dir.path());
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("second") && i.contains("already exists")),
+            "{issues:?}"
+        );
     }
 }

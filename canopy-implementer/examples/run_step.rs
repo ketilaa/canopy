@@ -436,17 +436,22 @@ impl RunObserver for Console {
                 p.step_ids.len(),
                 p.step_ids.join(", ")
             ),
-            RunEvent::PlanFinished(p) => println!(
-                "== plan {}: {} ({} of {} steps){}",
-                p.plan_id,
-                if p.passed { "PASSED" } else { "STOPPED" },
-                p.steps_passed,
-                p.steps_total,
-                p.failed_step
-                    .as_ref()
-                    .map(|s| format!(", failed at {s}"))
-                    .unwrap_or_default()
-            ),
+            RunEvent::PlanFinished(p) => {
+                println!(
+                    "== plan {}: {} ({} of {} steps){}",
+                    p.plan_id,
+                    if p.passed { "PASSED" } else { "STOPPED" },
+                    p.steps_passed,
+                    p.steps_total,
+                    p.failed_step
+                        .as_ref()
+                        .map(|s| format!(", failed at {s}"))
+                        .unwrap_or_default()
+                );
+                for issue in &p.issues {
+                    println!("   plan problem: {issue}");
+                }
+            }
             RunEvent::StepStarted(_) | RunEvent::AttemptStarted(_) => {}
         }
     }
@@ -614,6 +619,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
                 context: task.context.into(),
                 files: task.files.iter().map(|f| f.to_string()).collect(),
                 kind: Default::default(),
+                scope: Default::default(),
             };
             match implementer.run_step(&config.repo, &step) {
                 StepOutcome::Passed { attempts } => (true, attempts, None, serde_json::Value::Null),

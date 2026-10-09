@@ -50,8 +50,35 @@ pub fn messages(step: &StepRequest, current: &[GeneratedFile], previous: Option<
 
 /// The rules and the task for a tool conversation. The model is not shown the files: it has to find
 /// and read them.
-pub fn tool_messages(step: &StepRequest, previous: Option<&Failure>) -> (String, String) {
+/// The content of the files a scoped step is shown up front.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ShownFiles {
+    pub modify: Vec<GeneratedFile>,
+    pub read_only: Vec<GeneratedFile>,
+}
+
+pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&Failure>) -> (String, String) {
     let mut user = format!("## Task\n{}\n\n## Project\n{}\n", step.instruction, step.context);
+    if !step.scope.is_empty() {
+        let section = |heading: &str, files: &[GeneratedFile]| {
+            let mut out = String::new();
+            if !files.is_empty() {
+                out.push_str(&format!("\n## {heading}\n"));
+                for file in files {
+                    out.push_str(&format!("### {}\n```\n{}\n```\n", file.path, file.content));
+                }
+            }
+            out
+        };
+        user.push_str(&section("Files to change", &shown.modify));
+        user.push_str(&section("Files for reference (read-only)", &shown.read_only));
+        if !step.scope.create.is_empty() {
+            user.push_str("\n## Files to create\n");
+            for path in &step.scope.create {
+                user.push_str(&format!("- {path}\n"));
+            }
+        }
+    }
     if let Some(failure) = previous {
         if let Some(files) = &failure.files {
             user.push_str("\n## Your previous answer\n");
@@ -78,7 +105,14 @@ pub fn tool_messages(step: &StepRequest, previous: Option<&Failure>) -> (String,
             _ => "\nStart again: read the files again before you change them, then call submit_files.\n",
         });
     }
-    (TOOL_RULES.to_string(), user)
+    let mut rules = TOOL_RULES.to_string();
+    if !step.scope.is_empty() {
+        rules.push_str(
+            "\nALWAYS submit the files listed under \"Files to change\" and \"Files to create\", each at exactly its \
+             path and each complete.\nNEVER submit a file that is not listed.",
+        );
+    }
+    (rules, user)
 }
 
 fn heading(stage: Stage) -> &'static str {
@@ -108,6 +142,7 @@ mod tests {
             context: "Root package: com.example.demo".into(),
             files: vec![],
             kind: Default::default(),
+            scope: Default::default(),
         }
     }
 
@@ -212,7 +247,7 @@ mod tests {
     }
     #[test]
     fn the_tool_prompt_states_the_rules_the_task_and_the_project_and_does_not_show_files() {
-        let (system, user) = tool_messages(&step(), None);
+        let (system, user) = tool_messages(&step(), &ShownFiles::default(), None);
         for rule in [
             "ALWAYS read an existing file with read_file before you change it",
             "ALWAYS finish by calling submit_files",
@@ -230,14 +265,22 @@ mod tests {
 
     #[test]
     fn a_tool_retry_shows_the_previous_answer_and_what_failed_and_says_to_read_again() {
-        let (_, user) = tool_messages(&step(), Some(&failure(Stage::Compile, "G.java:1:1: boom", true)));
+        let (_, user) = tool_messages(
+            &step(),
+            &ShownFiles::default(),
+            Some(&failure(Stage::Compile, "G.java:1:1: boom", true)),
+        );
         assert!(user.contains("Your previous answer") && user.contains("class G {}"));
         assert!(user.contains("The build failed to compile") && user.contains("G.java:1:1: boom"));
         assert!(user.contains("read the files again"), "{user}");
     }
     #[test]
     fn a_budget_retry_says_to_read_each_file_once_and_then_submit_not_to_read_again() {
-        let (_, user) = tool_messages(&step(), Some(&failure(Stage::Budget, "You used 12 tool calls.", false)));
+        let (_, user) = tool_messages(
+            &step(),
+            &ShownFiles::default(),
+            Some(&failure(Stage::Budget, "You used 12 tool calls.", false)),
+        );
         assert!(user.contains("at most once") && user.contains("submit_files"), "{user}");
         assert!(!user.contains("read the files again"), "{user}");
     }
@@ -246,6 +289,7 @@ mod tests {
     fn a_protocol_retry_says_not_to_answer_in_prose() {
         let (_, user) = tool_messages(
             &step(),
+            &ShownFiles::default(),
             Some(&failure(Stage::Protocol, "You answered in prose.", false)),
         );
         assert!(
@@ -257,13 +301,61 @@ mod tests {
     fn a_stuck_retry_says_not_to_repeat_a_call_and_a_no_change_retry_says_to_make_the_change() {
         let (_, stuck) = tool_messages(
             &step(),
+            &ShownFiles::default(),
             Some(&failure(Stage::Stuck, "You repeated glob 3 times.", false)),
         );
         assert!(
             stuck.contains("Do not repeat a call") && stuck.contains("submit_files"),
             "{stuck}"
         );
-        let (_, nochange) = tool_messages(&step(), Some(&failure(Stage::NoChange, "identical", true)));
+        let (_, nochange) = tool_messages(
+            &step(),
+            &ShownFiles::default(),
+            Some(&failure(Stage::NoChange, "identical", true)),
+        );
         assert!(nochange.contains("make the change"), "{nochange}");
+    }
+    fn scoped_step() -> StepRequest {
+        StepRequest {
+            scope: crate::implementer::Scope {
+                modify: vec!["src/main/java/G.java".into()],
+                create: vec!["src/main/java/New.java".into()],
+                read_only: vec!["src/main/java/Dep.java".into()],
+            },
+            ..step()
+        }
+    }
+
+    fn shown() -> ShownFiles {
+        ShownFiles {
+            modify: vec![GeneratedFile {
+                path: "src/main/java/G.java".into(),
+                content: "class G { /* current */ }".into(),
+            }],
+            read_only: vec![GeneratedFile {
+                path: "src/main/java/Dep.java".into(),
+                content: "class Dep {}".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_scoped_task_shows_the_files_to_change_the_reference_files_and_the_files_to_create() {
+        let (_, user) = tool_messages(&scoped_step(), &shown(), None);
+        let change = user.find("## Files to change").expect("a files-to-change section");
+        let reference = user.find("## Files for reference").expect("a reference section");
+        let create = user.find("## Files to create").expect("a files-to-create section");
+        assert!(change < reference && reference < create, "{user}");
+        assert!(user.contains("class G { /* current */ }") && user.contains("class Dep {}"));
+        assert!(user[create..].contains("src/main/java/New.java"));
+    }
+
+    #[test]
+    fn a_scoped_task_adds_the_rule_to_submit_only_the_listed_files_and_an_unscoped_one_does_not() {
+        let (scoped_rules, _) = tool_messages(&scoped_step(), &shown(), None);
+        assert!(scoped_rules.contains("listed under"), "{scoped_rules}");
+        let (plain_rules, plain_user) = tool_messages(&step(), &ShownFiles::default(), None);
+        assert!(!plain_rules.contains("listed under"));
+        assert!(!plain_user.contains("Files to change") && !plain_user.contains("Files for reference"));
     }
 }

@@ -23,6 +23,28 @@ use crate::prompt;
 use crate::snapshot::Snapshot;
 use crate::tools::ToolBox;
 
+/// The files a step is allowed to touch, decided by the planner. An empty scope means the step is
+/// unscoped and the model finds its own way.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct Scope {
+    /// Existing files the step changes. Their content is shown to the model.
+    #[serde(default)]
+    pub modify: Vec<String>,
+    /// New files the step must create, at exactly these paths.
+    #[serde(default)]
+    pub create: Vec<String>,
+    /// Existing files the step depends on. Shown to the model, not changeable.
+    #[serde(default)]
+    pub read_only: Vec<String>,
+}
+
+impl Scope {
+    /// A scope that names nothing to change or create does not constrain the step.
+    pub fn is_empty(&self) -> bool {
+        self.modify.is_empty() && self.create.is_empty()
+    }
+}
+
 /// One step of a plan: what to do, and the facts about the project it needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepRequest {
@@ -32,6 +54,7 @@ pub struct StepRequest {
     /// Existing files the step reads or changes. Their current content is shown to the model.
     pub files: Vec<String>,
     pub kind: StepKind,
+    pub scope: Scope,
 }
 
 /// What kind of change a step is, declared by the plan and never by the model.
@@ -251,7 +274,15 @@ impl Implementer {
     ) -> Result<GeneratedFiles, Failure> {
         let toolbox = ToolBox::new(root);
         let tools = ToolBox::specs();
-        let (system, task) = prompt::tool_messages(step, previous);
+        let shown = read_shown(root, &step.scope);
+        let shown_paths: std::collections::HashSet<&str> = step
+            .scope
+            .modify
+            .iter()
+            .chain(&step.scope.read_only)
+            .map(String::as_str)
+            .collect();
+        let (system, task) = prompt::tool_messages(step, &shown, previous);
         let mut messages = vec![ChatMessage::System(system), ChatMessage::User(task)];
         let purpose = if attempt == 1 {
             "navigate".to_string()
@@ -344,16 +375,26 @@ impl Implementer {
                                  {{\"files\": [{{\"path\": \"...\", \"content\": \"...\"}}]}}."
                             ),
                         ),
-                        Ok(files) => match gates::check_submission(&files, root, &|p| toolbox.has_read(p), step.kind) {
-                            Err(rejection) => (ToolOutcome::Refused, rejection.message()),
-                            Ok(()) => {
-                                accepted = Some(files);
-                                (
-                                    ToolOutcome::Ok,
-                                    "Submitted. The harness will now write the files, build and test.".to_string(),
-                                )
+                        Ok(files) => {
+                            let scope_check = if step.scope.is_empty() {
+                                Ok(())
+                            } else {
+                                gates::check_scope(&files, &step.scope, root)
+                            };
+                            // Files shown up front count as read: the model has their content.
+                            let has_read = |p: &str| toolbox.has_read(p) || shown_paths.contains(p);
+                            match scope_check.and_then(|_| gates::check_submission(&files, root, &has_read, step.kind))
+                            {
+                                Err(rejection) => (ToolOutcome::Refused, rejection.message()),
+                                Ok(()) => {
+                                    accepted = Some(files);
+                                    (
+                                        ToolOutcome::Ok,
+                                        "Submitted. The harness will now write the files, build and test.".to_string(),
+                                    )
+                                }
                             }
-                        },
+                        }
                     }
                 } else {
                     let result = toolbox.call(&call.name, &call.arguments);
@@ -449,6 +490,26 @@ impl StepRunner for Implementer {
 
 fn failure(stage: Stage, feedback: String, files: Option<GeneratedFiles>) -> Failure {
     Failure { stage, feedback, files }
+}
+
+/// The content of the files a scoped step is shown up front. A file that is missing is simply not shown.
+fn read_shown(root: &Path, scope: &Scope) -> prompt::ShownFiles {
+    let read = |paths: &[String]| -> Vec<GeneratedFile> {
+        paths
+            .iter()
+            .filter_map(|path| {
+                let content = std::fs::read_to_string(root.join(path)).ok()?;
+                Some(GeneratedFile {
+                    path: path.clone(),
+                    content,
+                })
+            })
+            .collect()
+    };
+    prompt::ShownFiles {
+        modify: read(&scope.modify),
+        read_only: read(&scope.read_only),
+    }
 }
 
 /// The content of the step's existing files, right now. A file that does not exist yet is skipped, and so is
@@ -597,6 +658,7 @@ mod tests {
             context: "pkg: x".into(),
             files: vec![],
             kind: Default::default(),
+            scope: Default::default(),
         }
     }
 
@@ -1018,6 +1080,7 @@ mod tests {
             context: "Build: Maven".into(),
             files: vec![],
             kind: StepKind::BehaviorChange,
+            scope: Scope::default(),
         }
     }
 
@@ -1548,5 +1611,102 @@ mod tests {
             })
             .unwrap();
         assert_eq!(feedback, digest);
+    }
+    fn scoped(modify: &[&str], create: &[&str]) -> StepRequest {
+        StepRequest {
+            scope: Scope {
+                modify: modify.iter().map(|s| s.to_string()).collect(),
+                create: create.iter().map(|s| s.to_string()).collect(),
+                read_only: vec![],
+            },
+            ..nav_step()
+        }
+    }
+
+    #[test]
+    fn a_scoped_step_shows_its_files_up_front_and_counts_them_as_read() {
+        let rig = tool_rig(
+            vec![calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])])],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        let step = scoped(&[GREETER, GREETER_TEST], &[]);
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &step),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        let ChatMessage::User(task) = &rig.requests.lock().unwrap()[0][1] else {
+            panic!()
+        };
+        assert!(task.contains("## Files to change"), "{task}");
+        assert!(
+            task.contains(OLD_GREETER.trim()),
+            "the current content is in the prompt: {task}"
+        );
+        assert_eq!(tool_log(&rig).len(), 1, "it never needed to call read_file");
+    }
+
+    #[test]
+    fn a_scoped_submission_with_a_file_outside_the_scope_is_refused_in_the_conversation() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![submit(&[
+                    (GREETER, NEW_GREETER),
+                    (GREETER_TEST, NEW_TEST),
+                    ("src/main/java/com/invented/Extra.java", "public class Extra {}"),
+                ])]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        let step = scoped(&[GREETER, GREETER_TEST], &[]);
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &step),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        assert_eq!(tool_log(&rig)[0], ("submit_files".to_string(), ToolOutcome::Refused));
+        assert!(
+            tool_result(&rig, 0).contains("not among the files"),
+            "{}",
+            tool_result(&rig, 0)
+        );
+        assert!(!rig.dir.path().join("src/main/java/com/invented/Extra.java").exists());
+    }
+
+    #[test]
+    fn a_scoped_step_that_must_create_files_refuses_a_submission_without_them() {
+        let class = "src/main/java/com/example/Farewell.java";
+        let test = "src/test/java/com/example/FarewellTest.java";
+        let rig = tool_rig(
+            vec![
+                calls(vec![submit(&[(
+                    class,
+                    "package com.example;\npublic class Farewell { }\n",
+                )])]),
+                calls(vec![submit(&[
+                    (class, "package com.example;\npublic class Farewell { }\n"),
+                    (
+                        test,
+                        "package com.example;\nclass FarewellTest { void t() { new Farewell(); } }\n",
+                    ),
+                ])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        let step = scoped(&[], &[class, test]);
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &step),
+            StepOutcome::Passed { attempts: 1 }
+        );
+        assert!(
+            tool_result(&rig, 0).contains("did not create"),
+            "{}",
+            tool_result(&rig, 0)
+        );
     }
 }

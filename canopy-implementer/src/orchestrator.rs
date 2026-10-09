@@ -29,6 +29,8 @@ pub struct PlanOutcome {
     pub results: Vec<StepResult>,
     /// Ids of the steps that were never started because an earlier one failed.
     pub skipped: Vec<String>,
+    /// Problems found with the plan before it ran. When there are any, no step was started.
+    pub invalid: Vec<String>,
 }
 
 impl PlanOutcome {
@@ -66,6 +68,24 @@ impl Orchestrator {
             step_ids: requests.iter().map(|r| r.id.clone()).collect(),
         }));
 
+        let issues = plan.verify_against(root);
+        if !issues.is_empty() {
+            self.observer.on(&RunEvent::PlanFinished(PlanFinished {
+                plan_id: plan.id.clone(),
+                passed: false,
+                steps_passed: 0,
+                steps_total: requests.len(),
+                failed_step: None,
+                issues: issues.clone(),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            }));
+            return PlanOutcome {
+                results: vec![],
+                skipped: requests.iter().map(|r| r.id.clone()).collect(),
+                invalid: issues,
+            };
+        }
+
         let mut results = Vec::new();
         let mut skipped = Vec::new();
         let mut failed_step = None;
@@ -83,13 +103,18 @@ impl Orchestrator {
             }
         }
 
-        let outcome = PlanOutcome { results, skipped };
+        let outcome = PlanOutcome {
+            results,
+            skipped,
+            invalid: vec![],
+        };
         self.observer.on(&RunEvent::PlanFinished(PlanFinished {
             plan_id: plan.id.clone(),
             passed: outcome.passed(),
             steps_passed: outcome.steps_passed(),
             steps_total: requests.len(),
             failed_step,
+            issues: vec![],
             elapsed_ms: started.elapsed().as_millis() as u64,
         }));
         outcome
@@ -99,7 +124,7 @@ impl Orchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observe::RecordingObserver;
+    use crate::observe::{RecordingObserver, RunEvent};
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -216,5 +241,29 @@ mod tests {
         assert!(!finished.passed);
         assert_eq!((finished.steps_passed, finished.steps_total), (1, 3));
         assert_eq!(finished.failed_step.as_deref(), Some("b"));
+    }
+    #[test]
+    fn a_plan_that_does_not_fit_the_repository_is_not_run_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = Plan::from_yaml(
+            "id: p\nsteps:\n  - {id: a, instruction: do a, modify: [src/Missing.java]}\n  - {id: b, instruction: do b}\n",
+        )
+        .unwrap();
+        let (orchestrator, observer, seen) = orchestrator(vec![]);
+        let outcome = orchestrator.run(dir.path(), &plan, "facts");
+        assert!(!outcome.passed());
+        assert!(outcome.results.is_empty());
+        assert_eq!(outcome.skipped, vec!["a".to_string(), "b".to_string()]);
+        assert!(
+            outcome.invalid.iter().any(|i| i.contains("src/Missing.java")),
+            "{:?}",
+            outcome.invalid
+        );
+        assert!(seen.lock().unwrap().is_empty(), "no step was started");
+        let RunEvent::PlanFinished(finished) = observer.events().last().unwrap().clone() else {
+            panic!()
+        };
+        assert!(!finished.passed && finished.failed_step.is_none());
+        assert_eq!(finished.issues, outcome.invalid);
     }
 }

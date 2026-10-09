@@ -28,6 +28,9 @@ steps:
       with tests that create gives the widget a generated id, that two created widgets get different ids,
       that a valid name is kept, that null, blank and 51-character names are rejected, and that a
       50-character name is accepted.
+    create:
+      - src/main/java/com/example/widgets/domain/Widget.java
+      - src/test/java/com/example/widgets/domain/WidgetTest.java
   - id: widgets-2-repository
     instruction: >
       In the package com.example.widgets.repository, create the interface WidgetRepository with the
@@ -36,6 +39,12 @@ steps:
       ConcurrentHashMap keyed by id; save stores the widget unchanged and returns it. Add
       InMemoryWidgetRepositoryTest with tests that a saved widget can be found by its id, that an unknown
       id gives an empty result, and that saving a widget with an id that already exists replaces it.
+    create:
+      - src/main/java/com/example/widgets/repository/WidgetRepository.java
+      - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java
+      - src/test/java/com/example/widgets/repository/InMemoryWidgetRepositoryTest.java
+    read_only:
+      - src/main/java/com/example/widgets/domain/Widget.java
   - id: widgets-3-service
     instruction: >
       In the package com.example.widgets.service, create WidgetService, annotated with @Service, with a
@@ -45,6 +54,13 @@ steps:
       InMemoryWidgetRepository, with tests that create returns a widget with the given name and a
       generated id, that the widget can then be found through the repository, and that an invalid name
       throws IllegalArgumentException.
+    create:
+      - src/main/java/com/example/widgets/service/WidgetService.java
+      - src/test/java/com/example/widgets/service/WidgetServiceTest.java
+    read_only:
+      - src/main/java/com/example/widgets/domain/Widget.java
+      - src/main/java/com/example/widgets/repository/WidgetRepository.java
+      - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java
   - id: widgets-4-controller
     instruction: >
       In the package com.example.widgets.web, create WidgetController, annotated with @RestController,
@@ -55,3 +71,12 @@ steps:
       use only the service and never the repository. Add WidgetControllerTest, using MockMvc with
       MockMvcBuilders.standaloneSetup over a WidgetService built on InMemoryWidgetRepository, with tests
       for 201 with an id and the name, for 400 on a blank name, and for 400 on a missing name.
+    create:
+      - src/main/java/com/example/widgets/web/CreateWidgetRequest.java
+      - src/main/java/com/example/widgets/web/WidgetController.java
+      - src/test/java/com/example/widgets/web/WidgetControllerTest.java
+    read_only:
+      - src/main/java/com/example/widgets/domain/Widget.java
+      - src/main/java/com/example/widgets/service/WidgetService.java
+      - src/main/java/com/example/widgets/repository/WidgetRepository.java
+      - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java
