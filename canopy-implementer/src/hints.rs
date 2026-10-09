@@ -50,7 +50,7 @@ fn failing_test_class(line: &str) -> Option<String> {
 }
 
 /// The path of `<subject>.java` under src/main/java, as a repository-relative path. Symlinks are skipped.
-fn find_production_file(root: &Path, subject: &str) -> Option<String> {
+pub(crate) fn find_production_file(root: &Path, subject: &str) -> Option<String> {
     fn walk(dir: &Path, relative: &str, file_name: &str) -> Option<String> {
         let mut entries: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
         entries.sort_by_key(|e| e.file_name());

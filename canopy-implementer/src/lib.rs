@@ -19,6 +19,7 @@ pub mod plan;
 pub mod prompt;
 pub mod sandbox;
 pub mod snapshot;
+pub mod structure;
 pub mod tools;
 
 #[cfg(test)]

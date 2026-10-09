@@ -23,6 +23,7 @@ use canopy_implementer::observe::{
 };
 use canopy_implementer::orchestrator::Orchestrator;
 use canopy_implementer::plan::Plan;
+use canopy_implementer::structure::{self, Check};
 use serde_json::json;
 
 /// A step to run, the state to start it from, and how its result is scored.
@@ -271,11 +272,54 @@ const NAMING_PLANNED: Task = Task {
     ..NAMING
 };
 
+/// A full vertical slice built as a plan: domain object, in-memory repository, service, REST controller.
+const WIDGETS_PLANNED: Task = Task {
+    name: "widgets-planned",
+    default_tag: "baseline-00-widgets",
+    instruction: "A client can create a widget with POST /widgets, giving a name. The widget gets a generated id. A \
+name that is blank, missing, or longer than 50 characters is rejected.",
+    context: "Root package: com.example.widgets, with the layers domain, repository, service and web.\n\
+Build: Maven, Java 21, JUnit 5; Spring Boot 3.4 with spring-boot-starter-web. Do not change pom.xml.",
+    files: &[],
+    hidden_test: include_str!("../tasks/widgets/WidgetsHiddenTest.java"),
+    preserved_tests: &[],
+    tools: true,
+    repo: "java-widgets",
+    hidden_test_path: "src/test/java/com/example/widgets/WidgetsHiddenTest.java",
+    min_tests_added: 8,
+    untouched: &["pom.xml"],
+};
+
+/// What the finished widgets slice must look like, which behaviour alone cannot show: every layer exists,
+/// each is connected to the next, and the controller reaches the repository only through the service.
+const WIDGETS_STRUCTURE: &[Check] = &[
+    Check::Exists("Widget.java"),
+    Check::Exists("WidgetRepository.java"),
+    Check::Exists("InMemoryWidgetRepository.java"),
+    Check::Exists("WidgetService.java"),
+    Check::Exists("WidgetController.java"),
+    Check::Mentions("InMemoryWidgetRepository.java", "WidgetRepository"),
+    Check::Mentions("WidgetService.java", "WidgetRepository"),
+    Check::Mentions("WidgetController.java", "WidgetService"),
+    Check::Lacks("WidgetController.java", "WidgetRepository"),
+    Check::Lacks("WidgetController.java", "InMemoryWidgetRepository"),
+    Check::Lacks("Widget.java", "WidgetRepository"),
+    Check::Lacks("Widget.java", "WidgetService"),
+];
+
+fn structure_for(task_name: &str) -> &'static [Check] {
+    match task_name {
+        "widgets-planned" => WIDGETS_STRUCTURE,
+        _ => &[],
+    }
+}
+
 /// The hand-written plan for a task, if it has one. The Implementer sees one step at a time, never the plan.
 fn plan_for(task_name: &str) -> Option<&'static str> {
     match task_name {
         "vat-planned" => Some(include_str!("../tasks/vat/plan.yaml")),
         "naming-planned" => Some(include_str!("../tasks/naming/plan.yaml")),
+        "widgets-planned" => Some(include_str!("../tasks/widgets/plan.yaml")),
         _ => None,
     }
 }
@@ -291,14 +335,15 @@ fn task(name: &str) -> Result<Task, String> {
         "vat" => Ok(VAT),
         "vat-planned" => Ok(VAT_PLANNED),
         "naming-planned" => Ok(NAMING_PLANNED),
+        "widgets-planned" => Ok(WIDGETS_PLANNED),
         other => Err(format!(
-            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned"
+            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned, widgets-planned"
         )),
     }
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
 
 struct Config {
     task: String,
@@ -667,7 +712,13 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         .untouched
         .iter()
         .all(|path| !files_changed.iter().any(|changed| changed == path));
-    let scored = acceptance == "passed" && kept_original && untouched_ok && tests_added >= task.min_tests_added;
+    let structure_results = structure::run(&config.repo, structure_for(task.name));
+    let structure_ok = structure_results.iter().all(|r| r.passed);
+    for failed in structure_results.iter().filter(|r| !r.passed) {
+        println!("  structure check failed: {}", failed.description);
+    }
+    let scored =
+        acceptance == "passed" && kept_original && untouched_ok && structure_ok && tests_added >= task.min_tests_added;
     println!(
         "  hidden acceptance: {acceptance}; original tests kept: {kept_original}; untouched kept: {untouched_ok}; \
 tests added: {tests_added} (need {}); scored: {scored}",
@@ -689,6 +740,8 @@ tests added: {tests_added} (need {}); scored: {scored}",
         "original_tests_kept": kept_original,
         "untouched_files_kept": untouched_ok,
         "scored_pass": scored,
+        "structure_ok": structure_ok,
+        "structure": structure_results.iter().map(|r| json!({"check": r.description, "passed": r.passed})).collect::<Vec<_>>(),
         "files_changed": files_changed,
         "navigation": {
             "tool_calls": nav.tool_calls,

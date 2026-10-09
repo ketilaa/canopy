@@ -287,7 +287,7 @@ fn is_production(relative: &str) -> bool {
 }
 
 /// Whether `word` appears in `text` as a whole identifier, not inside a longer one.
-fn mentions_word(text: &str, word: &str) -> bool {
+pub(crate) fn mentions_word(text: &str, word: &str) -> bool {
     let is_identifier = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
     text.match_indices(word).any(|(index, _)| {
         let before = text[..index].chars().next_back();
