@@ -89,8 +89,10 @@ llama-server \
 - **confirmed** (rerun after the three message fixes and the subject hint, harness `15bf566`, clean tree; batches
   `2026-10-08T19-42-23` naming, `T19-57-40` vat, `T20-06-38` hi; same tasks, 5 runs each). Scored passes before to
   after: **hi 4/5 to 5/5, naming 1/5 to 0/5, vat 0/5 to 0/5.** What each change did:
-  - *No-test message now names the file to keep* (hi): the one failing run had been exactly this backfire; hi is
-    now 5/5, all first attempt. The mechanism matches the cause, but n=5 is thin.
+  - *No-test message now names the file to keep* (hi): the one failing run had been exactly this backfire (the
+    old message shown 3 times, the same test-only answer 3 times). hi is now 5/5, but **the rewritten message was
+    not shown to the model in any of the 5 rerun runs** (the gate never fired), so this is not evidence that the new
+    wording works; it only shows the failure did not recur in 5 runs where its trigger did not occur either.
   - *Subject hint* (naming): it fired and was acted on, and that produced a new failure. In 3 of 5 runs the loop
     "passed" on attempt 2, and **all 5 naming runs ended with an empty patch**: told the test exercises a class
     it did not change ("either change it so the test passes, or correct the test"), the model reverted its
