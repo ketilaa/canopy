@@ -127,6 +127,29 @@ One plausible plan-shape cost, not yet shown: `test_classes` must be non-empty i
 that only needs to change a production class still lists a test as `modify`, and the Implementer refuses a
 `modify` file the step leaves unchanged (run-03, 6 refusals).
 
+### Experiment conv: the Spring stereotype convention in the facts (2026-10-10, `699ca12`)
+
+Facts (and so every step's context, and the Planner's prompt) now say "Stereotypes by class name: *Controller is
+@RestController, *Service is @Service, *Repository is @Repository, *Config is @Configuration." Three new plans,
+one Implementer run each:
+
+| Plan | Valid first draft | Steps passed | Stop |
+|---|---|---|---|
+| conv run-01 | yes | 1 of 6 | budget (12 tool calls without a buildable submission) at the service step |
+| conv run-02 | yes | 0 of 8 | compile: `javax.validation.constraints` does not exist (Spring Boot 3 uses `jakarta.*`) |
+| conv run-03 | yes | 2 of 8 | compile: the controller calls `getWidgets()`, which `WidgetService` does not have |
+
+Mechanical check on the final patches: before the line, 2 of 2 runs that wrote a service class left it
+without `@Service` (12-28-09, 12-33-10; the two "no qualifying bean" failures); after it, the one run that got
+as far as writing a service annotated it (1 of 1). "No qualifying bean" appeared in 0 of 3 runs. That is the
+predicted direction, on a single run that could show it, so it is **not** evidence that the line works; steps
+passed (1, 0, 2) are no better than before. The line was present in the step contexts (13 mentions in one
+trace); whether the model used it is not shown.
+
+New recurring class: `javax.validation` imports in a Spring Boot 3 project, now in 2 of 7 Implementer runs
+overall (12-29-18 and conv run-02). Derivable from the facts (Spring Boot 3.4.5), so it is the next candidate
+for a stated fact. Separate and undiagnosed: a controller calling a method its service does not have.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
