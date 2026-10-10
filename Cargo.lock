@@ -156,6 +156,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "canopy-planner"
+version = "0.1.0"
+dependencies = [
+ "canopy-implementer",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "canopy-storage"
 version = "0.1.0"
 dependencies = [

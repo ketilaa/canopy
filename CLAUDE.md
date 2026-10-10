@@ -148,6 +148,9 @@ canopy-implementer/   isolated Implementer: runs a plan step by step against a r
                       yet used by canopy-cli (see docs/open-questions/implementer-and-planner-into-the-canopy-repl.md).
                       Measurements per model: canopy-implementer/docs/models/. Tasks and repositories:
                       canopy-implementer/docs/dogfooding.md.
+canopy-planner/       isolated Planner: story + Gherkin feature in, a plan for the Implementer out. Depends on
+                      canopy-implementer only (the plan type, LLM client, observer); not yet used by canopy-cli.
+                      Design and build order: docs/design/planner-first-increment.md.
 ```
 
 When adding a new capability: type in core → storage helpers → llm prompt/function → cli command.
