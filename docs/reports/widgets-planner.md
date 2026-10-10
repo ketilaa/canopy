@@ -199,6 +199,27 @@ far (the previous best was 4). One run, so not a result, and it passed the audit
 Two flaws in the experiment itself: the audits return the first error, so (a) hid (d) in the retries; and the
 two audits changed the draft at once, so the e2e data from one plan says nothing about either.
 
+### Experiment pat: a negative name pattern for `classes` (2026-10-10, `d6ea8de`; batch `2026-10-10T19-42-50`)
+
+`classes` now only admits names that do not end in `Test` (positive character classes, no lookahead; tested
+against the regex engine; llama-server accepted it). Audit (d), "every listed class is named in the
+instruction", stayed a hard rejection. Ten fresh plans, an Implementer run on each valid one.
+
+Result: **1 of 10 valid again, 0 of 10 on the first draft.**
+
+- Audit (a) is gone: no draft lists a `Test` name under `classes`. The model went round it: test-only steps list
+  a made-up name instead (`WidgetTestTestCases`, `WidgetRepositoryTestTestCases`), which then fails (d).
+- Audit (d) is now the whole story: 8 of 10 first drafts failed it (2 more hit the 4096-token cap), and 5 of the
+  retries that could repeat it did. The drafts show why: instructions such as "Create core classes for widget
+  management" or "Create test cases for the Widget class" name no class at all, while the step lists four.
+- The one valid plan (5 steps, instructions that name their classes) reached 1 of 5 in the Implementer.
+
+Reading: (d) catches a real defect (a step whose instruction does not describe what it creates), but as a hard
+rejection it is not satisfiable by this model: it cost 9 of 10 plans, and the plain-retry pattern did not hold
+here either (the third time this session an audit with a named retry was not followed). In the cn and val
+batches, with no (d), the same prompt gave 3 of 3 and 3 of 3 valid plans. An audit that rejects nine plans in
+ten is not a gate. Options not yet taken: keep (d) as a recorded diagnostic instead of a rejection.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
