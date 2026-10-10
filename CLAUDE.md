@@ -142,6 +142,14 @@ canopy-storage/    save/load wrappers around .canopy/
 canopy-cli/        CLI commands (clap), interactive prompts (dialoguer)
 ```
 
+```
+canopy-implementer/   isolated Implementer: runs a plan step by step against a repository, with gates,
+                      restore-and-retry and a typed event stream. No dependency on the crates above and not
+                      yet used by canopy-cli (see docs/open-questions/implementer-and-planner-into-the-canopy-repl.md).
+                      Measurements per model: canopy-implementer/docs/models/. Tasks and repositories:
+                      canopy-implementer/docs/dogfooding.md.
+```
+
 When adding a new capability: type in core → storage helpers → llm prompt/function → cli command.
 
 **Test file placement is language-specific, by design.** TypeScript/JavaScript tests are
