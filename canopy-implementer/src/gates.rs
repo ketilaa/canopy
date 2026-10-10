@@ -303,12 +303,20 @@ pub fn check_submission(
 }
 
 /// The changed production classes no changed test reaches. A class is reached when a changed test mentions it,
-/// or when a changed production class that is itself reached mentions it (a request record the test only
-/// exercises through the controller that takes it). Only classes changed in this submission count.
+/// when a changed test calls a URL path the class maps (a controller tested over HTTP never writes its own
+/// name), or when a changed production class that is itself reached mentions it (a request record the test
+/// only exercises through the controller that takes it). Only classes changed in this submission count.
 fn uncovered(production: &[(String, &str)], tests: &[&str]) -> Vec<String> {
     let mut covered: Vec<bool> = production
         .iter()
-        .map(|(class, _)| tests.iter().any(|test| mentions_word(test, class)))
+        .map(|(class, content)| {
+            tests.iter().any(|test| mentions_word(test, class))
+                || mapped_paths(content).iter().any(|path| {
+                    tests
+                        .iter()
+                        .any(|test| string_literals(test).iter().any(|l| l.contains(path.as_str())))
+                })
+        })
         .collect();
     loop {
         let mut grew = false;
@@ -330,10 +338,69 @@ fn uncovered(production: &[(String, &str)], tests: &[&str]) -> Vec<String> {
                 .iter()
                 .zip(&covered)
                 .filter(|(_, is_covered)| !**is_covered)
-                .map(|((class, _), _)| class.clone())
+                .map(|((class, content), _)| match mapped_paths(content).first() {
+                    // Say what would count, since the model cannot see why a correct test is refused.
+                    Some(path) => format!("{class} (or a request to its path {path})"),
+                    None => class.clone(),
+                })
                 .collect();
         }
     }
+}
+
+/// The URL paths a class maps with Spring's `@RequestMapping`/`@GetMapping`/`@PostMapping`/`@PutMapping`/
+/// `@DeleteMapping`/`@PatchMapping`, each cut at its first `{` (a path variable) so `/widgets/{id}` is
+/// `/widgets/`. The bare root `/` is left out: it would match every URL.
+fn mapped_paths(content: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for verb in ["Request", "Get", "Post", "Put", "Delete", "Patch"] {
+        let needle = format!("@{verb}Mapping");
+        for (start, _) in content.match_indices(&needle) {
+            let after = content[start + needle.len()..].trim_start();
+            let Some(args) = after.strip_prefix('(') else { continue };
+            let mut in_string = false;
+            let mut end = args.len();
+            for (i, c) in args.char_indices() {
+                match c {
+                    '"' => in_string = !in_string,
+                    ')' if !in_string => {
+                        end = i;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            for literal in string_literals(&args[..end]) {
+                if literal.starts_with('/') {
+                    let prefix = literal.split('{').next().unwrap_or("").to_string();
+                    if prefix.len() > 1 && !paths.contains(&prefix) {
+                        paths.push(prefix);
+                    }
+                }
+            }
+        }
+    }
+    paths
+}
+
+/// The contents of the double-quoted string literals in `text`, escaped quotes included as written.
+fn string_literals(text: &str) -> Vec<String> {
+    let mut literals = Vec::new();
+    let mut current: Option<String> = None;
+    let mut escaped = false;
+    for c in text.chars() {
+        match (&mut current, c) {
+            (None, '"') => current = Some(String::new()),
+            (Some(literal), '"') if !escaped => {
+                literals.push(std::mem::take(literal));
+                current = None;
+            }
+            (Some(literal), c) => literal.push(c),
+            (None, _) => {}
+        }
+        escaped = c == '\\' && !escaped;
+    }
+    literals
 }
 
 /// Checks the model's import checklist against its files: when one is required it must be there, and every
@@ -761,6 +828,110 @@ mod tests {
             StepKind::BehaviorChange,
         );
         assert_eq!(r, Err(Rejection::TestsUnrelated(vec!["Request".to_string()])));
+    }
+
+    const WIDGET_CONTROLLER: &str = "src/main/java/com/example/WidgetController.java";
+    const WIDGET_CONTROLLER_TEST: &str = "src/test/java/com/example/WidgetControllerTest.java";
+
+    fn controller(annotations: &str) -> String {
+        format!("package com.example;\n@RestController\n{annotations}\nclass WidgetController {{ }}\n")
+    }
+
+    fn controller_check(controller_source: &str, test_source: &str) -> Result<(), Rejection> {
+        let dir = repo();
+        check(
+            &dir,
+            &[
+                (WIDGET_CONTROLLER, controller_source),
+                (WIDGET_CONTROLLER_TEST, test_source),
+            ],
+            &[],
+            StepKind::BehaviorChange,
+        )
+    }
+
+    const HTTP_TEST: &str = "package com.example;\nclass WidgetControllerTest { void t() { post(\"http://localhost:\" + port + \"/widgets\"); } }\n";
+
+    #[test]
+    fn a_controller_is_covered_by_a_test_that_calls_its_mapped_path_without_naming_the_class() {
+        let source = controller("class X { @PostMapping(\"/widgets\") void create() { } }");
+        // The test class is called WidgetControllerTest; its content never writes the word WidgetController.
+        assert_eq!(controller_check(&source, HTTP_TEST), Ok(()));
+    }
+
+    #[test]
+    fn mapping_annotations_are_read_in_their_forms_and_a_path_variable_matches_by_its_static_prefix() {
+        for annotation in [
+            "@RequestMapping(\"/widgets\")",
+            "@GetMapping(value = \"/widgets\")",
+            "@DeleteMapping(path = \"/widgets\")",
+            "@PatchMapping(value = {\"/widgets\", \"/things\"})",
+        ] {
+            let source = controller(annotation);
+            assert_eq!(controller_check(&source, HTTP_TEST), Ok(()), "{annotation}");
+        }
+        let with_id = "package com.example;\nclass WidgetControllerTest { void t() { get(\"/widgets/42\"); } }\n";
+        assert_eq!(
+            controller_check(&controller("@GetMapping(\"/widgets/{id}\")"), with_id),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_test_that_calls_some_other_path_does_not_cover_the_controller_and_the_refusal_names_the_path() {
+        let source = controller("@PostMapping(\"/widgets\")");
+        let other = "package com.example;\nclass WidgetControllerTest { void t() { post(\"/gadgets\"); } }\n";
+        let r = controller_check(&source, other);
+        assert_eq!(
+            r,
+            Err(Rejection::TestsUnrelated(vec![
+                "WidgetController (or a request to its path /widgets)".to_string()
+            ]))
+        );
+        assert!(r.unwrap_err().message().contains("or a request to its path /widgets"));
+    }
+
+    #[test]
+    fn the_path_must_be_in_a_string_literal_and_the_root_path_covers_nothing() {
+        let source = controller("@PostMapping(\"/widgets\")");
+        let in_a_comment =
+            "package com.example;\nclass WidgetControllerTest { void t() { /* posts to /widgets */ } }\n";
+        assert!(
+            controller_check(&source, in_a_comment).is_err(),
+            "a comment is not a request"
+        );
+        let root = controller("@GetMapping(\"/\")");
+        let any_slash =
+            "package com.example;\nclass WidgetControllerTest { void t() { get(\"http://localhost/\"); } }\n";
+        assert!(
+            controller_check(&root, any_slash).is_err(),
+            "a bare / would match every URL"
+        );
+    }
+
+    #[test]
+    fn a_class_without_mappings_is_still_covered_only_by_mention() {
+        let source = "package com.example;\nclass WidgetController { }\n";
+        assert!(controller_check(source, HTTP_TEST).is_err());
+    }
+
+    #[test]
+    fn a_class_reached_through_a_controller_covered_by_path_is_covered_too() {
+        let dir = repo();
+        let r = check(
+            &dir,
+            &[
+                (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
+                (
+                    WIDGET_CONTROLLER,
+                    "package com.example;\n@RestController\nclass WidgetController { @PostMapping(\"/widgets\") void post(Request r) { } }\n",
+                ),
+                (WIDGET_CONTROLLER_TEST, HTTP_TEST),
+            ],
+            &[],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(r, Ok(()));
     }
 
     const OTHER_PKG: &str = "src/main/java/com/example/other/Holder.java";
