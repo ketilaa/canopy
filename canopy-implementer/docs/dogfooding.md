@@ -21,6 +21,14 @@ Reset a repository to a state: `git checkout -q -f --detach <tag> && git clean -
 
 Run with `cargo run -p canopy-implementer --example run_step -- --task <name> --runs N`.
 
+Runner options that matter for a measurement: `--url <base url>` (which llama-server the batch runs against; a
+separate GPU-accelerated server gives the same pass rates and about 4x shorter steps), `--attempts N` (default 3),
+and `--declare-imports` (the model lists its imports before its files; built, off by default, unswept). Every batch
+writes `batch.json` with the harness commit and its dirty flag, the server's properties, the sampling and the
+`mvn -version`. Run Maven on **Java 21**: on Java 25 Mockito cannot mock a class (Byte Buddy), and a model-written
+`@MockBean` test then fails with an error the model cannot act on. Do not change the JDK, the plan or the harness
+while a sweep is running: a batch that straddles a change is discarded.
+
 | Task | State | Request | What it puts under pressure |
 |---|---|---|---|
 | `create` | `java-greeter@baseline-00-scaffold` | Create `Greeter` and `GreeterTest` (stated in full). | Whole-file generation in an empty repo. Single call, no tools. |
@@ -37,9 +45,15 @@ The planned tasks run a hand-written plan (`tasks/<name>/plan.yaml`) of small st
 |---|---|---|
 | `naming-planned` | `java-naming@baseline-00-naming` | 2 steps: change `NameFormatter`, then add a `Greeter` test. Same hidden test and scoring as `naming`. |
 | `vat-planned` | `java-shop@baseline-00-shop` | 4 steps in expand-then-contract order: add the new calculator methods, switch the invoice, switch the charge, then switch the old total. Same hidden test and scoring as `vat`. |
-| `widgets-planned` | `java-widgets@baseline-00-widgets` | 5 steps: domain record, in-memory repository, service, controller (201 path only), then 400 validation. Hidden test: the real application over HTTP. |
+| `widgets-planned` | `java-widgets@baseline-00-widgets` | 5 steps: domain record, in-memory repository, service, controller (201 path only), then 400 validation. Hidden test: the real application over HTTP. Plan v6; 10/10 with the import audit (see the model file for the path there). |
 
 A plan is validated before any model run by applying a reference change step by step in a scratch copy: the build must be green after every step and the hidden test must pass at the end.
+
+What a plan has to state (learned from the widgets plan, each item fixed a failure): the exact test inputs and
+expected results (which names are invalid, and that a name with spaces is valid), how a test reaches what it
+tests (constructors, how two entities get one id, the exact test setup line and request body), and a step small
+enough that its answer fits the 2048-token completion cap (the controller was split in two). Hand-written plans
+carry this knowledge today; a Planner will have to produce it.
 
 ### The step contract
 
@@ -61,6 +75,10 @@ not run; the problems are in the trace. This is the deterministic half of what a
 would check.
 
 `nav`, `pasted`, `hi`, `naming` and `vat` use tools. Every request is a plain sentence with no file list.
+
+### Gates and audits on a submission
+
+In order, before anything is written: unsafe paths, files read before change, scope and `modify`/`create` contract, an empty or unchanged submission, the **import audit** (a used class from another package without its import is refused with the exact line to add), and the no-test gate (changed production code needs a changed test that mentions it, or is reached through a covered changed class; a refactor step is exempt). A refusal inside the tool conversation costs a tool call, not an attempt. After a failed build the workspace is restored and the retry text says the previous answer was undone.
 
 ## Scoring
 

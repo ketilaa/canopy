@@ -221,6 +221,15 @@ tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (recheck of the older planned tasks on the current harness, GPU-accelerated server, Java 21.0.7,
+  n=10 each): `naming-planned` (harness `0c6b51a`, batch `2026-10-10T07-33-25`) **10/10**, all 20 steps passed on
+  the first attempt; `vat-planned` (harness `8201bf3`, batch `2026-10-10T07-37-09`) **10/10**, 39 of 40 steps on the
+  first attempt, one stuck attempt. No gate refused a submission in either batch, no truncation, no dropped test
+  or file (the preserved-tests and untouched-file checks held in all 20 runs). The older results for these two
+  tasks were on the Apple Silicon server with an older harness (naming-planned 5/5 and 3/3, vat-planned 5/5), so
+  this is the first recheck with the import audit, the new retry text and the coverage gate in place: no
+  regression on modify-heavy tasks. It also means no size-scaling symptom has been seen on modify steps; the
+  files in these repositories are small.
 - **confirmed** (widgets-planned plan v6, the **import audit** before anything is written, import hint on retry,
   undone-answer retry text, harness `f161667`, same server and flags; batch `2026-10-10T07-04-54`, 10 runs):
   **10/10 scored** (the earlier batches with this plan: 7/10, 4/10, 7/10). 48 of 50 steps passed on the first
