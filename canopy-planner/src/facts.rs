@@ -124,6 +124,12 @@ impl RepoFacts {
                 .collect();
             lines.push(format!("Dependencies: {}", listed.join(", ")));
         }
+        if self.spring_boot_version.is_some() {
+            lines.push(
+                "Stereotypes by class name: *Controller is @RestController, *Service is @Service, *Repository is @Repository, *Config is @Configuration."
+                    .to_string(),
+            );
+        }
         if !self.has_database_library() {
             lines.push("Storage: no database or JPA library is available; keep data in memory.".to_string());
         }
@@ -417,6 +423,34 @@ mod tests {
         );
         assert!(!text.contains("Existing files"), "{text}");
         assert!(!text.contains(".java"), "symbols, not paths: {text}");
+    }
+
+    #[test]
+    fn a_spring_boot_project_states_the_stereotype_convention_by_class_name() {
+        let text = RepoFacts::collect(scaffold().path()).unwrap().render();
+        assert!(
+            text.contains(
+                "Stereotypes by class name: *Controller is @RestController, *Service is @Service, *Repository is @Repository, *Config is @Configuration."
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_project_without_spring_boot_states_no_spring_convention() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "pom.xml",
+            "<project><dependencies></dependencies></project>",
+        );
+        write(
+            dir.path(),
+            "src/main/java/a/App.java",
+            "package a;\n@SpringBootApplication\nclass App {}\n",
+        );
+        let text = RepoFacts::collect(dir.path()).unwrap().render();
+        assert!(!text.contains("Stereotypes"), "{text}");
     }
 
     #[test]
