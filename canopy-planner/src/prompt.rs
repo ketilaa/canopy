@@ -63,7 +63,7 @@ pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
 For each case of a scenario outline: ALWAYS write a test with a concrete input value, in a step that covers the scenario, not in a step of its own.\n\n",
     );
     user.push_str(&format!(
-        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nFor each step: ALWAYS name in read_only every existing or earlier-created file that its code or tests use.\nALWAYS list each file in exactly one list: files for a production file the step creates or changes, read_only for a file it only reads, tests for every test file the step creates or changes.\n",
+        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nALWAYS list each file in exactly one list: files for a production file the step creates or changes, tests for every test file the step creates or changes.\n",
         input.facts.render()
     ));
     if let Some(previous) = previous {
@@ -175,15 +175,19 @@ mod tests {
     }
 
     #[test]
-    fn the_scenario_rules_follow_the_scenarios_and_the_read_only_rule_follows_the_facts() {
+    fn the_scenario_rules_follow_the_scenarios_and_the_file_rules_follow_the_facts() {
         let (system, user) = user_text(None);
         let last_case = user.find("- input = no thing").unwrap();
         let scenario_rule = user.find("For each case of a scenario outline").unwrap();
         let repository = user.find("## Repository").unwrap();
         assert!(last_case < scenario_rule && scenario_rule < repository, "{user}");
-        assert!(user.find("name in read_only").unwrap() > user.find("Root package:").unwrap());
+        assert!(user.find("ALWAYS list each file").unwrap() > user.find("Root package:").unwrap());
         assert!(
-            !system.contains("read_only") && !system.contains("covers"),
+            !user.contains("read_only") && !system.contains("read_only"),
+            "the model is not asked what a step reads; the harness works it out: {user}"
+        );
+        assert!(
+            !system.contains("covers"),
             "those rules sit next to their content: {system}"
         );
     }

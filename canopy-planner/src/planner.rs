@@ -117,7 +117,7 @@ impl Planner {
                         request.story,
                         request.feature_path,
                         &context,
-                        request.root,
+                        &request.facts.files,
                     ) {
                         Err(reason) => (Some(response.content), None, vec![Problem::Unparseable(reason)]),
                         Ok(plan) => {
@@ -156,11 +156,11 @@ mod tests {
     const GOOD: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
        "files":["src/main/java/com/example/widgets/domain/Widget.java"],
-       "read_only":[],"tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first","second"]}]}"#;
+       "tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
        "files":["src/main/java/com/example/widgets/domain/Widget.java"],
-       "read_only":[],"tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first"]}]}"#;
+       "tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first"]}]}"#;
 
     struct Script {
         replies: Mutex<VecDeque<Result<LlmResponse, LlmError>>>,
