@@ -6,7 +6,7 @@ date_discovered: 2026-10-10
 related_principles: []
 related_narratives: []
 related_reports: []
-related_design_docs: [new-course-from-java-harness-and-nexus2.md]
+related_design_docs: [new-course-from-java-harness-and-nexus2.md, planner-first-increment.md]
 ---
 
 # Question
