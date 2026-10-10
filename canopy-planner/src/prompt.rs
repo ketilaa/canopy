@@ -63,7 +63,7 @@ pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
 For each case of a scenario outline: ALWAYS write a test with a concrete input value, in a step that covers the scenario, not in a step of its own.\n\n",
     );
     user.push_str(&format!(
-        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nALWAYS list each file in exactly one list: files for a production file the step creates or changes, tests for every test file the step creates or changes.\n",
+        "## Repository\n{}\nALWAYS name each class by its fully qualified name: classes for each production class the step creates or changes, test_classes for each test class it creates or changes.\n",
         input.facts.render()
     ));
     if let Some(previous) = previous {
@@ -116,10 +116,16 @@ mod tests {
     }
 
     #[test]
-    fn the_repository_facts_sit_in_the_user_message_with_the_path_rule_next_to_them() {
+    fn the_repository_facts_sit_in_the_user_message_with_the_class_rule_next_to_them() {
         let (_, user) = user_text(None);
         let facts_at = user.find("Root package: com.example.widgets").expect("facts present");
-        let rule_at = user.find("ALWAYS create new files under").expect("path rule present");
+        let rule_at = user
+            .find("ALWAYS name each class by its fully qualified name")
+            .expect("class rule present");
+        assert!(
+            !user.contains("ALWAYS create new files under"),
+            "paths are the harness's: {user}"
+        );
         assert!(
             rule_at > facts_at && rule_at - facts_at < 1500,
             "the rule follows the facts closely"
@@ -146,17 +152,20 @@ mod tests {
         );
         let facts_at = user.find("Root package:").unwrap();
         let rule_at = user
-            .find("ALWAYS list each file in exactly one list")
-            .expect("list rule");
+            .find("ALWAYS name each class by its fully qualified name")
+            .expect("class rule");
         assert!(
             rule_at > facts_at,
             "the list rule sits with the repository facts: {user}"
         );
         assert!(
-            user.contains("files for a production file the step creates or changes"),
+            user.contains("classes for each production class the step creates or changes"),
             "{user}"
         );
-        assert!(user.contains("tests for every test file"), "{user}");
+        assert!(
+            user.contains("test_classes for each test class it creates or changes"),
+            "{user}"
+        );
         assert!(
             !user.contains("modify for"),
             "the model no longer chooses create or modify: {user}"
@@ -181,7 +190,7 @@ mod tests {
         let scenario_rule = user.find("For each case of a scenario outline").unwrap();
         let repository = user.find("## Repository").unwrap();
         assert!(last_case < scenario_rule && scenario_rule < repository, "{user}");
-        assert!(user.find("ALWAYS list each file").unwrap() > user.find("Root package:").unwrap());
+        assert!(user.find("ALWAYS name each class").unwrap() > user.find("Root package:").unwrap());
         assert!(
             !user.contains("read_only") && !system.contains("read_only"),
             "the model is not asked what a step reads; the harness works it out: {user}"

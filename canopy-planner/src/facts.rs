@@ -29,6 +29,10 @@ pub struct RepoFacts {
     pub root_package: String,
     /// Every file under `src`, relative to the repository root, sorted. Placeholders are left out.
     pub files: Vec<String>,
+    /// The qualified names of the production classes (`src/main/java`), sorted.
+    pub classes: Vec<String>,
+    /// The qualified names of the test classes (`src/test/java`), sorted.
+    pub test_classes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -47,6 +51,15 @@ impl RepoFacts {
         walk(root, &root.join("src"), &mut files);
         files.sort();
         let root_package = application_package(root, &files).ok_or(FactsError::NoApplicationClass)?;
+        let classes_under = |prefix: &str| -> Vec<String> {
+            files
+                .iter()
+                .filter(|f| f.starts_with(prefix))
+                .filter_map(|f| java::qualified_name_of_source(f))
+                .collect()
+        };
+        let classes = classes_under("src/main/java/");
+        let test_classes = classes_under("src/test/java/");
         Ok(Self {
             build_tool: BuildTool::Maven,
             java_version: element(&pom, "java.version").map(str::to_string),
@@ -54,6 +67,8 @@ impl RepoFacts {
             dependencies: dependencies(&pom),
             root_package,
             files,
+            classes,
+            test_classes,
         })
     }
 
@@ -112,13 +127,22 @@ impl RepoFacts {
         if !self.has_database_library() {
             lines.push("Storage: no database or JPA library is available; keep data in memory.".to_string());
         }
-        if !self.files.is_empty() {
-            let shown = self.files.iter().take(MAX_LISTED_FILES).cloned().collect::<Vec<_>>();
-            let mut listed = shown.join(", ");
-            if self.files.len() > MAX_LISTED_FILES {
-                listed.push_str(&format!(", and {} more", self.files.len() - MAX_LISTED_FILES));
+        for (label, classes) in [
+            ("Existing classes", &self.classes),
+            ("Existing test classes", &self.test_classes),
+        ] {
+            if !classes.is_empty() {
+                let mut listed = classes
+                    .iter()
+                    .take(MAX_LISTED_FILES)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if classes.len() > MAX_LISTED_FILES {
+                    listed.push_str(&format!(", and {} more", classes.len() - MAX_LISTED_FILES));
+                }
+                lines.push(format!("{label}: {listed}"));
             }
-            lines.push(format!("Existing files: {listed}"));
         }
         lines.join("\n")
     }
@@ -320,7 +344,7 @@ mod tests {
         assert!(text.contains("spring-boot-starter-web"), "{text}");
         assert!(text.contains("spring-boot-starter-test (test)"), "{text}");
         assert!(
-            text.contains("src/main/java/com/example/widgets/WidgetsApplication.java"),
+            text.contains("Existing classes: com.example.widgets.WidgetsApplication"),
             "{text}"
         );
     }
@@ -355,6 +379,44 @@ mod tests {
             assert!(facts.has_database_library(), "{artifact}");
             assert!(!facts.render().contains("Storage:"), "{artifact}");
         }
+    }
+
+    #[test]
+    fn existing_classes_are_listed_by_qualified_name_production_and_test_apart_and_without_paths() {
+        let dir = scaffold();
+        write(
+            dir.path(),
+            "src/main/java/com/example/widgets/domain/Widget.java",
+            "package x;",
+        );
+        write(
+            dir.path(),
+            "src/test/java/com/example/widgets/domain/WidgetTest.java",
+            "package x;",
+        );
+        write(dir.path(), "src/main/resources/application.properties", "a=b");
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        assert_eq!(
+            facts.classes,
+            [
+                "com.example.widgets.WidgetsApplication",
+                "com.example.widgets.domain.Widget"
+            ]
+        );
+        assert_eq!(facts.test_classes, ["com.example.widgets.domain.WidgetTest"]);
+        let text = facts.render();
+        assert!(
+            text.contains(
+                "Existing classes: com.example.widgets.WidgetsApplication, com.example.widgets.domain.Widget"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("Existing test classes: com.example.widgets.domain.WidgetTest"),
+            "{text}"
+        );
+        assert!(!text.contains("Existing files"), "{text}");
+        assert!(!text.contains(".java"), "symbols, not paths: {text}");
     }
 
     #[test]

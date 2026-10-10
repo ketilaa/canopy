@@ -97,7 +97,7 @@ impl Planner {
                 },
                 messages: prompt::messages(&input, previous.as_ref()),
                 schema_name: "plan".into(),
-                schema: draft::schema(&ids),
+                schema: draft::schema(&ids, &request.facts.root_package),
                 thinking: false,
             };
             let context = request.facts.render();
@@ -117,6 +117,7 @@ impl Planner {
                         request.story,
                         request.feature_path,
                         &context,
+                        &request.facts.root_package,
                         &request.facts.files,
                     ) {
                         Err(reason) => (Some(response.content), None, vec![Problem::Unparseable(reason)]),
@@ -155,12 +156,12 @@ mod tests {
 
     const GOOD: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
-       "files":["src/main/java/com/example/widgets/domain/Widget.java"],
-       "tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first","second"]}]}"#;
+       "classes":["com.example.widgets.domain.Widget"],
+       "test_classes":["com.example.widgets.domain.WidgetTest"],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
-       "files":["src/main/java/com/example/widgets/domain/Widget.java"],
-       "tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first"]}]}"#;
+       "classes":["com.example.widgets.domain.Widget"],
+       "test_classes":["com.example.widgets.domain.WidgetTest"],"covers":["first"]}]}"#;
 
     struct Script {
         replies: Mutex<VecDeque<Result<LlmResponse, LlmError>>>,

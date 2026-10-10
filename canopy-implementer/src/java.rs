@@ -48,6 +48,25 @@ fn source_package_of(path: &str) -> Option<String> {
     Some(directory.replace('/', "."))
 }
 
+/// `com.example.Widget` gives `src/main/java/com/example/Widget.java`.
+pub fn main_source_path(qualified: &str) -> String {
+    format!("src/main/java/{}.java", qualified.replace('.', "/"))
+}
+
+/// `com.example.WidgetTest` gives `src/test/java/com/example/WidgetTest.java`.
+pub fn test_source_path(qualified: &str) -> String {
+    format!("src/test/java/{}.java", qualified.replace('.', "/"))
+}
+
+/// The qualified class name of a `.java` file under `src/main/java` or `src/test/java`; `None` for anything else.
+pub fn qualified_name_of_source(path: &str) -> Option<String> {
+    let inside = path
+        .strip_prefix("src/main/java/")
+        .or_else(|| path.strip_prefix("src/test/java/"))?
+        .strip_suffix(".java")?;
+    Some(inside.replace('/', "."))
+}
+
 /// `src/main/java/com/example/greeting/Greeter.java` gives `com.example.greeting.Greeter`.
 pub fn qualified_name(path: &str) -> Option<String> {
     let package = package_of(path)?;
@@ -211,6 +230,35 @@ pub fn missing_imports(path: &str, source: &str, index: &HashMap<String, Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_qualified_class_name_gives_its_source_path_under_main_or_test() {
+        assert_eq!(
+            main_source_path("com.example.widgets.domain.Widget"),
+            "src/main/java/com/example/widgets/domain/Widget.java"
+        );
+        assert_eq!(
+            test_source_path("com.example.widgets.WidgetTest"),
+            "src/test/java/com/example/widgets/WidgetTest.java"
+        );
+    }
+
+    #[test]
+    fn a_source_path_gives_back_its_qualified_class_name_for_main_and_test_files() {
+        assert_eq!(
+            qualified_name_of_source("src/main/java/com/example/Widget.java").as_deref(),
+            Some("com.example.Widget")
+        );
+        assert_eq!(
+            qualified_name_of_source("src/test/java/com/example/WidgetTest.java").as_deref(),
+            Some("com.example.WidgetTest")
+        );
+        assert_eq!(
+            qualified_name_of_source("src/main/resources/application.properties"),
+            None
+        );
+        assert_eq!(qualified_name_of_source("pom.xml"), None);
+    }
 
     #[test]
     fn the_package_comes_from_the_path_under_src_main_java() {
