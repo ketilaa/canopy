@@ -53,6 +53,22 @@ pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
     })
 }
 
+/// Who wrote each field of a drafted plan: the step fields the model is asked for (read from the schema, so
+/// the list cannot drift), the step fields the harness derives, and the plan-level fields the harness sets.
+/// Recorded beside every generated plan so a run can be read as "what did the model decide".
+pub fn provenance(scenario_ids: &[String], root_package: &str) -> Value {
+    let schema = schema(scenario_ids, root_package);
+    let authored: Vec<&String> = schema["properties"]["steps"]["items"]["properties"]
+        .as_object()
+        .map(|properties| properties.keys().collect())
+        .unwrap_or_default();
+    json!({
+        "model_authored": authored,
+        "harness_derived_per_step": ["context", "create", "kind", "modify", "read_only"],
+        "harness_derived_per_plan": ["feature", "id", "story"],
+    })
+}
+
 /// The plan a draft describes. The id, the story, the feature path, every step's kind (a behaviour change),
 /// every step's context (the repository facts), the source path of every class, whether each file is created
 /// or modified, and what a step reads all come from the harness, never from the model. `existing` is every
@@ -271,6 +287,45 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert_eq!(required, ["id", "instruction", "classes", "test_classes", "covers"]);
+    }
+
+    #[test]
+    fn provenance_says_which_step_fields_the_model_wrote_and_which_the_harness_derived() {
+        let p = provenance(&ids(), ROOT);
+        assert_eq!(
+            p["model_authored"],
+            serde_json::json!(["classes", "covers", "id", "instruction", "test_classes"]),
+            "taken from the schema, so it cannot drift from what the model is asked for"
+        );
+        assert_eq!(
+            p["harness_derived_per_step"],
+            serde_json::json!(["context", "create", "kind", "modify", "read_only"])
+        );
+        assert_eq!(
+            p["harness_derived_per_plan"],
+            serde_json::json!(["feature", "id", "story"])
+        );
+        let authored: Vec<&str> = p["model_authored"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let derived: Vec<&str> = p["harness_derived_per_step"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(authored.iter().all(|f| !derived.contains(f)), "a field has one author");
+        let plan = plan_of(DRAFT, &[]).unwrap();
+        let step = serde_json::to_value(&plan.steps[0]).unwrap();
+        for key in step.as_object().unwrap().keys() {
+            assert!(
+                authored.contains(&key.as_str()) || derived.contains(&key.as_str()),
+                "{key} of a plan step is neither model-authored nor harness-derived"
+            );
+        }
     }
 
     const DRAFT: &str = r#"{"steps":[{"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]}]}"#;

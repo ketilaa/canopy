@@ -23,6 +23,7 @@ use canopy_implementer::observe::{
 };
 use canopy_implementer::orchestrator::Orchestrator;
 use canopy_implementer::plan::Plan;
+use canopy_implementer::report::{content_id, RunReport};
 use canopy_implementer::structure::{self, Check};
 use serde_json::json;
 
@@ -694,6 +695,13 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     let step_ms = started.elapsed().as_millis() as u64;
     let metrics_after_step = metrics.snapshot();
     let nav = navigation(&recorder.events());
+    let run_report = RunReport::from_events(
+        &recorder
+            .events()
+            .iter()
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect::<Vec<_>>(),
+    );
 
     // What the run left behind, before the hidden test is added.
     let own_tests = count_own_tests(&config.repo);
@@ -769,12 +777,38 @@ tests added: {tests_added} (need {}); scored: {scored}",
             "wasted_calls": nav.wasted_calls,
         },
         "metrics": metrics_after_step,
+        "report": run_report,
+        "plan_content_id": plan_text.as_deref().map(content_id),
     });
     std::fs::write(
         run_dir.join("summary.json"),
         serde_json::to_string_pretty(&summary).unwrap(),
     )
     .map_err(|e| e.to_string())?;
+
+    // Tell the plan's own directory how this run of it went, so the Planner's batch can be joined to it.
+    if let Some(plan_path) = &config.plan {
+        if let Some(dir) = plan_path.parent() {
+            let line = json!({
+                "implementer_batch": batch_id,
+                "run": n,
+                "scored": scored,
+                "steps_passed": run_report.steps_passed,
+                "steps_total": run_report.steps_total,
+                "failed_step": run_report.failed_step,
+                "stop_reason": run_report.steps.iter().find(|s| !s.passed).and_then(|s| s.stop_reason.clone()),
+                "plan_content_id": plan_text.as_deref().map(content_id),
+            });
+            let appended = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("implementer-runs.jsonl"))
+                .and_then(|mut f| std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes()));
+            if let Err(e) = appended {
+                println!("  could not record the run next to its plan: {e}");
+            }
+        }
+    }
 
     Ok(RunResult {
         n,

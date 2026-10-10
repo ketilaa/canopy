@@ -16,6 +16,7 @@ use std::time::Duration;
 use canopy_implementer::llm::{LlmClient, ModelEndpoint, Sampling};
 use canopy_implementer::observe::{now_iso, MetricsObserver, Observers, RunEvent, RunObserver, TraceWriter};
 use canopy_implementer::plan::Plan;
+use canopy_implementer::report::content_id;
 use canopy_planner::facts::RepoFacts;
 use canopy_planner::gherkin::Feature;
 use canopy_planner::planner::{Outcome, Planner, Problem, Request};
@@ -247,7 +248,17 @@ fn run_one(
     let mut diff_json = serde_json::Value::Null;
     let mut files_match_golden = None;
     if let Some(plan) = &outcome.plan {
-        std::fs::write(run_dir.join("plan.yaml"), plan.to_yaml()).map_err(|e| e.to_string())?;
+        let yaml = plan.to_yaml();
+        std::fs::write(run_dir.join("plan.yaml"), &yaml).map_err(|e| e.to_string())?;
+        // What a later Implementer run needs to say "this is that plan", and who wrote each field.
+        let meta = json!({
+            "planner_batch": batch_id,
+            "planner_run": n,
+            "plan_content_id": content_id(&yaml),
+            "provenance": canopy_planner::draft::provenance(&feature.scenario_ids(), &facts.root_package),
+        });
+        std::fs::write(run_dir.join("plan.meta.json"), serde_json::to_string_pretty(&meta).unwrap())
+            .map_err(|e| e.to_string())?;
         std::fs::write(run_dir.join("plan.md"), render_markdown(plan, &feature)).map_err(|e| e.to_string())?;
         let diff = compare_created_files(plan, &golden);
         files_match_golden = Some(diff.matches());

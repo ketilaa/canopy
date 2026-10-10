@@ -87,7 +87,7 @@ impl RunReport {
                     if let Some(step) = report.step_mut(text("step_id")) {
                         step.tool_calls += 1;
                         if event.get("outcome").and_then(Value::as_str) == Some("refused") {
-                            let reason = refusal_reason(&text("result").unwrap_or_default());
+                            let reason = class_of(&text("result").unwrap_or_default());
                             *step.refusals.entry(reason).or_insert(0) += 1;
                         }
                     }
@@ -129,31 +129,88 @@ impl RunReport {
     }
 }
 
-/// A refusal's text with the names taken out (backticked names and `.java` paths), so refusals that differ
-/// only in which class they mention count as one reason.
-fn refusal_reason(text: &str) -> String {
+/// A short, stable identity for a piece of text (16 hex digits of FNV-1a 64), used to tell that a plan run
+/// by the Implementer is the plan the Planner wrote. Not a security hash.
+pub fn content_id(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// A failure's text with what varies taken out, so failures that differ only in a name count as one class:
+/// backticked names, quoted spans, `.java` paths, `src/...` paths, a leading `file:line:col:` compiler
+/// location, and the id after `step`.
+pub fn class_of(text: &str) -> String {
     let mut out = String::new();
-    let mut in_ticks = false;
+    let (mut in_ticks, mut in_quotes) = (false, false);
     for c in text.chars() {
         match c {
-            '`' if !in_ticks => {
+            '`' if !in_quotes && !in_ticks => {
                 in_ticks = true;
                 out.push('X');
             }
-            '`' => in_ticks = false,
-            _ if in_ticks => {}
+            '`' if in_ticks => in_ticks = false,
+            '"' if !in_ticks && !in_quotes => {
+                in_quotes = true;
+                out.push('X');
+            }
+            '"' if in_quotes => in_quotes = false,
+            _ if in_ticks || in_quotes => {}
             _ => out.push(c),
         }
     }
-    out.split_whitespace()
-        .map(
-            |word| match word.trim_end_matches(['.', ',', ':', ';']).ends_with(".java") {
-                true => "X".to_string() + &word[word.trim_end_matches(['.', ',', ':', ';']).len()..],
-                false => word.to_string(),
-            },
-        )
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut words: Vec<String> = Vec::new();
+    for word in out.split_whitespace() {
+        let core = word.trim_end_matches(['.', ',', ':', ';']);
+        let tail = &word[core.len()..];
+        let is_path =
+            core.ends_with(".java") || core.starts_with("src/") || core.contains(".java:") || is_class_name(core);
+        let after_step = words.last().is_some_and(|w| w == "step");
+        words.push(match (is_path, after_step) {
+            (true, _) => format!("X{}", if core.contains(".java:") { "" } else { tail }),
+            (false, true) => format!("X{tail}"),
+            _ => word.to_string(),
+        });
+    }
+    words.join(" ")
+}
+
+/// A CamelCase identifier: letters and digits only, an uppercase first letter, and a second uppercase letter.
+fn is_class_name(word: &str) -> bool {
+    word.chars().all(|c| c.is_ascii_alphanumeric())
+        && word.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && word.chars().skip(1).any(|c| c.is_ascii_uppercase())
+        && word.chars().any(|c| c.is_ascii_lowercase())
+}
+
+/// Failure classes counted by source and label, to find the dominant remaining cost.
+#[derive(Debug, Default)]
+pub struct FailureClasses {
+    counts: BTreeMap<(String, String), u32>,
+}
+
+impl FailureClasses {
+    pub fn add(&mut self, source: &str, label: &str) {
+        *self.counts.entry((source.to_string(), label.to_string())).or_insert(0) += 1;
+    }
+
+    pub fn total(&self) -> u32 {
+        self.counts.values().sum()
+    }
+
+    /// `(source, label, count)`, most frequent first; equal counts in source then label order.
+    pub fn ranked(&self) -> Vec<(String, String, u32)> {
+        let mut all: Vec<(String, String, u32)> = self
+            .counts
+            .iter()
+            .map(|((source, label), count)| (source.clone(), label.clone(), *count))
+            .collect();
+        all.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        all
+    }
 }
 
 fn head(feedback: &str) -> String {
@@ -275,6 +332,61 @@ mod tests {
             .join("\n");
         let from_file = RunReport::from_jsonl(&format!("not json\n{trace}\n\n"));
         assert_eq!(from_file, RunReport::from_events(&events()));
+    }
+
+    #[test]
+    fn a_failure_class_takes_out_names_quotes_paths_and_step_ids_so_like_failures_group() {
+        let classes = [
+            class_of("step create-widget-model: path \"src/main/java/p/Widget.java\" is listed more than once; list each file once"),
+            class_of("step add-getters: path \"src/main/java/p/Other.java\" is listed more than once; list each file once"),
+        ];
+        assert_eq!(classes[0], classes[1]);
+        assert_eq!(
+            classes[0],
+            "step X: path X is listed more than once; list each file once"
+        );
+        assert_eq!(
+            class_of("src/main/java/p/A.java:3:27: package jakarta.persistence does not exist"),
+            "X package jakarta.persistence does not exist",
+            "a compiler line keeps what is missing and loses where"
+        );
+        assert_ne!(
+            class_of("Not submitted. No changed test mentions `A`."),
+            class_of("Not submitted. You did not create `A`.")
+        );
+    }
+
+    #[test]
+    fn failure_classes_are_counted_and_ordered_by_frequency_with_ties_in_name_order() {
+        let mut classes = FailureClasses::default();
+        for label in ["b", "a", "b", "c", "a", "b"] {
+            classes.add("planner", label);
+        }
+        classes.add("implementer", "a");
+        let ranked = classes.ranked();
+        assert_eq!(ranked[0], ("planner".to_string(), "b".to_string(), 3));
+        assert_eq!(ranked[1], ("planner".to_string(), "a".to_string(), 2));
+        assert_eq!(
+            ranked[2],
+            ("implementer".to_string(), "a".to_string(), 1),
+            "ties by source then label: implementer before planner"
+        );
+        assert_eq!(ranked.len(), 4);
+        assert_eq!(classes.total(), 7);
+    }
+
+    #[test]
+    fn a_content_id_is_stable_short_and_changes_with_the_content() {
+        let id = content_id("id: p\nsteps: []\n");
+        assert_eq!(id, content_id("id: p\nsteps: []\n"));
+        assert_eq!(id.len(), 16);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(id, content_id("id: q\nsteps: []\n"));
+        assert_eq!(
+            content_id(""),
+            "cbf29ce484222325",
+            "the FNV-1a offset basis: a fixed, documented algorithm"
+        );
     }
 
     #[test]
