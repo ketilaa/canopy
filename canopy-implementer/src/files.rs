@@ -29,6 +29,39 @@ pub struct GeneratedFiles {
     pub files: Vec<GeneratedFile>,
 }
 
+/// One line of the model's import checklist: a file, and a class from another package it imports.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredImport {
+    pub file: String,
+    #[serde(deserialize_with = "qualified_name")]
+    pub import: String,
+}
+
+/// `import java.util.UUID;` and `java.util.UUID` both mean `java.util.UUID`.
+fn qualified_name<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let raw = String::deserialize(deserializer)?;
+    let raw = raw.trim();
+    let raw = raw.strip_prefix("import ").unwrap_or(raw);
+    Ok(raw.trim_end_matches(';').trim().to_string())
+}
+
+/// What `submit_files` carries when the model must first list its imports: the checklist, then the files.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Submission {
+    #[serde(default, rename = "declared_imports")]
+    pub imports: Option<Vec<DeclaredImport>>,
+    #[serde(flatten)]
+    pub files: GeneratedFiles,
+}
+
+impl Submission {
+    pub fn parse(raw: &str) -> Result<Self, FilesError> {
+        serde_json::from_str(raw).map_err(|e| FilesError::Parse(e.to_string()))
+    }
+}
+
 impl GeneratedFiles {
     /// The JSON schema the model's answer is constrained to.
     pub fn schema() -> serde_json::Value {
@@ -200,5 +233,20 @@ mod tests {
             .write_into(dir.path())
             .unwrap_err();
         assert_eq!(err, FilesError::Duplicate("a.txt".to_string()));
+    }
+
+    #[test]
+    fn a_submission_may_declare_imports_per_file_and_the_declaration_is_optional() {
+        let with = Submission::parse(
+            r#"{"declared_imports":[{"file":"a/B.java","import":"java.util.Optional"},{"file":"a/B.java","import":"import java.util.UUID;"}],"files":[{"path":"a/B.java","content":"x"}]}"#,
+        )
+        .unwrap();
+        let declared = with.imports.as_ref().unwrap();
+        assert_eq!(declared[0], DeclaredImport { file: "a/B.java".into(), import: "java.util.Optional".into() });
+        assert_eq!(declared[1].import, "java.util.UUID", "an import line is reduced to the qualified name");
+        assert_eq!(with.files.files.len(), 1);
+        let without = Submission::parse(r#"{"files":[{"path":"a/B.java","content":"x"}]}"#).unwrap();
+        assert!(without.imports.is_none());
+        assert!(Submission::parse(r#"{"files":[],"extra":1}"#).is_err());
     }
 }

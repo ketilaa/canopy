@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::files::GeneratedFiles;
+use crate::files::{DeclaredImport, GeneratedFiles};
 use crate::implementer::{Scope, StepKind};
 use crate::java;
 use crate::sandbox::RepoPath;
@@ -36,6 +36,10 @@ pub enum Rejection {
     TestsUnrelated(Vec<String>),
     /// Files that use a class from another package without importing it: each file and the qualified names to add.
     MissingImports(Vec<(String, Vec<String>)>),
+    /// The submission carries no import checklist although one is required.
+    ImportsNotDeclared,
+    /// Imports the checklist lists that the file does not contain: each file and the qualified name.
+    DeclaredImportAbsent(Vec<(String, String)>),
 }
 
 impl Rejection {
@@ -109,6 +113,21 @@ impl Rejection {
                      behaviour, and submit all the files.",
                     classes = classes.join(", "),
                     paths = paths.join(", ")
+                )
+            }
+            Rejection::ImportsNotDeclared => "Not submitted. submit_files needs the `declared_imports` list: for every file, each \
+                 class it uses from another package and its qualified name, written before the files. Send it \
+                 again with the `declared_imports` list first."
+                .to_string(),
+            Rejection::DeclaredImportAbsent(entries) => {
+                let lines: Vec<String> = entries
+                    .iter()
+                    .map(|(path, name)| format!("{path} does not contain import {name};"))
+                    .collect();
+                format!(
+                    "Not submitted. Your imports list and your files disagree: {}. Put the import in the file, \
+                     then call submit_files again with all your files.",
+                    lines.join("; ")
                 )
             }
             Rejection::MissingImports(files) => {
@@ -312,6 +331,38 @@ fn uncovered(production: &[(String, &str)], tests: &[&str]) -> Vec<String> {
                 .map(|((class, _), _)| class.clone())
                 .collect();
         }
+    }
+}
+
+/// Checks the model's import checklist against its files: when one is required it must be there, and every
+/// import it lists must be in the file it names (exactly, or through a wildcard of the same package). An entry for
+/// a file that was not submitted is ignored. A deterministic audit: nothing is changed.
+pub fn check_declared_imports(
+    files: &GeneratedFiles,
+    declared: Option<&[DeclaredImport]>,
+    required: bool,
+) -> Result<(), Rejection> {
+    let Some(declared) = declared else {
+        return if required { Err(Rejection::ImportsNotDeclared) } else { Ok(()) };
+    };
+    let mut absent: Vec<(String, String)> = Vec::new();
+    for entry in declared {
+        let Some(file) = files.files.iter().find(|f| f.path.trim_start_matches("./") == entry.file.trim_start_matches("./"))
+        else {
+            continue;
+        };
+        let imports = java::imports_in(&file.content);
+        let package = entry.import.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
+        let present = imports.contains(&entry.import) || imports.contains(&format!("{package}.*"));
+        let entry_pair = (file.path.clone(), entry.import.clone());
+        if !present && !absent.contains(&entry_pair) {
+            absent.push(entry_pair);
+        }
+    }
+    if absent.is_empty() {
+        Ok(())
+    } else {
+        Err(Rejection::DeclaredImportAbsent(absent))
     }
 }
 
@@ -754,6 +805,44 @@ mod tests {
             r,
             Err(Rejection::MissingImports(vec![(GREETER.to_string(), vec!["java.util.List".to_string()])]))
         );
+    }
+
+    fn declared(pairs: &[(&str, &str)]) -> Vec<crate::files::DeclaredImport> {
+        pairs
+            .iter()
+            .map(|(f, i)| crate::files::DeclaredImport { file: f.to_string(), import: i.to_string() })
+            .collect()
+    }
+
+    #[test]
+    fn a_required_declaration_that_is_missing_is_refused_and_an_optional_one_is_not() {
+        let submitted = files(&[(GREETER, "package com.example;\nclass Greeter { }\n")]);
+        assert_eq!(check_declared_imports(&submitted, None, true), Err(Rejection::ImportsNotDeclared));
+        assert!(Rejection::ImportsNotDeclared.message().contains("declared_imports"));
+        assert_eq!(check_declared_imports(&submitted, None, false), Ok(()));
+    }
+
+    #[test]
+    fn a_declared_import_the_file_does_not_contain_is_refused_naming_the_file_and_the_line() {
+        let src = "package com.example;\nimport java.util.UUID;\nclass Greeter { }\n";
+        let submitted = files(&[(GREETER, src)]);
+        let ok = declared(&[(GREETER, "java.util.UUID")]);
+        assert_eq!(check_declared_imports(&submitted, Some(&ok), true), Ok(()));
+        let wildcard = files(&[(GREETER, "package com.example;\nimport java.util.*;\nclass Greeter { }\n")]);
+        assert_eq!(check_declared_imports(&wildcard, Some(&ok), true), Ok(()));
+        let lie = declared(&[(GREETER, "java.util.Optional")]);
+        let r = check_declared_imports(&submitted, Some(&lie), true);
+        assert_eq!(r, Err(Rejection::DeclaredImportAbsent(vec![(GREETER.to_string(), "java.util.Optional".to_string())])));
+        let message = r.unwrap_err().message();
+        assert!(message.contains(GREETER) && message.contains("import java.util.Optional;"), "{message}");
+    }
+
+    #[test]
+    fn an_empty_declaration_is_a_valid_answer_and_a_declaration_for_a_file_not_submitted_is_ignored() {
+        let submitted = files(&[(GREETER, "package com.example;\nclass Greeter { }\n")]);
+        assert_eq!(check_declared_imports(&submitted, Some(&[]), true), Ok(()));
+        let other = declared(&[("src/main/java/com/example/Elsewhere.java", "java.util.UUID")]);
+        assert_eq!(check_declared_imports(&submitted, Some(&other), true), Ok(()));
     }
 
     #[test]

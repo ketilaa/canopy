@@ -52,6 +52,12 @@ impl ToolBox {
     }
 
     pub fn specs() -> Vec<ToolSpec> {
+        Self::specs_with(false)
+    }
+
+    /// With `declare_imports`, `submit_files` first asks for a checklist: for every file, the classes it uses from
+    /// another package and the import for each, written before the files themselves.
+    pub fn specs_with(declare_imports: bool) -> Vec<ToolSpec> {
         vec![
             ToolSpec {
                 name: "glob",
@@ -76,15 +82,42 @@ impl ToolBox {
                 name: "submit_files",
                 description: "Finish the task: submit the complete new content of every file you create or \
                               change. Every existing file you change must have been read with read_file first.",
-                parameters: json!({
-                    "type": "object",
-                    "properties": { "files": { "type": "array", "items": {
+                parameters: if declare_imports {
+                    json!({
                         "type": "object",
-                        "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
-                        "required": ["path", "content"]
-                    } } },
-                    "required": ["files"]
-                }),
+                        "properties": {
+                            "declared_imports": {
+                                "type": "array",
+                                "description": "Checklist, written before the files: for every file, each class it uses \
+                                                from another package and its qualified name. Empty when none.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "file": { "type": "string" },
+                                        "import": { "type": "string", "description": "For example java.util.Optional" }
+                                    },
+                                    "required": ["file", "import"]
+                                }
+                            },
+                            "files": { "type": "array", "items": {
+                                "type": "object",
+                                "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+                                "required": ["path", "content"]
+                            } }
+                        },
+                        "required": ["declared_imports", "files"]
+                    })
+                } else {
+                    json!({
+                        "type": "object",
+                        "properties": { "files": { "type": "array", "items": {
+                            "type": "object",
+                            "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+                            "required": ["path", "content"]
+                        } } },
+                        "required": ["files"]
+                    })
+                },
             },
         ]
     }
@@ -471,5 +504,18 @@ mod tests {
             "{}",
             unknown.text
         );
+    }
+
+    #[test]
+    fn the_declared_imports_variant_of_submit_files_asks_for_imports_before_files() {
+        let plain = ToolBox::specs();
+        assert!(plain[2].parameters["properties"].get("declared_imports").is_none());
+        let declared = ToolBox::specs_with(true);
+        let submit = &declared[2].parameters;
+        assert_eq!(submit["required"], json!(["declared_imports", "files"]));
+        let keys: Vec<&String> = submit["properties"].as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["declared_imports", "files"], "the checklist must come first so it is written first");
+        assert_eq!(submit["properties"]["declared_imports"]["items"]["required"], json!(["file", "import"]));
+        assert_eq!(declared[0], plain[0]);
     }
 }

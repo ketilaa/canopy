@@ -3,7 +3,7 @@
 //!   cargo run -p canopy-implementer --example run_step -- [--runs 1] [--attempts 3] [--tag baseline-00-scaffold]
 //!
 //! Options: --repo <path>  --tag <git tag>  --runs <n>  --attempts <n>  --url <base url>
-//!          --model <id>   --out <dir>
+//!          --model <id>   --out <dir>   --declare-imports (the model lists its imports before the files)
 //!
 //! Each run starts from a clean checkout of the tag, writes a full event trace, and is scored by a
 //! hidden acceptance test the model never sees. Output goes to `<out>/<batch>/run-NN/`:
@@ -354,6 +354,7 @@ struct Config {
     url: String,
     model: String,
     out: PathBuf,
+    declare_imports: bool,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -367,6 +368,7 @@ fn parse_args() -> Result<Config, String> {
         url: "http://localhost:8080".into(),
         model: "Qwen/Qwen3-14B-GGUF:Q4_K_M".into(),
         out: crate_dir.join("runs"),
+        declare_imports: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -387,6 +389,7 @@ fn parse_args() -> Result<Config, String> {
             "--tag" => config.tag = value("--tag")?,
             "--runs" => config.runs = value("--runs")?.parse().map_err(|e| format!("--runs: {e}"))?,
             "--attempts" => config.attempts = value("--attempts")?.parse().map_err(|e| format!("--attempts: {e}"))?,
+            "--declare-imports" => config.declare_imports = true,
             "--url" => config.url = value("--url")?,
             "--model" => config.model = value("--model")?,
             "--out" => config.out = value("--out")?.into(),
@@ -626,7 +629,10 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
             Box::new(build),
             observers.clone(),
             config.attempts,
-            ToolLimits::default(),
+            ToolLimits {
+                declare_imports: config.declare_imports,
+                ..ToolLimits::default()
+            },
         )
     } else {
         Implementer::new(Box::new(client), Box::new(build), observers.clone(), config.attempts)
@@ -827,6 +833,7 @@ fn real_main() -> Result<(), String> {
         "url": config.url,
         "sampling": Sampling::qwen3(),
         "max_attempts": config.attempts,
+        "declare_imports": config.declare_imports,
         "runs": config.runs,
         "task": task.name,
         "repo": task.repo,

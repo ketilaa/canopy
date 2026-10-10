@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::build::Build;
-use crate::files::{GeneratedFile, GeneratedFiles};
+use crate::files::{GeneratedFile, GeneratedFiles, Submission};
 use crate::gates;
 use crate::hints;
 use crate::llm::{ChatMessage, Generator, StructuredRequest, ToolGenerator, ToolRequest};
@@ -92,6 +92,8 @@ pub struct ToolLimits {
     pub max_turns: u32,
     /// Times the model may answer in prose instead of calling a tool before the attempt is abandoned.
     pub max_steers: u32,
+    /// Whether `submit_files` must carry an import checklist, written before the files.
+    pub declare_imports: bool,
 }
 
 impl Default for ToolLimits {
@@ -100,6 +102,7 @@ impl Default for ToolLimits {
             max_tool_calls: 12,
             max_turns: 16,
             max_steers: 2,
+            declare_imports: false,
         }
     }
 }
@@ -273,7 +276,7 @@ impl Implementer {
         previous: Option<&Failure>,
     ) -> Result<GeneratedFiles, Failure> {
         let toolbox = ToolBox::new(root);
-        let tools = ToolBox::specs();
+        let tools = ToolBox::specs_with(limits.declare_imports);
         let shown = read_shown(root, &step.scope);
         let shown_paths: std::collections::HashSet<&str> = step
             .scope
@@ -367,7 +370,7 @@ impl Implementer {
                         "You already made exactly this call. Make a different call, or call submit_files.".to_string(),
                     )
                 } else if call.name == "submit_files" {
-                    match GeneratedFiles::parse(&call.arguments) {
+                    match Submission::parse(&call.arguments) {
                         Err(e) => (
                             ToolOutcome::Error,
                             format!(
@@ -375,7 +378,7 @@ impl Implementer {
                                  {{\"files\": [{{\"path\": \"...\", \"content\": \"...\"}}]}}."
                             ),
                         ),
-                        Ok(files) => {
+                        Ok(Submission { imports, files }) => {
                             let scope_check = if step.scope.is_empty() {
                                 Ok(())
                             } else {
@@ -383,7 +386,9 @@ impl Implementer {
                             };
                             // Files shown up front count as read: the model has their content.
                             let has_read = |p: &str| toolbox.has_read(p) || shown_paths.contains(p);
-                            match scope_check.and_then(|_| gates::check_submission(&files, root, &has_read, step.kind))
+                            match scope_check
+                                .and_then(|_| gates::check_declared_imports(&files, imports.as_deref(), limits.declare_imports))
+                                .and_then(|_| gates::check_submission(&files, root, &has_read, step.kind))
                             {
                                 Err(rejection) => (ToolOutcome::Refused, rejection.message()),
                                 Ok(()) => {
@@ -955,11 +960,20 @@ mod tests {
     struct ScriptedTools {
         turns: Mutex<VecDeque<Result<ToolTurn, LlmError>>>,
         requests: Arc<Mutex<Vec<Vec<ChatMessage>>>>,
+        /// The property names of submit_files in each request.
+        tools_seen: Arc<Mutex<Vec<Vec<String>>>>,
     }
 
     impl ToolGenerator for ScriptedTools {
         fn complete_with_tools(&self, request: &ToolRequest) -> Result<ToolTurn, LlmError> {
             self.requests.lock().unwrap().push(request.messages.clone());
+            let submit_properties = request
+                .tools
+                .iter()
+                .find(|tool| tool.name == "submit_files")
+                .and_then(|tool| tool.parameters["properties"].as_object().map(|p| p.keys().cloned().collect()))
+                .unwrap_or_default();
+            self.tools_seen.lock().unwrap().push(submit_properties);
             self.turns
                 .lock()
                 .unwrap()
@@ -1018,6 +1032,7 @@ mod tests {
         implementer: Implementer,
         observer: Arc<RecordingObserver>,
         requests: Arc<Mutex<Vec<Vec<ChatMessage>>>>,
+        tools_seen: Arc<Mutex<Vec<Vec<String>>>>,
         compile_calls: Arc<Mutex<u32>>,
         dir: tempfile::TempDir,
     }
@@ -1040,11 +1055,13 @@ mod tests {
     ) -> ToolRig {
         let observer = Arc::new(RecordingObserver::new());
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let tools_seen = Arc::new(Mutex::new(Vec::new()));
         let compile_calls = Arc::new(Mutex::new(0));
         let implementer = Implementer::with_tools(
             Box::new(ScriptedTools {
                 turns: Mutex::new(turns.into()),
                 requests: requests.clone(),
+                tools_seen: tools_seen.clone(),
             }),
             Box::new(ScriptedBuild {
                 compiles: Mutex::new(compiles.into()),
@@ -1073,6 +1090,7 @@ mod tests {
             implementer,
             observer,
             requests,
+            tools_seen,
             compile_calls,
             dir,
         }
@@ -1296,6 +1314,54 @@ mod tests {
             .events()
             .iter()
             .any(|e| matches!(e, RunEvent::AttemptFailed(f) if f.stage == Stage::Protocol)));
+    }
+
+    fn submit_declared(imports: &[(&str, &str)], files: &[(&str, &str)]) -> Call {
+        let imports: Vec<_> = imports.iter().map(|(f, i)| json!({ "file": f, "import": i })).collect();
+        let files: Vec<_> = files.iter().map(|(p, c)| json!({ "path": p, "content": c })).collect();
+        ("submit_files", json!({ "declared_imports": imports, "files": files }))
+    }
+
+    #[test]
+    fn with_declared_imports_on_a_submission_without_the_list_is_refused_and_one_with_it_goes_through() {
+        let files = [
+            ("src/main/java/com/example/F.java", "package com.example;\npublic class F { }\n"),
+            ("src/test/java/com/example/FTest.java", "package com.example;\nclass FTest { F f; }\n"),
+        ];
+        let rig = tool_rig(
+            vec![calls(vec![submit(&files)]), calls(vec![submit_declared(&[], &files)])],
+            vec![],
+            1,
+            ToolLimits {
+                declare_imports: true,
+                ..ToolLimits::default()
+            },
+        );
+        let result = rig.implementer.run_step(rig.dir.path(), &nav_step());
+        assert!(matches!(result, StepOutcome::Passed { .. }), "{result:?}");
+        let log = tool_log(&rig);
+        assert_eq!(log[0], ("submit_files".to_string(), ToolOutcome::Refused));
+        assert_eq!(log[1], ("submit_files".to_string(), ToolOutcome::Ok));
+    }
+
+    #[test]
+    fn the_declared_imports_variant_is_what_the_model_is_offered_only_when_switched_on() {
+        let offered = |declare: bool| {
+            let rig = tool_rig(
+                vec![prose("a"), prose("b"), prose("c")],
+                vec![],
+                1,
+                ToolLimits {
+                    declare_imports: declare,
+                    ..ToolLimits::default()
+                },
+            );
+            let _ = rig.implementer.run_step(rig.dir.path(), &nav_step());
+            let seen = rig.tools_seen.lock().unwrap().first().cloned().unwrap_or_default();
+            seen
+        };
+        assert!(offered(true).contains(&"declared_imports".to_string()));
+        assert!(!offered(false).contains(&"declared_imports".to_string()));
     }
 
     #[test]

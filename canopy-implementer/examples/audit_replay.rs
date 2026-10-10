@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 use canopy_implementer::java;
 
+type Submitted = Vec<(String, String)>;
+
 fn main() {
     let mut files_checked = 0;
     let mut flagged: Vec<(String, String, Vec<String>)> = Vec::new();
@@ -21,10 +23,10 @@ fn main() {
             let events = run.path().join("events.jsonl");
             let Ok(text) = std::fs::read_to_string(&events) else { continue };
             let mut step = String::new();
-            let mut last_submit: HashMap<String, Vec<(String, String)>> = HashMap::new();
+            let mut last_submit: HashMap<String, Submitted> = HashMap::new();
             let mut passed_steps: Vec<String> = Vec::new();
-            let mut pending: HashMap<String, Vec<(String, String)>> = HashMap::new();
-            let mut failures: Vec<(String, Vec<(String, String)>, String)> = Vec::new();
+            let mut pending: HashMap<String, Submitted> = HashMap::new();
+            let mut failures: Vec<(String, Submitted, String)> = Vec::new();
             for line in text.lines() {
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
                 let ev = &v["event"];
