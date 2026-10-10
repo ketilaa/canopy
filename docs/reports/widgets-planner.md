@@ -27,6 +27,7 @@ model class with an id and a name" and the model reached for `jakarta.persistenc
 | 3 | `27c1166` | `tests` a required, non-empty field of every step | 0/10 | 0/10 | 10 runs: a test file listed in both `create` and `tests`. No missing tests. |
 | 4 | `f6c741d` | path patterns in the schema: `create`/`modify` under `src/main`, `tests` under `src/test` | 1/10 | 0/10 | 9 runs: a file in both `create` and `modify` (see below). |
 | 5 | `7999338` | harness decides create or modify (option A): the draft lists `files`, `read_only`, `tests` only | 4/10 | 3/10 | 6 runs: a file in both `files` and `read_only` (38 occurrences over both attempts, all that one pair); 1 duplicate step id; 1 step over the size cap. |
+| 6 | `e259632` | repository facts stamped into every step as its context | 5/10 | 2/10 | same as batch 5 (the facts are not in the Planner's prompt change; validity is within noise of batch 5) |
 
 ### What the batches showed
 
@@ -44,7 +45,6 @@ model class with an id and a name" and the model reached for `jakarta.persistenc
   signatures, no concrete test values and no wiring: the three costs the hand-written plan carries. Whether
   such a plan runs is the end-to-end question, not yet asked at n=10.
 - **Cost.** A draft takes 20 to 40 s; a failed draft plus retry 40 to 80 s.
-| 6 | `e259632` | repository facts stamped into every step as its context | 5/10 | 2/10 | same as batch 5 (the facts are not in the Planner's prompt change; validity is within noise of batch 5) |
 
 ### End to end: the first model-written plans run by the Implementer
 
