@@ -38,7 +38,7 @@ steps:
       InMemoryWidgetRepository in the same package, annotated with @Repository, implementing it with a
       ConcurrentHashMap keyed by id; save stores the widget unchanged and returns it. Add
       InMemoryWidgetRepositoryTest with tests that a saved widget can be found by its id, that an unknown
-      id gives an empty result, and that saving a widget with an id that already exists replaces it.
+      id gives an empty result, and that saving a widget with an id that already exists replaces it: make one UUID id = UUID.randomUUID(), save new Widget(id, "first") and then new Widget(id, "second"), and expect findById(id) to give the widget named "second" (Widget.create gives every widget a different id, so it cannot be used for this test).
     create:
       - src/main/java/com/example/widgets/repository/WidgetRepository.java
       - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java

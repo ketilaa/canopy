@@ -39,6 +39,67 @@ pub fn subject_hint(digest: &str, submitted: &[String], root: &Path) -> Option<S
     }
 }
 
+/// Classes the JDK ships that a model forgets to import. Only consulted when the repository has no class of
+/// that name.
+const JDK_CLASSES: &[(&str, &str)] = &[
+    ("UUID", "java.util.UUID"),
+    ("Optional", "java.util.Optional"),
+    ("List", "java.util.List"),
+    ("ArrayList", "java.util.ArrayList"),
+    ("Map", "java.util.Map"),
+    ("HashMap", "java.util.HashMap"),
+    ("Set", "java.util.Set"),
+    ("HashSet", "java.util.HashSet"),
+    ("Objects", "java.util.Objects"),
+    ("Collectors", "java.util.stream.Collectors"),
+    ("ConcurrentHashMap", "java.util.concurrent.ConcurrentHashMap"),
+    ("Instant", "java.time.Instant"),
+    ("LocalDate", "java.time.LocalDate"),
+    ("BigDecimal", "java.math.BigDecimal"),
+];
+
+/// When the compiler cannot find a class, say which import would resolve it: the class's own package when it
+/// exists in `src/main/java`, otherwise a well-known JDK package. A class that is neither gets no hint.
+/// The model's files are never touched.
+pub fn import_hint(digest: &str, root: &Path) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for line in digest.lines() {
+        let Some(class) = line.trim().strip_prefix("symbol:").and_then(|s| s.trim().strip_prefix("class ")) else {
+            continue;
+        };
+        let class = class.trim();
+        if class.is_empty() || seen.iter().any(|s| s == class) {
+            continue;
+        }
+        seen.push(class.to_string());
+        let import = find_production_file(root, class)
+            .and_then(|path| package_of(&path))
+            .map(|package| format!("{package}.{class}"))
+            .or_else(|| {
+                JDK_CLASSES
+                    .iter()
+                    .find(|(name, _)| *name == class)
+                    .map(|(_, full)| full.to_string())
+            });
+        if let Some(import) = import {
+            lines.push(format!("{class} is not imported. Add: import {import};"));
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+/// `src/main/java/com/example/greeting/Greeter.java` gives `com.example.greeting`.
+fn package_of(path: &str) -> Option<String> {
+    let inside = path.strip_prefix("src/main/java/")?;
+    let (directory, _) = inside.rsplit_once('/')?;
+    Some(directory.replace('/', "."))
+}
+
 /// `NameFormatterTest.trimsTheName:27 expected ...` or `...:17 » NullPointer ...` gives `NameFormatterTest`.
 fn failing_test_class(line: &str) -> Option<String> {
     let token = line.split_whitespace().next()?;
@@ -172,5 +233,61 @@ mod tests {
             None
         );
         assert_eq!(subject_hint("", &paths(&[GREETER]), dir.path()), None);
+    }
+
+    const MISSING_FORMATTER: &str =
+        "src/test/java/com/example/GreeterTest.java:12:9: cannot find symbol\n  symbol:   class NameFormatter\n  location: class com.example.GreeterTest";
+
+    #[test]
+    fn a_missing_class_that_exists_in_the_repository_gets_the_import_line() {
+        let dir = repo();
+        let hint = import_hint(MISSING_FORMATTER, dir.path()).expect("a hint");
+        assert!(
+            hint.contains("import com.example.greeting.format.NameFormatter;"),
+            "{hint}"
+        );
+        assert!(hint.contains("NameFormatter"), "{hint}");
+    }
+
+    #[test]
+    fn a_missing_well_known_java_class_gets_its_import_line() {
+        let dir = repo();
+        let digest = "src/main/java/com/example/A.java:3:5: cannot find symbol\n  symbol:   class UUID\n  location: interface A";
+        let hint = import_hint(digest, dir.path()).expect("a hint");
+        assert!(hint.contains("import java.util.UUID;"), "{hint}");
+    }
+
+    #[test]
+    fn a_repository_class_wins_over_a_java_class_of_the_same_name() {
+        let dir = repo();
+        let p = dir.path().join("src/main/java/com/example/Optional.java");
+        std::fs::write(p, "class Optional {}").unwrap();
+        let digest = "A.java:3:5: cannot find symbol\n  symbol:   class Optional\n  location: class A";
+        let hint = import_hint(digest, dir.path()).expect("a hint");
+        assert!(hint.contains("import com.example.Optional;"), "{hint}");
+        assert!(!hint.contains("java.util"), "{hint}");
+    }
+
+    #[test]
+    fn an_unknown_missing_class_gives_no_hint() {
+        let dir = repo();
+        let digest = "A.java:3:5: cannot find symbol\n  symbol:   class Mystery\n  location: class A";
+        assert_eq!(import_hint(digest, dir.path()), None);
+    }
+
+    #[test]
+    fn a_missing_variable_or_method_gives_no_hint() {
+        let dir = repo();
+        let digest = "A.java:3:5: cannot find symbol\n  symbol:   variable UUID\n  location: class A\nA.java:4:1: cannot find symbol\n  symbol:   method Optional()";
+        assert_eq!(import_hint(digest, dir.path()), None);
+    }
+
+    #[test]
+    fn each_missing_class_is_listed_once() {
+        let dir = repo();
+        let digest = format!("{MISSING_FORMATTER}\n{MISSING_FORMATTER}\nA.java:1:1: cannot find symbol\n  symbol:   class List");
+        let hint = import_hint(&digest, dir.path()).expect("a hint");
+        assert_eq!(hint.matches("NameFormatter;").count(), 1, "{hint}");
+        assert!(hint.contains("import java.util.List;"), "{hint}");
     }
 }

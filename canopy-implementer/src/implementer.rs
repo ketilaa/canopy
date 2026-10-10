@@ -467,7 +467,12 @@ impl Implementer {
 
         let compiled = self.build.compile(root);
         if !compiled.success {
-            return Err(failure(Stage::Compile, compiled.digest, Some(files)));
+            // The digest is what the compiler said; the hint is a fact the harness adds after it.
+            let feedback = match hints::import_hint(&compiled.digest, root) {
+                Some(hint) => format!("{}\n\n{hint}", compiled.digest),
+                None => compiled.digest,
+            };
+            return Err(failure(Stage::Compile, feedback, Some(files)));
         }
         let tested = self.build.test(root);
         if !tested.success {
