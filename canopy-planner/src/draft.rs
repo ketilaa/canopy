@@ -11,6 +11,10 @@ use canopy_implementer::plan::Plan;
 /// production steps and test steps apart in 10 of 10 drafts when it was only told not to.
 pub fn schema(scenario_ids: &[String]) -> Value {
     let paths = json!({ "type": "array", "items": { "type": "string" } });
+    // Where a production file and a test file may live is part of the shape, so a test cannot be listed as
+    // production code (it was, in 10 of 10 drafts, next to the same file in `tests`).
+    let production =
+        json!({ "type": "array", "items": { "type": "string", "pattern": "^src/main/[A-Za-z0-9_./-]+$" } });
     json!({
         "type": "object",
         "properties": {
@@ -22,8 +26,8 @@ pub fn schema(scenario_ids: &[String]) -> Value {
                     "properties": {
                         "id": { "type": "string" },
                         "instruction": { "type": "string" },
-                        "create": paths,
-                        "modify": paths,
+                        "create": production,
+                        "modify": production,
                         "read_only": paths,
                         "tests": {
                             "type": "array",
@@ -31,7 +35,7 @@ pub fn schema(scenario_ids: &[String]) -> Value {
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "path": { "type": "string" },
+                                    "path": { "type": "string", "pattern": "^src/test/[A-Za-z0-9_./-]+$" },
                                     "action": { "type": "string", "enum": ["create", "modify"] }
                                 },
                                 "required": ["path", "action"],
@@ -139,6 +143,16 @@ mod tests {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
+        for list in ["create", "modify"] {
+            assert_eq!(
+                step["properties"][list]["items"]["pattern"], "^src/main/[A-Za-z0-9_./-]+$",
+                "{list} holds production files only"
+            );
+        }
+        assert_eq!(
+            step["properties"]["tests"]["items"]["properties"]["path"]["pattern"], "^src/test/[A-Za-z0-9_./-]+$",
+            "a test path is under src/test"
+        );
         let tests = &step["properties"]["tests"];
         assert_eq!(tests["minItems"], 1, "a step cannot be written without a test");
         assert_eq!(
