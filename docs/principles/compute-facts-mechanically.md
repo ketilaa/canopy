@@ -20,6 +20,7 @@ source_artifacts:
   - "commit 390b7f6 — Compute domain-event ADR existence as a fact instead of asking the model to check"
   - "reproducibility sweep, manufacturer-001, 2026-07-14 (0/6 duplicate ADRs across 3 runs, down from ~2/3 incidence)"
   - "commit 1d0e3a4 — Wire canopy implement to consume contracts.yaml (Stage 4): contract-driven file discovery triggers on contracts.yaml's mechanical presence, not an opt-in flag"
+  - "Planner plan-only sweeps, widgets, 2026-10-10 (docs/reports/widgets-planner.md): commits 05ba2e6 (step kind), 7999338 (create or modify), 99f1b8a (read-only files), 071aeb4 (storage line)"
 
 related_principles:
   - deterministic-audits-vs-compensation
@@ -77,6 +78,36 @@ a duplicate anyway.
   this principle already predicts for any judgment left to be re-made by hand instead of computed
   once from already-available data.
 
+## Extension: fields of the model's output, not only questions (2026-10-10)
+
+> A plan should describe intent, not bookkeeping. Do not ask the model for information the harness can
+> derive deterministically.
+
+The same principle holds for the *shape of what the model is asked to write*. Building the Planner
+(story + Gherkin in, a plan for the Implementer out), each field the model was asked to fill that the
+harness could work out failed at a measurable rate, and removing the field worked where instructing the
+model did not:
+
+- **Step kind** (`refactor` exempts a step from the test rule): in the first live run the model labelled
+  all 8 steps `refactor`, so production code with no test passed the verifier. The harness now sets every
+  drafted step to a behaviour change; a draft that names a kind is rejected (`05ba2e6`).
+- **Create or modify** for each file: the model listed a file in both lists and did not track which file an
+  earlier step had made; 9 of 10 batch-4 drafts failed on it, and retries naming the lists changed nothing.
+  The harness decides from the repository and the earlier steps (`7999338`): valid plans went from 1/10 to
+  4/10, 3 on the first draft.
+- **Read-only files** a step depends on: the model listed the files it changes there too (38 of 38
+  duplicates). The harness now gives each step every other production class its instruction names as a
+  whole word (`99f1b8a`). Measurement in `docs/reports/widgets-planner.md`.
+- **Which storage to use**: the Implementer wrote JPA classes the project does not have in 9 of 9 plans that
+  reached an entity or repository step, with the dependency list in its context. A line computed from the
+  classpath ("no database or JPA library is available; keep data in memory") and a prompt rule asking for
+  the concrete mechanism went with JPA in 0 of the next 4 plans (n=1 and n=3, the two changes stacked, so
+  not separable).
+- The contrast that makes the rule useful: a plain instruction for something the model *should* decide did
+  not hold either (every step carries its test: ignored in 8 of 10 drafts, retry included). There the shape
+  carried it instead, a required non-empty `tests` field (0 missing tests afterwards). The model keeps
+  intent: what to build, which tests prove it, which scenarios it serves.
+
 # Counter-Evidence
 
 The fact-computation approach is not free of its own correctness risk, and evidence from the same
@@ -91,7 +122,15 @@ correctness burden onto the code doing the computing, and that code needs the sa
 review, edge-case analysis) the original prompt would have needed, rather than being treated as
 automatically safe just because it isn't a model call.
 
+A second limit from the Planner work: deriving a field can drop information the model had. The read-only
+set is computed from the class names an instruction mentions, so a dependency the instruction does not name
+is missed (the Implementer's own `glob` and `read_file` are the fallback), and the match is approximate
+rather than an import graph. Derive only what is genuinely derivable, and say in the code what the
+derivation does not see.
+
 # Applicability
+
+- Bookkeeping fields of a model-written artifact: kinds, scopes, create-or-modify, dependency lists
 
 - Existence and duplication checks ("has this already been decided/created/proposed")
 - Severity and priority classification derived from an already-known category

@@ -62,6 +62,28 @@ stored; the hand-written plan said "a Java record" and "a ConcurrentHashMap". Wh
 is not answered by the Planner today (the story does not say; in the full pipeline it is an ADR). Not
 changed yet.
 
+### Hardening experiments (2026-10-10, small n; each stacked on the one before)
+
+Plan-only run, then the Implementer on each valid plan (`run_step --plan`). "Steps" is how many plan steps
+the Implementer passed before it stopped.
+
+| Experiment | Harness | Change | Plans | Valid first draft | Implementer steps passed | Notes |
+|---|---|---|---|---|---|---|
+| 1a | `bcb033e` | drop a `read_only` entry that is also a changed file | 1 | 1/1 | 1 of 10 | JPA classes at step 2 (`spring-data-jpa`) |
+| 2a | `071aeb4` | computed facts line: no database or JPA library, keep data in memory | 1 | 1/1 | 1 of 16 | no JPA anywhere; stuck loop at the controller step |
+| 2c | `2e8cbfa` | prompt rule: concrete implementation choices (record or class, field types, collection class) | 3 | 3/3 | 2, 2, 2 | 0 JPA mentions; all three stop at the controller step |
+| ro | `99f1b8a` | `read_only` removed from the draft; the harness computes it from the class names an instruction mentions | 3 | 1/3 (2 retries on the step-size rule) | 1, 2, 2 | same stop point as 2c |
+
+What this says, with n this small: JPA disappeared once the storage fact and the concrete-mechanism rule
+were in (2a, 2c; the two are stacked, so which one did it is not known). Validity is now saturated at 3/3 and
+is no longer the useful measure; steps passed in the Implementer is. Computing `read_only` did not change
+that (ro vs 2c).
+
+What stops every run is the controller or service step. The Implementer's own gate refuses its submission
+repeatedly ("No changed test mentions WidgetController") until the stuck-loop guard fires. Why the submitted
+test does not mention the class is **not diagnosed**; the earlier explanation (unstated test wiring) is a
+hypothesis. Next: read that step's trace before changing the plan shape.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
@@ -70,9 +92,9 @@ Decided (option A, approved): the draft no longer has `create`/`modify`; the har
 `draft::into_plan` from the repository and the earlier steps (see `docs/principles/compute-facts-mechanically.md`).
 Batch 5: 4/10 valid, 3 on the first draft, up from 1/10 and 0/10.
 
-### Open: a changed file listed again as read-only
+### Resolved: a changed file listed again as read-only
 
-Every remaining rejection of an otherwise well-formed draft is one pair: the model lists a file it changes
-under `files` and again under `read_only` (38 of 38 duplicates in batch 5). The entry is redundant, since a
-changed file is shown to the Implementer anyway, and the retry naming the three lists did not change the
-model's behaviour. Options and decision: see the session notes; nothing implemented yet.
+Every remaining rejection of an otherwise well-formed draft in batch 5 was one pair: a file listed under
+`files` and again under `read_only` (38 of 38 duplicates). `read_only` is no longer part of the draft; the
+harness computes it (`99f1b8a`). Principle: `docs/principles/compute-facts-mechanically.md`, extension of
+2026-10-10.
