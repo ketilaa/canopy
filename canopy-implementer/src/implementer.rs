@@ -161,6 +161,8 @@ impl Implementer {
         self.observer.on(&RunEvent::StepStarted(StepStarted {
             step_id: step.id.clone(),
             instruction: step.instruction.clone(),
+            context: step.context.clone(),
+            scope: step.scope.clone(),
         }));
 
         let mut previous: Option<Failure> = None;
@@ -717,6 +719,27 @@ mod tests {
         );
         let first_prompt = &rig.prompts.lock().unwrap()[0];
         assert!(first_prompt[1].content.contains("Create A.") && first_prompt[1].content.contains("pkg: x"));
+    }
+
+    #[test]
+    fn the_step_started_event_records_what_the_step_was_told_its_context_and_its_scope() {
+        let rig = rig(vec![answer(&[("src/A.java", "class A {}")])], vec![], vec![], 3);
+        let mut scoped = step();
+        scoped.scope.create = vec!["src/A.java".into()];
+        scoped.scope.read_only = vec!["src/B.java".into()];
+        rig.implementer.run_step(rig.dir.path(), &scoped);
+        let started = rig
+            .observer
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                RunEvent::StepStarted(s) => Some(s),
+                _ => None,
+            })
+            .expect("a step_started event");
+        assert_eq!(started.context, "pkg: x");
+        assert_eq!(started.scope.create, ["src/A.java"]);
+        assert_eq!(started.scope.read_only, ["src/B.java"]);
     }
 
     #[test]

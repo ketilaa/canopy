@@ -129,6 +129,10 @@ pub enum Stage {
 pub struct StepStarted {
     pub step_id: String,
     pub instruction: String,
+    /// The standing context the step was given, so a trace shows what the model was told.
+    pub context: String,
+    /// The files the plan let the step touch and read.
+    pub scope: crate::implementer::Scope,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
