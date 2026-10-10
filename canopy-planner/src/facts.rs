@@ -95,6 +95,13 @@ impl RepoFacts {
             .any(|d| PREFIXES.iter().any(|p| d.artifact.starts_with(p)) || NAMES.iter().any(|n| d.artifact.contains(n)))
     }
 
+    /// Whether a bean validation library (`javax.validation` or `jakarta.validation`) is on the classpath.
+    pub fn has_validation_library(&self) -> bool {
+        self.dependencies
+            .iter()
+            .any(|d| d.artifact.contains("validation") || d.artifact.contains("hibernate-validator"))
+    }
+
     /// The facts as the standing context of every step. Facts that are not known are left out.
     pub fn render(&self) -> String {
         let directory = self.root_package.replace('.', "/");
@@ -127,6 +134,12 @@ impl RepoFacts {
         if self.spring_boot_version.is_some() {
             lines.push(
                 "Stereotypes by class name: *Controller is @RestController, *Service is @Service, *Repository is @Repository, *Config is @Configuration."
+                    .to_string(),
+            );
+        }
+        if !self.has_validation_library() {
+            lines.push(
+                "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation); check values in code."
                     .to_string(),
             );
         }
@@ -451,6 +464,38 @@ mod tests {
         );
         let text = RepoFacts::collect(dir.path()).unwrap().render();
         assert!(!text.contains("Stereotypes"), "{text}");
+    }
+
+    #[test]
+    fn without_a_validation_library_the_facts_say_to_check_values_in_code() {
+        let facts = RepoFacts::collect(scaffold().path()).unwrap();
+        assert!(!facts.has_validation_library());
+        assert!(
+            facts.render().contains(
+                "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation); check values in code."
+            ),
+            "{}",
+            facts.render()
+        );
+    }
+
+    #[test]
+    fn a_validation_dependency_removes_that_line() {
+        for artifact in [
+            "spring-boot-starter-validation",
+            "hibernate-validator",
+            "jakarta.validation-api",
+        ] {
+            let dir = scaffold();
+            let pom = POM.replace(
+                "</dependencies>",
+                &format!("<dependency><artifactId>{artifact}</artifactId></dependency></dependencies>"),
+            );
+            write(dir.path(), "pom.xml", &pom);
+            let facts = RepoFacts::collect(dir.path()).unwrap();
+            assert!(facts.has_validation_library(), "{artifact}");
+            assert!(!facts.render().contains("Validation:"), "{artifact}");
+        }
     }
 
     #[test]
