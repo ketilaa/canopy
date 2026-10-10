@@ -110,6 +110,19 @@ pub fn into_plan(
             .to_string();
         let production = class_names(fields, "classes", &step_id, root_package, false)?;
         let tests = class_names(fields, "test_classes", &step_id, root_package, true)?;
+        // The instruction is what the Implementer is told to build, and the class list is what it may touch:
+        // a class listed but never named would be created with no description of it.
+        let unnamed: Vec<String> = production
+            .iter()
+            .filter_map(|path| std::path::Path::new(path).file_stem()?.to_str().map(str::to_string))
+            .filter(|class| !mentions_word(&instruction, class))
+            .collect();
+        if !unnamed.is_empty() {
+            return Err(format!(
+                "step {step_id}: {} listed in classes but not named in the instruction; name each in the instruction or remove it from classes",
+                unnamed.join(", ")
+            ));
+        }
         if tests.is_empty() {
             return Err(format!(
                 "step {step_id}: test_classes is missing or empty; every step needs at least one test"
@@ -167,6 +180,11 @@ fn class_names(
             }
             if is_test && !class.ends_with("Test") {
                 return Err(format!("step {id}: test class {name} must have a name ending in Test"));
+            }
+            if !is_test && class.ends_with("Test") {
+                return Err(format!(
+                    "step {id}: {name} looks like a test class; list it in test_classes, not in classes"
+                ));
             }
             Ok(match is_test {
                 true => java::test_source_path(name),
@@ -350,7 +368,7 @@ mod tests {
         }
     }
 
-    const DRAFT: &str = r#"{"steps":[{"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]}]}"#;
+    const DRAFT: &str = r#"{"steps":[{"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]}]}"#;
 
     fn plan_of(draft: &str, existing: &[&str]) -> Result<Plan, String> {
         let existing: Vec<String> = existing.iter().map(|s| s.to_string()).collect();
@@ -388,8 +406,8 @@ mod tests {
     #[test]
     fn every_step_carries_the_repository_facts_as_its_context() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"y","classes":["com.example.widgets.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]}]}"#;
+          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
+          {"id":"b","instruction":"y B","classes":["com.example.widgets.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
         assert!(plan
             .steps
@@ -400,9 +418,9 @@ mod tests {
     #[test]
     fn a_step_is_told_which_classes_earlier_steps_of_the_plan_create_and_the_first_step_is_not() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"y","classes":["com.example.widgets.domain.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]},
-          {"id":"c","instruction":"z","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
+          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
+          {"id":"b","instruction":"y B","classes":["com.example.widgets.domain.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]},
+          {"id":"c","instruction":"z A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
         let context = |i: usize| plan.steps[i].context.clone().unwrap();
         assert_eq!(context(0), "the facts", "nothing was created before the first step");
@@ -419,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_class_the_repository_has_is_modified_and_a_new_one_is_created() {
-        let draft = r#"{"steps":[{"id":"a","instruction":"x","classes":["com.example.widgets.Existing","com.example.widgets.New"],"test_classes":["com.example.widgets.ExistingTest","com.example.widgets.NewTest"],"covers":["first"]}]}"#;
+        let draft = r#"{"steps":[{"id":"a","instruction":"x Existing New","classes":["com.example.widgets.Existing","com.example.widgets.New"],"test_classes":["com.example.widgets.ExistingTest","com.example.widgets.NewTest"],"covers":["first"]}]}"#;
         let scope = plan_of(
             draft,
             &[
@@ -450,8 +468,8 @@ mod tests {
     #[test]
     fn a_class_an_earlier_step_creates_is_modified_by_a_later_one() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"y","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
+          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
+          {"id":"b","instruction":"y A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
         assert_eq!(plan.steps[0].scope.create.len(), 2);
         assert_eq!(plan.steps[1].scope.modify.len(), 2);
@@ -486,6 +504,54 @@ mod tests {
             "an existing and an earlier-created class, each named whole-word; sorted"
         );
         assert!(plan.steps[2].scope.read_only.is_empty());
+    }
+
+    #[test]
+    fn a_production_class_whose_name_ends_in_test_is_rejected_with_where_it_belongs() {
+        let draft = DRAFT
+            .replace("com.example.widgets.A\"", "com.example.widgets.WidgetTest\"")
+            .replace("\"instruction\":\"x\"", "\"instruction\":\"Test WidgetTest\"");
+        let e = plan_of(&draft, &[]).unwrap_err();
+        assert!(
+            e.contains("step a") && e.contains("WidgetTest") && e.contains("test_classes") && e.contains("classes"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn every_production_class_a_step_lists_must_be_named_in_its_instruction() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Create Widget and WidgetRepository.","classes":["com.example.widgets.Widget","com.example.widgets.WidgetRepository","com.example.widgets.WidgetController"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
+        let e = plan_of(draft, &[]).unwrap_err();
+        assert!(
+            e.contains("step a") && e.contains("WidgetController") && e.contains("instruction") && e.contains("remove"),
+            "{e}"
+        );
+        assert!(
+            !e.contains("WidgetRepository"),
+            "only the unnamed class is reported: {e}"
+        );
+    }
+
+    #[test]
+    fn naming_a_class_by_simple_or_qualified_name_counts_and_a_longer_name_does_not() {
+        for instruction in [
+            "Create Widget.",
+            "Create com.example.widgets.Widget.",
+            "Widget: a record.",
+        ] {
+            let draft = format!(
+                r#"{{"steps":[{{"id":"a","instruction":"{instruction}","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}}]}}"#
+            );
+            assert!(plan_of(&draft, &[]).is_ok(), "{instruction}");
+        }
+        let longer = r#"{"steps":[{"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
+        assert!(plan_of(longer, &[]).is_err(), "Widget is not the word WidgetService");
+    }
+
+    #[test]
+    fn a_step_with_only_test_classes_has_no_class_to_name_and_test_classes_need_no_mention() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Add a case.","classes":[],"test_classes":["com.example.widgets.SomeTest"],"covers":["first"]}]}"#;
+        assert!(plan_of(draft, &["src/test/java/com/example/widgets/SomeTest.java"]).is_ok());
     }
 
     #[test]
@@ -539,7 +605,7 @@ mod tests {
             "\"files\":[]",
             "\"tests\":[]",
         ] {
-            let sneaky = DRAFT.replace("\"instruction\":\"x\",", &format!("\"instruction\":\"x\",{field},"));
+            let sneaky = DRAFT.replace("\"instruction\":\"x A\",", &format!("\"instruction\":\"x A\",{field},"));
             let e = plan_of(&sneaky, &[]).unwrap_err();
             assert!(e.contains("step a") && e.contains("not yours to set"), "{field}: {e}");
         }

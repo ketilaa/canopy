@@ -155,11 +155,11 @@ mod tests {
     const FEATURE: &str = "Feature: F\n  Scenario: First\n    When x\n  Scenario: Second\n    When y\n";
 
     const GOOD: &str = r#"{"steps":[
-      {"id":"a","instruction":"make it",
+      {"id":"a","instruction":"make Widget",
        "classes":["com.example.widgets.domain.Widget"],
        "test_classes":["com.example.widgets.domain.WidgetTest"],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
-      {"id":"a","instruction":"make it",
+      {"id":"a","instruction":"make Widget",
        "classes":["com.example.widgets.domain.Widget"],
        "test_classes":["com.example.widgets.domain.WidgetTest"],"covers":["first"]}]}"#;
 
