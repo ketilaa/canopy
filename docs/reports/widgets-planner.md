@@ -150,6 +150,26 @@ New recurring class: `javax.validation` imports in a Spring Boot 3 project, now 
 overall (12-29-18 and conv run-02). Derivable from the facts (Spring Boot 3.4.5), so it is the next candidate
 for a stated fact. Separate and undiagnosed: a controller calling a method its service does not have.
 
+### Experiment val: no bean validation library, stated in the facts (2026-10-10, `803171a`)
+
+`javax.validation` imports had stopped 2 of 7 Implementer runs. The planned fix was a "use jakarta" line, but a
+probe compile in a scratch copy of the baseline showed `jakarta.validation.constraints` does not exist on this
+project's classpath either (only the web and test starters), so that line would have sent the model to a
+different missing package. The fact stated instead is computed from the dependencies, like the storage line:
+"Validation: no bean validation library is available (neither javax.validation nor jakarta.validation); check
+values in code." Three new plans, one Implementer run each:
+
+| Plan | Steps passed | Stop |
+|---|---|---|
+| val run-01 | 0 of 11 | compile: `org.junit.jupiter.api` does not exist (a test import in a non-test file) |
+| val run-02 | 3 of 6 | a step required a file it never created (4 refusals), then a stuck loop |
+| val run-03 | 0 of 7 | compile: unclosed character literal |
+
+Validation-package compile errors: 0 of 3 runs (the fact was in the context: 11, 21 and 13 mentions), against
+2 of 7 before. Steps passed are not better (0, 3, 0), and the failures are now three different things, so no
+class recurs. That is the pattern of the whole session: each stated fact removed the class it targeted and the
+runs then stopped on another. The one measure that kept moving was the targeted class itself.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier

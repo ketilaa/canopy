@@ -75,6 +75,7 @@ direction, not effect size; sources are the batches in `docs/reports/widgets-pla
 | Prompt wording | "state the concrete implementation choices" | see above |
 | Prompt wording | "every step carries its test" | ignored in 8 of 10 drafts, retry included |
 | Added context | facts and dependency list stamped into every step | no visible effect alone (JPA classes still written) |
+| Derived fact | computed "no bean validation library is available" line | `javax.validation` compile errors 2 of 7 runs before, 0 of 3 after; steps passed not better |
 | Added context | a Spring stereotype convention by class name, in every step's context | 1 of 1 services written afterwards was annotated, against 0 of 2 before; "no qualifying bean" 0 of 3; steps passed no better. Direction only |
 
 Pattern: removing or tightening beat instructing, and an instruction for something the model should decide
