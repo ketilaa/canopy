@@ -184,52 +184,7 @@ fn dependencies(pom: &str) -> Vec<Dependency> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-
-    const POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<project>
-  <parent>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.4.5</version>
-  </parent>
-  <properties>
-    <java.version>21</java.version>
-  </properties>
-  <dependencies>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-    <!-- <dependency><artifactId>commented-out</artifactId></dependency> -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-test</artifactId>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
-</project>
-"#;
-
-    const APPLICATION: &str = "package com.example.widgets;\n\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n\n@SpringBootApplication\npublic class WidgetsApplication {}\n";
-
-    fn write(root: &std::path::Path, path: &str, text: &str) {
-        let p = root.join(path);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, text).unwrap();
-    }
-
-    fn scaffold() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "pom.xml", POM);
-        write(
-            dir.path(),
-            "src/main/java/com/example/widgets/WidgetsApplication.java",
-            APPLICATION,
-        );
-        write(dir.path(), "src/test/java/com/example/widgets/.gitkeep", "");
-        dir
-    }
+    use crate::testing::{scaffold, write, POM};
 
     #[test]
     fn the_build_is_read_from_the_pom() {
@@ -362,28 +317,9 @@ mod tests {
     /// repository is not on this machine (it is git-ignored and personal).
     #[test]
     fn the_widgets_baseline_gives_the_facts_the_hand_written_context_gave() {
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../dogfooding/java-widgets");
-        if !repo.join(".git").exists() {
+        let Some(dir) = crate::testing::baseline("java-widgets", "baseline-00-widgets") else {
             return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let archive = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["archive", "--format=tar", "baseline-00-widgets"])
-            .output()
-            .unwrap();
-        if !archive.status.success() {
-            return;
-        }
-        let mut tar = std::process::Command::new("tar")
-            .args(["-x", "-C"])
-            .arg(dir.path())
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout).unwrap();
-        assert!(tar.wait().unwrap().success());
+        };
         let facts = RepoFacts::collect(dir.path()).unwrap();
         assert_eq!(facts.root_package, "com.example.widgets");
         assert_eq!(facts.java_version.as_deref(), Some("21"));

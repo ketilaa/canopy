@@ -6,3 +6,7 @@
 
 pub mod facts;
 pub mod gherkin;
+pub mod verify;
+
+#[cfg(test)]
+mod testing;
