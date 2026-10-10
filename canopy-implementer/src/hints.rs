@@ -2,6 +2,7 @@
 //!
 //! These add to what the model is told; they never change what it wrote.
 
+use crate::java;
 use std::path::Path;
 
 /// When a failing test belongs to a class the model did not change, say so. A test named `XTest`
@@ -39,25 +40,6 @@ pub fn subject_hint(digest: &str, submitted: &[String], root: &Path) -> Option<S
     }
 }
 
-/// Classes the JDK ships that a model forgets to import. Only consulted when the repository has no class of
-/// that name.
-const JDK_CLASSES: &[(&str, &str)] = &[
-    ("UUID", "java.util.UUID"),
-    ("Optional", "java.util.Optional"),
-    ("List", "java.util.List"),
-    ("ArrayList", "java.util.ArrayList"),
-    ("Map", "java.util.Map"),
-    ("HashMap", "java.util.HashMap"),
-    ("Set", "java.util.Set"),
-    ("HashSet", "java.util.HashSet"),
-    ("Objects", "java.util.Objects"),
-    ("Collectors", "java.util.stream.Collectors"),
-    ("ConcurrentHashMap", "java.util.concurrent.ConcurrentHashMap"),
-    ("Instant", "java.time.Instant"),
-    ("LocalDate", "java.time.LocalDate"),
-    ("BigDecimal", "java.math.BigDecimal"),
-];
-
 /// When the compiler cannot find a class, say which import would resolve it: the class's own package when it
 /// exists in `src/main/java`, otherwise a well-known JDK package. A class that is neither gets no hint.
 /// The model's files are never touched.
@@ -74,14 +56,8 @@ pub fn import_hint(digest: &str, root: &Path) -> Option<String> {
         }
         seen.push(class.to_string());
         let import = find_production_file(root, class)
-            .and_then(|path| package_of(&path))
-            .map(|package| format!("{package}.{class}"))
-            .or_else(|| {
-                JDK_CLASSES
-                    .iter()
-                    .find(|(name, _)| *name == class)
-                    .map(|(_, full)| full.to_string())
-            });
+            .and_then(|path| java::qualified_name(&path))
+            .or_else(|| java::jdk_class(class).map(str::to_string));
         if let Some(import) = import {
             lines.push(format!("{class} is not imported. Add: import {import};"));
         }
@@ -91,13 +67,6 @@ pub fn import_hint(digest: &str, root: &Path) -> Option<String> {
     } else {
         Some(lines.join("\n"))
     }
-}
-
-/// `src/main/java/com/example/greeting/Greeter.java` gives `com.example.greeting`.
-fn package_of(path: &str) -> Option<String> {
-    let inside = path.strip_prefix("src/main/java/")?;
-    let (directory, _) = inside.rsplit_once('/')?;
-    Some(directory.replace('/', "."))
 }
 
 /// `NameFormatterTest.trimsTheName:27 expected ...` or `...:17 » NullPointer ...` gives `NameFormatterTest`.

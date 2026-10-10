@@ -12,6 +12,7 @@ pub mod files;
 pub mod gates;
 pub mod hints;
 pub mod implementer;
+pub mod java;
 pub mod llm;
 pub mod observe;
 pub mod orchestrator;
