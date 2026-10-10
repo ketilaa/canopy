@@ -122,17 +122,37 @@ fn classify(
         Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).map(str::to_string).collect(),
         _ => Vec::new(),
     };
-    let mut listed: HashSet<String> = HashSet::new();
-    for path in production.iter().chain(&tests).chain(&read_only) {
-        let normalised = RepoPath::parse(path)
+    let normalise = |path: &String| -> Result<String, String> {
+        Ok(RepoPath::parse(path)
             .map_err(|e| format!("step {id}: path {path:?} is not allowed: {e}"))?
-            .as_str();
-        if !listed.insert(normalised.clone()) {
+            .as_str())
+    };
+    let mut changed: HashSet<String> = HashSet::new();
+    for path in production.iter().chain(&tests) {
+        if !changed.insert(normalise(path)?) {
+            return Err(format!(
+                "step {id}: {} is listed more than once; list each file once, in files, read_only or tests (exactly one)",
+                normalise(path)?
+            ));
+        }
+    }
+    // A file the step changes is shown to the Implementer anyway, so listing it as read-only as well says
+    // nothing new; it is dropped. Any other repeat is still reported.
+    let mut read = HashSet::new();
+    let mut read_only_kept = Vec::new();
+    for path in &read_only {
+        let normalised = normalise(path)?;
+        if changed.contains(&normalised) {
+            continue;
+        }
+        if !read.insert(normalised.clone()) {
             return Err(format!(
                 "step {id}: {normalised} is listed more than once; list each file once, in files, read_only or tests (exactly one)"
             ));
         }
+        read_only_kept.push(normalised);
     }
+    step.insert("read_only".into(), json!(read_only_kept));
     let (mut create, mut modify) = (Vec::new(), Vec::new());
     for (is_test, path) in production
         .iter()
@@ -274,12 +294,28 @@ mod tests {
             e.contains("step a") && e.contains("src/main/A.java") && e.contains("files, read_only or tests"),
             "{e}"
         );
-        let also_read = DRAFT.replace("\"read_only\":[]", "\"read_only\":[\"src/main/A.java\"]");
-        let e = plan_of(&also_read, dir.path()).unwrap_err();
+        let twice_read = DRAFT.replace(
+            "\"read_only\":[]",
+            "\"read_only\":[\"src/main/R.java\",\"src/main/R.java\"]",
+        );
+        let e = plan_of(&twice_read, dir.path()).unwrap_err();
         assert!(
-            e.contains("step a") && e.contains("src/main/A.java") && e.contains("exactly one"),
+            e.contains("step a") && e.contains("src/main/R.java") && e.contains("exactly one"),
             "{e}"
         );
+    }
+
+    #[test]
+    fn a_file_a_step_changes_is_not_also_read_only_because_changed_files_are_shown_anyway() {
+        let dir = scaffold();
+        write(dir.path(), "src/main/Other.java", "package x;");
+        let draft = DRAFT.replace(
+            "\"read_only\":[]",
+            "\"read_only\":[\"./src/main/A.java\",\"src/test/ATest.java\",\"src/main/Other.java\"]",
+        );
+        let plan = plan_of(&draft, dir.path()).unwrap();
+        assert_eq!(plan.steps[0].scope.read_only, ["src/main/Other.java"]);
+        assert_eq!(plan.steps[0].scope.create, ["src/main/A.java", "src/test/ATest.java"]);
     }
 
     #[test]
