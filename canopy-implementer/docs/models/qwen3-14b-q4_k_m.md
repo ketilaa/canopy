@@ -221,6 +221,18 @@ tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (widgets-planned plan v6, import hint on retry, **retry text after a compile or test failure says
+  the answer was undone** instead of "read the files again", harness `d21e6b6`, same server and flags; batch
+  `2026-10-10T06-42-20`, 10 runs): **7/10 scored**, the same count as the batch with the old retry text
+  (`2026-10-10T05-53-31`, 7/10). The mechanism moved a lot; the end result did not. The attempt after a compile
+  failure, counted over the retries that had a next attempt: before, across four batches, 10 passed, 3
+  recompiled, 9 ended stuck and 6 in budget (28 retries); now 13 passed, 3 recompiled, 2 stuck, 0 budget (18
+  retries). So the retry now compiles 13 times in 18 (72%) where it did 10 in 28 (36%), and the repeated-glob
+  loop for files that no longer exist is almost gone. Steps passing on a second attempt went from 5 to 11 of 44.
+  Compile failures themselves did not shrink: 19 in this batch, `Optional` 10, `WidgetService` 8 (one
+  `MockMvcBuilders`), all missing imports. The three unscored runs all stopped at step 4. The retry text is a
+  measured improvement of the recovery path (the before figures come from earlier batches with other plan or
+  hint versions, so the comparison is indicative); the first-attempt missing import is the part left.
 - **confirmed** (widgets-planned plan v6, import hint on retry **plus the import lines in the first prompt**,
   harness `67be032`, same server and flags; batch `2026-10-10T06-20-53`, 10 runs): **4/10 scored**, against 7/10
   for the same plan with the hint on retry only (`2026-10-10T05-53-31`). Of the 28 step executions that passed,
