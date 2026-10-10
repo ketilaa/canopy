@@ -25,16 +25,16 @@ use crate::tools::ToolBox;
 
 /// The files a step is allowed to touch, decided by the planner. An empty scope means the step is
 /// unscoped and the model finds its own way.
-#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Scope {
     /// Existing files the step changes. Their content is shown to the model.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modify: Vec<String>,
     /// New files the step must create, at exactly these paths.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub create: Vec<String>,
     /// Existing files the step depends on. Shown to the model, not changeable.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub read_only: Vec<String>,
 }
 
@@ -58,7 +58,7 @@ pub struct StepRequest {
 }
 
 /// What kind of change a step is, declared by the plan and never by the model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
     /// New or changed behaviour: production code must come with a test that mentions it.

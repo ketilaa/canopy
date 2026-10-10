@@ -4,12 +4,12 @@
 //! and a person approves it. Each step is self-contained: the Implementer sees one step at a time and
 //! never the whole plan.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::implementer::{Scope, StepKind, StepRequest};
 use crate::sandbox::RepoPath;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct PlanStep {
     pub id: String,
     pub instruction: String,
@@ -17,24 +17,24 @@ pub struct PlanStep {
     #[serde(default)]
     pub kind: StepKind,
     /// Replaces the project facts for this step only.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     /// The files the planner decided this step may touch.
     #[serde(flatten)]
     pub scope: Scope,
     /// Ids of the feature's scenarios this step helps make pass. The Implementer ignores it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covers: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Plan {
     pub id: String,
     /// The story the plan implements, kept for the record. The Implementer is never shown it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub story: Option<String>,
     /// The Gherkin feature the plan implements, as a path relative to the canopy-implementer crate.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature: Option<String>,
     pub steps: Vec<PlanStep>,
 }
@@ -132,6 +132,11 @@ impl Plan {
             created.extend(step.scope.create.iter().cloned());
         }
         issues
+    }
+
+    /// The plan as YAML, in the form `from_yaml` reads back as the same plan.
+    pub fn to_yaml(&self) -> String {
+        serde_yaml::to_string(self).expect("a plan is always serialisable")
     }
 
     /// Checks the plan against the scenarios of its feature: every scenario is covered by some step, every
@@ -352,6 +357,25 @@ steps:
             "an-invalid-name-is-rejected",
         ]);
         assert_eq!(plan.verify_coverage(&scenarios), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_plan_written_as_yaml_reads_back_as_the_same_plan() {
+        for text in [PLAN, COVERED, SCOPED, include_str!("../tasks/widgets/plan.yaml")] {
+            let plan = Plan::from_yaml(text).unwrap();
+            assert_eq!(Plan::from_yaml(&plan.to_yaml()).unwrap(), plan);
+        }
+    }
+
+    #[test]
+    fn a_plan_written_as_yaml_leaves_out_what_is_empty() {
+        let yaml = Plan::from_yaml("id: p\nsteps:\n  - {id: a, instruction: x}\n")
+            .unwrap()
+            .to_yaml();
+        for absent in ["story", "feature", "context", "modify", "create", "read_only", "covers"] {
+            assert!(!yaml.contains(absent), "{absent} should be left out:\n{yaml}");
+        }
+        assert!(yaml.contains("kind: behavior_change"), "{yaml}");
     }
 
     const SCOPED: &str = r#"

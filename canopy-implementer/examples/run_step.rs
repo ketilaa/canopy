@@ -343,7 +343,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE]";
 
 struct Config {
     task: String,
@@ -355,6 +355,8 @@ struct Config {
     model: String,
     out: PathBuf,
     declare_imports: bool,
+    /// Run this plan instead of the task's hand-written one (a planned task only).
+    plan: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -369,6 +371,7 @@ fn parse_args() -> Result<Config, String> {
         model: "Qwen/Qwen3-14B-GGUF:Q4_K_M".into(),
         out: crate_dir.join("runs"),
         declare_imports: false,
+        plan: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -390,6 +393,7 @@ fn parse_args() -> Result<Config, String> {
             "--runs" => config.runs = value("--runs")?.parse().map_err(|e| format!("--runs: {e}"))?,
             "--attempts" => config.attempts = value("--attempts")?.parse().map_err(|e| format!("--attempts: {e}"))?,
             "--declare-imports" => config.declare_imports = true,
+            "--plan" => config.plan = Some(value("--plan")?.into()),
             "--url" => config.url = value("--url")?,
             "--model" => config.model = value("--model")?,
             "--out" => config.out = value("--out")?.into(),
@@ -397,6 +401,9 @@ fn parse_args() -> Result<Config, String> {
         }
     }
     let chosen = task(&config.task)?;
+    if config.plan.is_some() && plan_for(chosen.name).is_none() {
+        return Err(format!("--plan needs a planned task, and {} has no plan", chosen.name));
+    }
     if config.tag.is_empty() {
         config.tag = chosen.default_tag.to_string();
     }
@@ -639,7 +646,11 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     };
 
     let started = Instant::now();
-    let (passed, attempts, last_failure, plan_summary) = match plan_for(task.name) {
+    let plan_text: Option<String> = match &config.plan {
+        Some(path) => Some(std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?),
+        None => plan_for(task.name).map(str::to_string),
+    };
+    let (passed, attempts, last_failure, plan_summary) = match plan_text.as_deref() {
         Some(yaml) => {
             let plan = Plan::from_yaml(yaml).map_err(|e| e.to_string())?;
             let outcome =
@@ -834,6 +845,7 @@ fn real_main() -> Result<(), String> {
         "sampling": Sampling::qwen3(),
         "max_attempts": config.attempts,
         "declare_imports": config.declare_imports,
+        "plan_file": config.plan.as_ref().map(|p| p.display().to_string()),
         "runs": config.runs,
         "task": task.name,
         "repo": task.repo,
