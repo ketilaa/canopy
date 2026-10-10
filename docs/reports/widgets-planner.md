@@ -80,6 +80,11 @@ were in (2a, 2c; the two are stacked, so which one did it is not known). Validit
 is no longer the useful measure; steps passed in the Implementer is. Computing `read_only` did not change
 that (ro vs 2c).
 
+Found by the run-analyst test (below): from `623ab1e` on, every step's context said `Existing classes:
+WidgetsApplication`, even steps that run after earlier steps of the same plan had created classes. The facts
+are about the repository before the plan. Each step's context now also lists the classes and test classes the
+earlier steps create (derived by the harness). Not yet measured: no batch has run with it.
+
 ### Diagnosis: what stops every run (2026-10-10)
 
 Seven stuck Implementer runs (2a, 2c, ro, and one from earlier) were read refusal by refusal. Six of the

@@ -257,8 +257,11 @@ fn run_one(
             "plan_content_id": content_id(&yaml),
             "provenance": canopy_planner::draft::provenance(&feature.scenario_ids(), &facts.root_package),
         });
-        std::fs::write(run_dir.join("plan.meta.json"), serde_json::to_string_pretty(&meta).unwrap())
-            .map_err(|e| e.to_string())?;
+        std::fs::write(
+            run_dir.join("plan.meta.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
         std::fs::write(run_dir.join("plan.md"), render_markdown(plan, &feature)).map_err(|e| e.to_string())?;
         let diff = compare_created_files(plan, &golden);
         files_match_golden = Some(diff.matches());

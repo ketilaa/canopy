@@ -797,6 +797,7 @@ tests added: {tests_added} (need {}); scored: {scored}",
                 "steps_total": run_report.steps_total,
                 "failed_step": run_report.failed_step,
                 "stop_reason": run_report.steps.iter().find(|s| !s.passed).and_then(|s| s.stop_reason.clone()),
+                "refusals": run_report.steps.iter().find(|s| !s.passed).map(|s| s.refusals.clone()),
                 "plan_content_id": plan_text.as_deref().map(content_id),
             });
             let appended = std::fs::OpenOptions::new()

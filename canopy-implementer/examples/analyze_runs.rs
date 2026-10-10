@@ -104,6 +104,10 @@ fn main() {
                         );
                         classes.add("implementer", &label);
                     }
+                    for (reason, count) in j["refusals"].as_object().into_iter().flatten() {
+                        line.push_str(&format!("\n      refused {count}x: {reason}"));
+                        classes.add("implementer", &format!("refusal: {reason}"));
+                    }
                 }
                 lines.push(line);
             } else if run.join("events.jsonl").exists() {

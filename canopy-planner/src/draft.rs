@@ -102,7 +102,7 @@ pub fn into_plan(
             }
         }
         fields.insert("kind".into(), json!("behavior_change"));
-        fields.insert("context".into(), json!(context));
+        fields.insert("context".into(), json!(context_for_step(context, &created)));
         let instruction = fields
             .get("instruction")
             .and_then(Value::as_str)
@@ -174,6 +174,28 @@ fn class_names(
             })
         })
         .collect()
+}
+
+/// The facts plus what the plan itself has created so far: the facts are about the repository before the
+/// plan, and a later step would otherwise be told that classes its own earlier steps made do not exist.
+fn context_for_step(facts: &str, created: &[String]) -> String {
+    let names = |prefix: &str| -> Vec<String> {
+        created
+            .iter()
+            .filter(|path| path.starts_with(prefix))
+            .filter_map(|path| java::qualified_name_of_source(path))
+            .collect()
+    };
+    let mut context = facts.to_string();
+    for (label, classes) in [
+        ("Classes created by earlier steps", names("src/main/java/")),
+        ("Test classes created by earlier steps", names("src/test/java/")),
+    ] {
+        if !classes.is_empty() {
+            context.push_str(&format!("\n{label}: {}", classes.join(", ")));
+        }
+    }
+    context
 }
 
 struct Touched {
@@ -369,7 +391,30 @@ mod tests {
           {"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
           {"id":"b","instruction":"y","classes":["com.example.widgets.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
-        assert!(plan.steps.iter().all(|s| s.context.as_deref() == Some("the facts")));
+        assert!(plan
+            .steps
+            .iter()
+            .all(|s| s.context.as_deref().unwrap().starts_with("the facts")));
+    }
+
+    #[test]
+    fn a_step_is_told_which_classes_earlier_steps_of_the_plan_create_and_the_first_step_is_not() {
+        let draft = r#"{"steps":[
+          {"id":"a","instruction":"x","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
+          {"id":"b","instruction":"y","classes":["com.example.widgets.domain.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]},
+          {"id":"c","instruction":"z","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
+        let plan = plan_of(draft, &[]).unwrap();
+        let context = |i: usize| plan.steps[i].context.clone().unwrap();
+        assert_eq!(context(0), "the facts", "nothing was created before the first step");
+        assert_eq!(
+            context(1),
+            "the facts\nClasses created by earlier steps: com.example.widgets.A\nTest classes created by earlier steps: com.example.widgets.ATest"
+        );
+        assert_eq!(
+            context(2),
+            "the facts\nClasses created by earlier steps: com.example.widgets.A, com.example.widgets.domain.B\nTest classes created by earlier steps: com.example.widgets.ATest, com.example.widgets.BTest",
+            "each class once, in the order the plan creates them; a class changed again is not created again"
+        );
     }
 
     #[test]
