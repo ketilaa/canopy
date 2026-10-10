@@ -2,22 +2,7 @@ id: widgets
 story: |
   A client can create a widget with POST /widgets, giving a name. The widget gets a generated id. A
   name that is blank, missing, or longer than 50 characters is rejected.
-
-  Feature: Create a widget
-    Scenario: A valid name creates a widget with a generated id
-      When a client posts a widget named "Alpha"
-      Then the response status is 201
-      And the response has a generated id and the name "Alpha"
-
-    Scenario Outline: An invalid name is rejected
-      When a client posts a widget with <name>
-      Then the response status is 400
-
-      Examples:
-        | name                   |
-        | a blank name           |
-        | no name                |
-        | a name of 51 characters |
+feature: tasks/widgets/feature.feature
 steps:
   - id: widgets-1-domain
     instruction: >
@@ -31,6 +16,7 @@ steps:
     create:
       - src/main/java/com/example/widgets/domain/Widget.java
       - src/test/java/com/example/widgets/domain/WidgetTest.java
+    covers: [a-valid-name-creates-a-widget-with-a-generated-id, an-invalid-name-is-rejected]
   - id: widgets-2-repository
     instruction: >
       In the package com.example.widgets.repository, create the interface WidgetRepository with the
@@ -45,6 +31,7 @@ steps:
       - src/test/java/com/example/widgets/repository/InMemoryWidgetRepositoryTest.java
     read_only:
       - src/main/java/com/example/widgets/domain/Widget.java
+    covers: [a-valid-name-creates-a-widget-with-a-generated-id]
   - id: widgets-3-service
     instruction: >
       In the package com.example.widgets.service, create WidgetService, annotated with @Service, with a
@@ -63,6 +50,7 @@ steps:
       - src/main/java/com/example/widgets/domain/Widget.java
       - src/main/java/com/example/widgets/repository/WidgetRepository.java
       - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java
+    covers: [a-valid-name-creates-a-widget-with-a-generated-id, an-invalid-name-is-rejected]
   - id: widgets-4-controller
     instruction: >
       In the package com.example.widgets.web, create WidgetController, annotated with @RestController,
@@ -84,6 +72,7 @@ steps:
       - src/main/java/com/example/widgets/domain/Widget.java
       - src/main/java/com/example/widgets/service/WidgetService.java
       - src/main/java/com/example/widgets/repository/InMemoryWidgetRepository.java
+    covers: [a-valid-name-creates-a-widget-with-a-generated-id]
   - id: widgets-5-validation
     instruction: >
       When WidgetService.create throws IllegalArgumentException, POST /widgets must answer status 400.
@@ -96,3 +85,4 @@ steps:
     read_only:
       - src/main/java/com/example/widgets/service/WidgetService.java
       - src/main/java/com/example/widgets/web/CreateWidgetRequest.java
+    covers: [an-invalid-name-is-rejected]

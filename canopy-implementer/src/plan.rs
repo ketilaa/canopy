@@ -22,6 +22,9 @@ pub struct PlanStep {
     /// The files the planner decided this step may touch.
     #[serde(flatten)]
     pub scope: Scope,
+    /// Ids of the feature's scenarios this step helps make pass. The Implementer ignores it.
+    #[serde(default)]
+    pub covers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -30,6 +33,9 @@ pub struct Plan {
     /// The story the plan implements, kept for the record. The Implementer is never shown it.
     #[serde(default)]
     pub story: Option<String>,
+    /// The Gherkin feature the plan implements, as a path relative to the canopy-implementer crate.
+    #[serde(default)]
+    pub feature: Option<String>,
     pub steps: Vec<PlanStep>,
 }
 
@@ -124,6 +130,28 @@ impl Plan {
                 }
             }
             created.extend(step.scope.create.iter().cloned());
+        }
+        issues
+    }
+
+    /// Checks the plan against the scenarios of its feature: every scenario is covered by some step, every
+    /// step covers at least one scenario, and no step covers a scenario the feature does not have.
+    pub fn verify_coverage(&self, scenarios: &[String]) -> Vec<String> {
+        let mut issues = Vec::new();
+        for step in &self.steps {
+            if step.covers.is_empty() {
+                issues.push(format!("step {}: covers no scenario", step.id));
+            }
+            for id in &step.covers {
+                if !scenarios.contains(id) {
+                    issues.push(format!("step {}: covers {id}, an unknown scenario", step.id));
+                }
+            }
+        }
+        for scenario in scenarios {
+            if !self.steps.iter().any(|s| s.covers.contains(scenario)) {
+                issues.push(format!("scenario {scenario}: no step covers it"));
+            }
         }
         issues
     }
@@ -235,6 +263,73 @@ steps:
             assert!(plan.story.is_some(), "plan {name} keeps its story for the record");
         }
     }
+    const COVERED: &str = r#"
+id: p
+feature: tasks/x/feature.feature
+steps:
+  - {id: a, instruction: x, covers: [first, second]}
+  - {id: b, instruction: y, covers: [second]}
+"#;
+
+    fn ids(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_plan_names_its_feature_and_the_scenarios_each_step_covers() {
+        let plan = Plan::from_yaml(COVERED).unwrap();
+        assert_eq!(plan.feature.as_deref(), Some("tasks/x/feature.feature"));
+        assert_eq!(plan.steps[0].covers, ["first", "second"]);
+        assert_eq!(plan.steps[1].covers, ["second"]);
+        assert!(Plan::from_yaml(PLAN).unwrap().steps[0].covers.is_empty(), "covers is optional");
+    }
+
+    #[test]
+    fn a_plan_that_covers_every_scenario_has_no_coverage_issues() {
+        let plan = Plan::from_yaml(COVERED).unwrap();
+        assert_eq!(plan.verify_coverage(&ids(&["first", "second"])), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_scenario_no_step_covers_is_reported() {
+        let plan = Plan::from_yaml(COVERED).unwrap();
+        let issues = plan.verify_coverage(&ids(&["first", "second", "third"]));
+        assert!(issues.iter().any(|i| i.contains("third") && i.contains("no step covers")), "{issues:?}");
+    }
+
+    #[test]
+    fn a_step_covering_an_unknown_scenario_is_reported_with_the_step() {
+        let plan = Plan::from_yaml(COVERED).unwrap();
+        let issues = plan.verify_coverage(&ids(&["second"]));
+        assert!(
+            issues.iter().any(|i| i.contains("step a") && i.contains("first") && i.contains("unknown")),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn a_step_that_covers_no_scenario_is_reported() {
+        let plan = Plan::from_yaml("id: p\nsteps:\n  - {id: a, instruction: x, covers: [first]}\n  - {id: b, instruction: y}\n").unwrap();
+        let issues = plan.verify_coverage(&ids(&["first"]));
+        assert!(issues.iter().any(|i| i.contains("step b") && i.contains("covers no scenario")), "{issues:?}");
+    }
+
+    #[test]
+    fn the_widgets_plan_covers_the_scenarios_of_its_feature() {
+        let plan = Plan::from_yaml(include_str!("../tasks/widgets/plan.yaml")).unwrap();
+        let feature = include_str!("../tasks/widgets/feature.feature");
+        assert_eq!(plan.feature.as_deref(), Some("tasks/widgets/feature.feature"));
+        assert!(!plan.story.as_deref().unwrap().contains("Scenario"), "the Gherkin lives in the feature file");
+        for title in ["A valid name creates a widget with a generated id", "An invalid name is rejected"] {
+            assert!(feature.contains(title), "{title}");
+        }
+        let scenarios = ids(&[
+            "a-valid-name-creates-a-widget-with-a-generated-id",
+            "an-invalid-name-is-rejected",
+        ]);
+        assert_eq!(plan.verify_coverage(&scenarios), Vec::<String>::new());
+    }
+
     const SCOPED: &str = r#"
 id: p
 steps:
