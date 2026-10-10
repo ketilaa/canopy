@@ -692,6 +692,10 @@ generic/default TS pattern the rule overrides (weak in-context rule vs. strong t
 a very different failure mode than "instruction never arrived"), and read the self-reported
 deviations for that specific call before concluding anything.
 
+**Reading a batch of runs.** `docs/design/run-analysis-playbook.md` is the method (failure classes,
+attribution, which intervention mechanisms worked, what to recommend next); `analyze_runs` produces its
+numbers, and the `canopy-run-analyst` subagent (`.claude/agents/canopy-run-analyst.md`) applies it.
+
 ---
 
 ## Commit Discipline

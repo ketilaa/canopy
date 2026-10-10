@@ -37,6 +37,12 @@ tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90
 
 ## Observed
 
+- **confirmed** (Planner batches 2026-10-10, `docs/reports/widgets-planner.md`): `response_format` with `enum`,
+  `minItems` and `pattern` (grouped, e.g. `^com[.]example([.][a-z][a-z0-9_]*)*[.][A-Z][A-Za-z0-9_]*$`) is accepted
+  and enforced; an answer matching the grammar came back on every call. Characters in a pattern that need an
+  escape were avoided (`[.]` instead of `\.`); an escaped form was not tried.
+- **suspected, not measured**: a `description` inside the response schema is not shown to the model (llama-server
+  turns the schema into a grammar), so a rule that must reach the model belongs in the prompt.
 - **confirmed** (smoke test 2026-10-08): `response_format` json_schema is enforced with thinking
   disabled. A one-class-plus-test answer came back as valid `{files:[{path,content}]}`, no
   `reasoning_content`, `finish_reason: stop`; 74 prompt + 185 completion tokens in 15.6 s
