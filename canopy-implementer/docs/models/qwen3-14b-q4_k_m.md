@@ -221,6 +221,17 @@ tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (widgets-planned plan v6, import hint on retry **plus the import lines in the first prompt**,
+  harness `67be032`, same server and flags; batch `2026-10-10T06-20-53`, 10 runs): **4/10 scored**, against 7/10
+  for the same plan with the hint on retry only (`2026-10-10T05-53-31`). Of the 28 step executions that passed,
+  23 needed one attempt. Five of the six unscored runs stopped at step 2 and one at step 4. Compile failures:
+  `Optional` 15, `WidgetService` 2, `Widget` 1. The prompt did carry the section, correct and complete, for
+  step 2 (checked in the request event: `import java.util.Optional;` among six lines, right after the files to
+  create), and the model still left `Optional` out of `InMemoryWidgetRepository` in most of those runs; the hinted
+  retry then ended in a repeated glob (stuck) or the same error again. So listing the import in the first prompt
+  did not make the model write it, and the pass count went down, not up. 4/10 against 7/10 is within what ten
+  runs can scatter by (not a significant difference), so this does not show that the section hurts; it shows no
+  sign that it helps.
 - **confirmed** (widgets-planned plan v6 + the import hint on compile errors, harness `dc9838f`, Java 21.0.7,
   GPU-accelerated server; batch `2026-10-10T05-53-31`, **10 runs**): **7/10 scored**. Per passed-step wall time
   about 20 s. Of 42 step executions that passed, 33 needed one attempt, 5 two, 4 three. The three unscored runs
