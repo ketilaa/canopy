@@ -53,8 +53,16 @@ pub enum PlanError {
     EmptyId,
     #[error("step {step:?}: path {path:?} is not allowed: {reason}")]
     BadPath { step: String, path: String, reason: String },
-    #[error("step {step:?}: path {path:?} is listed more than once or in more than one list")]
-    ScopeOverlap { step: String, path: String },
+    #[error(
+        "step {step:?}: path {path:?} is listed more than once ({lists}); a file belongs in exactly one list: \
+         create for a new file, modify for an existing file the step changes, read_only for an existing file it only reads"
+    )]
+    ScopeOverlap {
+        step: String,
+        path: String,
+        /// The lists the path was found in, sorted, as written: `create, modify`.
+        lists: String,
+    },
 }
 
 impl Plan {
@@ -77,11 +85,11 @@ impl Plan {
         }
         for step in &mut plan.steps {
             let step_id = step.id.clone();
-            let mut seen = std::collections::HashSet::new();
-            for list in [
-                &mut step.scope.modify,
-                &mut step.scope.create,
-                &mut step.scope.read_only,
+            let mut seen: std::collections::HashMap<String, Vec<&'static str>> = std::collections::HashMap::new();
+            for (list_name, list) in [
+                ("modify", &mut step.scope.modify),
+                ("create", &mut step.scope.create),
+                ("read_only", &mut step.scope.read_only),
             ] {
                 for path in list.iter_mut() {
                     let parsed = RepoPath::parse(path).map_err(|e| PlanError::BadPath {
@@ -90,10 +98,15 @@ impl Plan {
                         reason: e.to_string(),
                     })?;
                     let normalised = parsed.as_str();
-                    if !seen.insert(normalised.clone()) {
+                    let lists = seen.entry(normalised.clone()).or_default();
+                    lists.push(list_name);
+                    if lists.len() > 1 {
+                        let mut named = lists.clone();
+                        named.sort_unstable();
                         return Err(PlanError::ScopeOverlap {
                             step: step_id,
                             path: normalised,
+                            lists: named.join(", "),
                         });
                     }
                     *path = normalised;
@@ -431,6 +444,20 @@ steps:
             Plan::from_yaml(read_and_change),
             Err(PlanError::ScopeOverlap { .. })
         ));
+    }
+
+    #[test]
+    fn a_file_listed_twice_is_reported_with_the_lists_it_is_in_and_what_each_list_is_for() {
+        let both = "id: p\nsteps:\n  - {id: a, instruction: x, modify: [src/A.java], create: [./src/A.java]}\n";
+        let message = Plan::from_yaml(both).unwrap_err().to_string();
+        for needle in ["step \"a\"", "src/A.java", "create, modify", "new file", "existing"] {
+            assert!(message.contains(needle), "{needle}: {message}");
+        }
+        let twice = "id: p\nsteps:\n  - {id: a, instruction: x, read_only: [src/A.java, src/A.java]}\n";
+        assert!(Plan::from_yaml(twice)
+            .unwrap_err()
+            .to_string()
+            .contains("read_only, read_only"));
     }
 
     fn repo(files: &[&str]) -> tempfile::TempDir {

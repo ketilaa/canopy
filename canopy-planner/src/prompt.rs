@@ -26,6 +26,7 @@ You write implementation plans for a Java 21 Spring Boot 3.4 Maven project.
 ALWAYS write each instruction so it stands alone: name the package, every class and every method signature with what it does.
 ALWAYS state in each instruction every test the step needs: the exact input values and the expected result.
 ALWAYS state in each instruction how a test builds the objects it uses: which constructors, which arguments.
+ALWAYS create or modify a test file in every step that creates or modifies production code.
 For each step: ALWAYS use only classes that earlier steps create.
 ALWAYS keep each step to at most {MAX_FILES_PER_STEP} files created or modified; split a larger step."
     )
@@ -62,7 +63,7 @@ pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
 For each case of a scenario outline: ALWAYS write a test with a concrete input value, in a step that covers the scenario, not in a step of its own.\n\n",
     );
     user.push_str(&format!(
-        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nFor each step: ALWAYS name in read_only every existing or earlier-created file that its code or tests use.\n",
+        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nFor each step: ALWAYS name in read_only every existing or earlier-created file that its code or tests use.\nALWAYS list each file in exactly one of create, modify or read_only: create for a new file, modify for an existing file the step changes (including a file an earlier step creates).\n",
         input.facts.render()
     ));
     if let Some(previous) = previous {
@@ -134,6 +135,26 @@ mod tests {
         );
         assert!(user.contains("not in a step of its own"), "{user}");
         assert!(system.contains("ALWAYS"), "{system}");
+    }
+
+    #[test]
+    fn every_step_with_production_code_is_told_to_carry_its_test_and_each_file_to_sit_in_one_list() {
+        let (system, user) = user_text(None);
+        assert!(
+            system.contains(
+                "ALWAYS create or modify a test file in every step that creates or modifies production code."
+            ),
+            "{system}"
+        );
+        let facts_at = user.find("Root package:").unwrap();
+        let rule_at = user
+            .find("ALWAYS list each file in exactly one of create, modify or read_only")
+            .expect("list rule");
+        assert!(
+            rule_at > facts_at,
+            "the list rule sits with the repository facts: {user}"
+        );
+        assert!(user.contains("a file an earlier step creates"), "{user}");
     }
 
     #[test]
