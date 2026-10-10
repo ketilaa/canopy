@@ -170,6 +170,35 @@ Validation-package compile errors: 0 of 3 runs (the fact was in the context: 11,
 class recurs. That is the pattern of the whole session: each stated fact removed the class it targeted and the
 runs then stopped on another. The one measure that kept moving was the targeted class itself.
 
+### Experiment aud: audit the class lists (2026-10-10, `97447b0`; batch `2026-10-10T19-30-33`)
+
+From the all-day run analysis: a production class whose name ends in `Test` is rejected (a test listed under
+`classes` got a main path and failed compiling JUnit imports), and every production class a step lists must
+be named in its instruction (a controller was listed that the instruction never described). Both are audits
+with a retry that names the problem. Ten fresh plans, an Implementer run on each valid one.
+
+Result: **falsified on plan validity, 1 of 10 valid, 0 of 10 on the first draft** (the stated falsification
+threshold was below 5 of 10).
+
+| Problem | First drafts | Retries (second attempt) |
+|---|---|---|
+| a `...Test` class listed under `classes` | 5 | 8 |
+| a listed class the instruction never names | 5 (in 4 plans) | not visible: the first error returned hides the second |
+| a step touching 5 files (the size cap) | 0 | 1 |
+
+The retry named the step and the class and told the model to move it to `test_classes`; 8 of the 9 retries that
+could repeat it did. The same pattern as the earlier create-or-modify audit: a model that does not follow a
+plain correction after a named failure is not helped by naming it again; the shape has to carry it. The model's
+reason is visible in the drafts: for a test-only step ("test the controller") it puts the test class under
+`classes` because the test is the subject of the step, and the schema allows it (`test_classes` is required to be
+non-empty, `classes` only has a pattern for the package).
+
+The one valid plan was run through the Implementer: 5 of 8 steps passed, the furthest of any generated plan so
+far (the previous best was 4). One run, so not a result, and it passed the audits only after a retry.
+
+Two flaws in the experiment itself: the audits return the first error, so (a) hid (d) in the retries; and the
+two audits changed the draft at once, so the e2e data from one plan says nothing about either.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
