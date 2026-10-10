@@ -110,7 +110,13 @@ impl Planner {
                     )],
                 ),
                 Ok(response) => {
-                    match draft::into_plan(&response.content, request.id, request.story, request.feature_path) {
+                    match draft::into_plan(
+                        &response.content,
+                        request.id,
+                        request.story,
+                        request.feature_path,
+                        request.root,
+                    ) {
                         Err(reason) => (Some(response.content), None, vec![Problem::Unparseable(reason)]),
                         Ok(plan) => {
                             let issues = verify::verify(&plan, request.feature, request.facts, request.root);
@@ -147,12 +153,12 @@ mod tests {
 
     const GOOD: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
-       "create":["src/main/java/com/example/widgets/domain/Widget.java"],
-       "modify":[],"read_only":[],"tests":[{"path":"src/test/java/com/example/widgets/domain/WidgetTest.java","action":"create"}],"covers":["first","second"]}]}"#;
+       "files":["src/main/java/com/example/widgets/domain/Widget.java"],
+       "read_only":[],"tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
-       "create":["src/main/java/com/example/widgets/domain/Widget.java"],
-       "modify":[],"read_only":[],"tests":[{"path":"src/test/java/com/example/widgets/domain/WidgetTest.java","action":"create"}],"covers":["first"]}]}"#;
+       "files":["src/main/java/com/example/widgets/domain/Widget.java"],
+       "read_only":[],"tests":["src/test/java/com/example/widgets/domain/WidgetTest.java"],"covers":["first"]}]}"#;
 
     struct Script {
         replies: Mutex<VecDeque<Result<LlmResponse, LlmError>>>,

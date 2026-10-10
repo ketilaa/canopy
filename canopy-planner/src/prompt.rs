@@ -62,7 +62,7 @@ pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
 For each case of a scenario outline: ALWAYS write a test with a concrete input value, in a step that covers the scenario, not in a step of its own.\n\n",
     );
     user.push_str(&format!(
-        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nFor each step: ALWAYS name in read_only every existing or earlier-created file that its code or tests use.\nALWAYS list each file in exactly one list: create for a new production file, modify for an existing production file the step changes (including a file an earlier step creates), read_only for a file it only reads, tests for every test file the step creates or modifies.\n",
+        "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nFor each step: ALWAYS name in read_only every existing or earlier-created file that its code or tests use.\nALWAYS list each file in exactly one list: files for a production file the step creates or changes, read_only for a file it only reads, tests for every test file the step creates or changes.\n",
         input.facts.render()
     ));
     if let Some(previous) = previous {
@@ -151,8 +151,15 @@ mod tests {
             rule_at > facts_at,
             "the list rule sits with the repository facts: {user}"
         );
-        assert!(user.contains("a file an earlier step creates"), "{user}");
+        assert!(
+            user.contains("files for a production file the step creates or changes"),
+            "{user}"
+        );
         assert!(user.contains("tests for every test file"), "{user}");
+        assert!(
+            !user.contains("modify for"),
+            "the model no longer chooses create or modify: {user}"
+        );
     }
 
     #[test]
