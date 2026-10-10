@@ -44,6 +44,23 @@ model class with an id and a name" and the model reached for `jakarta.persistenc
   signatures, no concrete test values and no wiring: the three costs the hand-written plan carries. Whether
   such a plan runs is the end-to-end question, not yet asked at n=10.
 - **Cost.** A draft takes 20 to 40 s; a failed draft plus retry 40 to 80 s.
+| 6 | `e259632` | repository facts stamped into every step as its context | 5/10 | 2/10 | same as batch 5 (the facts are not in the Planner's prompt change; validity is within noise of batch 5) |
+
+### End to end: the first model-written plans run by the Implementer
+
+Valid plans from batches 5 and 6 were run once each through `run_step --task widgets-planned --plan <file>`
+(same hidden HTTP test and structure checks as the hand-written plan, same GPU-accelerated server).
+
+| Plans run | Scored | Failed at | Why |
+|---|---|---|---|
+| 4 (batch 5, no facts in the steps) | 0 | step 1 or 2 | 3 of 4: `jakarta.persistence` or `spring-data-jpa` classes the project does not have; 1: the Implementer looped on one read |
+| 5 (batch 6, facts with the dependency list as each step's context) | 0 | step 1 or 2 | 5 of 5 the same: `jakarta.persistence` / `org.springframework.data.repository` |
+
+The facts, including `Dependencies: spring-boot-starter-web, spring-boot-starter-test (test)`, did not stop
+the Implementer reaching for JPA. The plans say "entity" and "repository interface" and never say how data is
+stored; the hand-written plan said "a Java record" and "a ConcurrentHashMap". Where that decision comes from
+is not answered by the Planner today (the story does not say; in the full pipeline it is an ADR). Not
+changed yet.
 
 ### Resolved: who decides create or modify
 
