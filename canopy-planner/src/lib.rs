@@ -4,4 +4,5 @@
 //! deterministic harness: the feature is parsed, the repository facts are computed, the draft is
 //! schema-constrained, and a verifier checks it before anything runs.
 
+pub mod facts;
 pub mod gherkin;
