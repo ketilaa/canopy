@@ -103,6 +103,30 @@ the outcome, so steps passed cannot show planner improvements beyond step 2 unti
 Options (not decided): accept a Spring integration test when it contains the controller's mapped path or
 carries `@SpringBootTest`/`@WebMvcTest`; or keep the gate and have the plan name the wiring.
 
+### The gate change and its rerun (2026-10-10, `fb76d26`)
+
+The no-test gate now also counts a changed test as reaching a class when the test has a string literal
+containing a URL path the class maps (the static prefix before a path variable; the bare `/` matches
+nothing), and its refusal says what would count ("or a request to its path /widgets"). Four stored plans
+were rerun on the same server and JDK, one run each, with nothing else changed:
+
+| Plan | Steps passed before | After | Stop after |
+|---|---|---|---|
+| cn run-01 | 2 of 6 | 2 of 6 | compile: `getName()` called on a record (`Widget`) |
+| cn run-02 | 1 of 10 | 1 of 10 | budget: 12 tool calls without a buildable submission |
+| cn run-03 | 1 of 12 | 4 of 12 | stuck on a different gate: files the plan lists as `modify` left unchanged (6 refusals) |
+| 11-52-53 | 3 of 8 | 3 of 8 | test: Spring `ApplicationContext` failed to load |
+
+What the gate change did: the refusal "No changed test mentions WidgetController" is gone from all four runs
+(it was 7 to 10 per run). What it did not do: raise steps passed in most runs (1 of 4), because the controller
+step now fails on other things (a compile error from an assumed JavaBean getter on a record, a context that
+does not load, a budget stop). That is the analyst's own falsification condition for "the gate was the only
+cause": it was a cause, not the only one. n=4, one run each, so these are directions.
+
+One plausible plan-shape cost, not yet shown: `test_classes` must be non-empty in every step, so a later step
+that only needs to change a production class still lists a test as `modify`, and the Implementer refuses a
+`modify` file the step leaves unchanged (run-03, 6 refusals).
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
