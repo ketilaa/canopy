@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::files::GeneratedFiles;
 use crate::implementer::{Scope, StepKind};
+use crate::java;
 use crate::sandbox::RepoPath;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +34,8 @@ pub enum Rejection {
     NoTest(Vec<String>),
     /// Production code changed and no changed test mentions it.
     TestsUnrelated(Vec<String>),
+    /// Files that use a class from another package without importing it: each file and the qualified names to add.
+    MissingImports(Vec<(String, Vec<String>)>),
 }
 
 impl Rejection {
@@ -106,6 +109,20 @@ impl Rejection {
                      behaviour, and submit all the files.",
                     classes = classes.join(", "),
                     paths = paths.join(", ")
+                )
+            }
+            Rejection::MissingImports(files) => {
+                let lines: Vec<String> = files
+                    .iter()
+                    .map(|(path, names)| {
+                        let imports: Vec<String> = names.iter().map(|n| format!("import {n};")).collect();
+                        format!("{path} needs {}", imports.join(" "))
+                    })
+                    .collect();
+                format!(
+                    "Not submitted. These files use classes they do not import: {}. Add the lines and call \
+                     submit_files again with all your files.",
+                    lines.join("; ")
                 )
             }
             Rejection::TestsUnrelated(classes) => format!(
@@ -224,6 +241,10 @@ pub fn check_submission(
     if changed.is_empty() {
         return Err(Rejection::NoChange);
     }
+    let missing = missing_imports_in(&changed, root);
+    if !missing.is_empty() {
+        return Err(Rejection::MissingImports(missing));
+    }
     if kind == StepKind::Refactor {
         return Ok(());
     }
@@ -292,6 +313,32 @@ fn uncovered(production: &[(String, &str)], tests: &[&str]) -> Vec<String> {
                 .collect();
         }
     }
+}
+
+/// The changed Java files that use a class they do not import, from the repository's classes plus the ones this
+/// submission adds. A deterministic audit: it reads the files and never changes them.
+fn missing_imports_in(changed: &[&(String, &str, bool)], root: &Path) -> Vec<(String, Vec<String>)> {
+    let mut index = java::class_index(root);
+    for (relative, _, _) in changed {
+        if let (true, Some(qualified), Some(class)) = (
+            is_production(relative) && relative.ends_with(".java"),
+            java::qualified_name(relative),
+            Path::new(relative).file_stem().map(|s| s.to_string_lossy().into_owned()),
+        ) {
+            let entry = index.entry(class).or_default();
+            if !entry.contains(&qualified) {
+                entry.push(qualified);
+            }
+        }
+    }
+    changed
+        .iter()
+        .filter(|(relative, _, _)| relative.ends_with(".java"))
+        .filter_map(|(relative, content, _)| {
+            let missing = java::missing_imports(relative, content, &index);
+            (!missing.is_empty()).then(|| (relative.clone(), missing))
+        })
+        .collect()
 }
 
 /// Whether `relative` exists, refusing a symlink, a directory, or any symlinked directory on the way.
@@ -634,6 +681,79 @@ mod tests {
             StepKind::BehaviorChange,
         );
         assert_eq!(r, Err(Rejection::TestsUnrelated(vec!["Request".to_string()])));
+    }
+
+    const OTHER_PKG: &str = "src/main/java/com/example/other/Holder.java";
+
+    #[test]
+    fn a_submitted_file_that_uses_a_jdk_class_without_importing_it_is_refused_with_the_line_to_add() {
+        let dir = repo();
+        let r = check(
+            &dir,
+            &[(OTHER_PKG, "package com.example.other;\npublic class Holder { Optional<String> o; }\n"), (GREETER_TEST, NEW_TEST)],
+            &[GREETER_TEST],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(
+            r,
+            Err(Rejection::MissingImports(vec![(OTHER_PKG.to_string(), vec!["java.util.Optional".to_string()])]))
+        );
+        let message = r.unwrap_err().message();
+        assert!(message.contains(OTHER_PKG) && message.contains("import java.util.Optional;"), "{message}");
+    }
+
+    #[test]
+    fn a_class_of_the_repository_in_another_package_must_be_imported_too_and_one_created_in_the_same_submission_counts() {
+        let dir = repo();
+        let holder = "package com.example.other;\npublic class Holder { Greeter g; Fresh f; }\n";
+        let r = check(
+            &dir,
+            &[
+                (OTHER_PKG, holder),
+                ("src/main/java/com/example/fresh/Fresh.java", "package com.example.fresh;\npublic class Fresh { }\n"),
+                (GREETER_TEST, NEW_TEST),
+            ],
+            &[GREETER_TEST],
+            StepKind::BehaviorChange,
+        );
+        assert_eq!(
+            r,
+            Err(Rejection::MissingImports(vec![(
+                OTHER_PKG.to_string(),
+                vec!["com.example.Greeter".to_string(), "com.example.fresh.Fresh".to_string()]
+            )]))
+        );
+    }
+
+    #[test]
+    fn imports_that_are_there_let_the_submission_through_and_test_files_are_checked_as_well() {
+        let dir = repo();
+        let ok = "package com.example.other;\nimport java.util.Optional;\npublic class Holder { Optional<String> o; }\n";
+        assert_eq!(
+            check(&dir, &[(OTHER_PKG, ok), ("src/test/java/com/example/other/HolderTest.java", "package com.example.other;\nclass HolderTest { Holder h; }\n")], &[], StepKind::BehaviorChange),
+            Ok(())
+        );
+        let bad_test = "package com.example;\nclass GreeterTest { void t() { new Greeter(); UUID.randomUUID(); } }\n";
+        let r = check(&dir, &[(GREETER, NEW_GREETER), (GREETER_TEST, bad_test)], &[GREETER, GREETER_TEST], StepKind::BehaviorChange);
+        assert_eq!(
+            r,
+            Err(Rejection::MissingImports(vec![(GREETER_TEST.to_string(), vec!["java.util.UUID".to_string()])]))
+        );
+    }
+
+    #[test]
+    fn a_refactor_step_is_checked_for_imports_too() {
+        let dir = repo();
+        let r = check(
+            &dir,
+            &[(GREETER, "package com.example;\npublic class Greeter { List<String> l; }\n")],
+            &[GREETER],
+            StepKind::Refactor,
+        );
+        assert_eq!(
+            r,
+            Err(Rejection::MissingImports(vec![(GREETER.to_string(), vec!["java.util.List".to_string()])]))
+        );
     }
 
     #[test]
