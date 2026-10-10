@@ -12,7 +12,8 @@ output format. Read it first, every time.
 Then, in order:
 
 1. Run `cargo run -q -p canopy-implementer --example analyze_runs -- <the batch directories you were given>`
-   (add `--json` if you want it machine-readable). If you were not given directories, list
+   (add `--json` if you want it machine-readable; pass each directory as its own argument; if `cargo` is
+   not on the PATH, look under `~/.cargo/bin` or `~/.rustup/toolchains/*/bin`). If you were not given directories, list
    `canopy-planner/runs/` and `canopy-implementer/runs/` and take the newest batches; say which.
 2. Read what the playbook points to that bears on the question: `docs/reports/widgets-planner.md`,
    `docs/principles/compute-facts-mechanically.md`, `canopy-implementer/docs/models/qwen3-14b-q4_k_m.md`,

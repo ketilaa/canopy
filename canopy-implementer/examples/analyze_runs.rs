@@ -157,10 +157,14 @@ fn main() {
     println!(
         "\n== attribution: planner {planner_invalid}/{planner_runs} plans invalid at the end; implementer {implementer_stopped}/{implementer_runs} runs stopped before the last step"
     );
-    if let Some((source, label, count)) = ranked.first() {
-        println!(
-            "== dominant: {source}: {label} ({count} of {} counted)",
-            classes.total()
-        );
+    match ranked.first() {
+        Some((source, label, count)) if *count > 1 => {
+            println!(
+                "== dominant: {source}: {label} ({count} of {} counted)",
+                classes.total()
+            );
+        }
+        Some(_) => println!("== dominant: none yet, every class occurs once; too few runs to rank"),
+        None => println!("== dominant: nothing failed in these runs"),
     }
 }
