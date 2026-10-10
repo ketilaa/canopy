@@ -57,6 +57,29 @@ impl RepoFacts {
         })
     }
 
+    /// Whether a database or persistence library is on the classpath.
+    pub fn has_database_library(&self) -> bool {
+        const PREFIXES: &[&str] = &[
+            "spring-boot-starter-data-",
+            "spring-boot-starter-jdbc",
+            "spring-boot-starter-orm",
+        ];
+        const NAMES: &[&str] = &[
+            "jpa",
+            "hibernate",
+            "h2",
+            "postgresql",
+            "mysql",
+            "mariadb",
+            "sqlite",
+            "mongodb",
+            "jdbc",
+        ];
+        self.dependencies
+            .iter()
+            .any(|d| PREFIXES.iter().any(|p| d.artifact.starts_with(p)) || NAMES.iter().any(|n| d.artifact.contains(n)))
+    }
+
     /// The facts as the standing context of every step. Facts that are not known are left out.
     pub fn render(&self) -> String {
         let directory = self.root_package.replace('.', "/");
@@ -85,6 +108,9 @@ impl RepoFacts {
                 })
                 .collect();
             lines.push(format!("Dependencies: {}", listed.join(", ")));
+        }
+        if !self.has_database_library() {
+            lines.push("Storage: no database or JPA library is available; keep data in memory.".to_string());
         }
         if !self.files.is_empty() {
             let shown = self.files.iter().take(MAX_LISTED_FILES).cloned().collect::<Vec<_>>();
@@ -297,6 +323,38 @@ mod tests {
             text.contains("src/main/java/com/example/widgets/WidgetsApplication.java"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn without_a_database_library_the_facts_say_data_stays_in_memory() {
+        let facts = RepoFacts::collect(scaffold().path()).unwrap();
+        assert!(!facts.has_database_library());
+        let text = facts.render();
+        assert!(
+            text.contains("Storage: no database or JPA library is available; keep data in memory."),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_database_or_jpa_dependency_removes_that_line() {
+        for artifact in [
+            "spring-boot-starter-data-jpa",
+            "spring-boot-starter-jdbc",
+            "h2",
+            "postgresql",
+            "spring-boot-starter-data-mongodb",
+        ] {
+            let dir = scaffold();
+            let pom = POM.replace(
+                "</dependencies>",
+                &format!("<dependency><artifactId>{artifact}</artifactId></dependency></dependencies>"),
+            );
+            write(dir.path(), "pom.xml", &pom);
+            let facts = RepoFacts::collect(dir.path()).unwrap();
+            assert!(facts.has_database_library(), "{artifact}");
+            assert!(!facts.render().contains("Storage:"), "{artifact}");
+        }
     }
 
     #[test]
