@@ -102,6 +102,11 @@ pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&F
                 "\nYour files were identical to what is already there. Read the files again, make the change the \
                  task asks for, and call submit_files with the files that differ.\n"
             }
+            Stage::Compile | Stage::Test => {
+                "\nYour previous answer was undone: the files you created do not exist and the files you changed are \
+                 back as they were.\nALWAYS fix the errors above and call submit_files with the complete files.\n\
+                 NEVER look for the files you submitted.\n"
+            }
             _ => "\nStart again: read the files again before you change them, then call submit_files.\n",
         });
     }
@@ -264,16 +269,28 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_retry_shows_the_previous_answer_and_what_failed_and_says_to_read_again() {
+    fn a_retry_after_a_build_failure_shows_the_previous_answer_and_says_it_was_undone_not_to_read_again() {
+        for stage in [Stage::Compile, Stage::Test] {
+            let (_, user) = tool_messages(&step(), &ShownFiles::default(), Some(&failure(stage, "G.java:1:1: boom", true)));
+            assert!(user.contains("Your previous answer") && user.contains("class G {}"));
+            assert!(user.contains("G.java:1:1: boom"));
+            assert!(user.contains("was undone"), "{user}");
+            assert!(!user.contains("read the files again"), "{user}");
+            assert!(user.contains("submit_files"), "{user}");
+        }
+    }
+
+    #[test]
+    fn a_retry_after_a_failure_that_wrote_nothing_still_says_to_read_the_files_again() {
         let (_, user) = tool_messages(
             &step(),
             &ShownFiles::default(),
-            Some(&failure(Stage::Compile, "G.java:1:1: boom", true)),
+            Some(&failure(Stage::Parse, "no json", false)),
         );
-        assert!(user.contains("Your previous answer") && user.contains("class G {}"));
-        assert!(user.contains("The build failed to compile") && user.contains("G.java:1:1: boom"));
         assert!(user.contains("read the files again"), "{user}");
+        assert!(!user.contains("was undone"), "{user}");
     }
+
     #[test]
     fn a_budget_retry_says_to_read_each_file_once_and_then_submit_not_to_read_again() {
         let (_, user) = tool_messages(
