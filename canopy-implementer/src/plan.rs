@@ -281,7 +281,10 @@ steps:
         assert_eq!(plan.feature.as_deref(), Some("tasks/x/feature.feature"));
         assert_eq!(plan.steps[0].covers, ["first", "second"]);
         assert_eq!(plan.steps[1].covers, ["second"]);
-        assert!(Plan::from_yaml(PLAN).unwrap().steps[0].covers.is_empty(), "covers is optional");
+        assert!(
+            Plan::from_yaml(PLAN).unwrap().steps[0].covers.is_empty(),
+            "covers is optional"
+        );
     }
 
     #[test]
@@ -294,7 +297,12 @@ steps:
     fn a_scenario_no_step_covers_is_reported() {
         let plan = Plan::from_yaml(COVERED).unwrap();
         let issues = plan.verify_coverage(&ids(&["first", "second", "third"]));
-        assert!(issues.iter().any(|i| i.contains("third") && i.contains("no step covers")), "{issues:?}");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("third") && i.contains("no step covers")),
+            "{issues:?}"
+        );
     }
 
     #[test]
@@ -302,16 +310,26 @@ steps:
         let plan = Plan::from_yaml(COVERED).unwrap();
         let issues = plan.verify_coverage(&ids(&["second"]));
         assert!(
-            issues.iter().any(|i| i.contains("step a") && i.contains("first") && i.contains("unknown")),
+            issues
+                .iter()
+                .any(|i| i.contains("step a") && i.contains("first") && i.contains("unknown")),
             "{issues:?}"
         );
     }
 
     #[test]
     fn a_step_that_covers_no_scenario_is_reported() {
-        let plan = Plan::from_yaml("id: p\nsteps:\n  - {id: a, instruction: x, covers: [first]}\n  - {id: b, instruction: y}\n").unwrap();
+        let plan = Plan::from_yaml(
+            "id: p\nsteps:\n  - {id: a, instruction: x, covers: [first]}\n  - {id: b, instruction: y}\n",
+        )
+        .unwrap();
         let issues = plan.verify_coverage(&ids(&["first"]));
-        assert!(issues.iter().any(|i| i.contains("step b") && i.contains("covers no scenario")), "{issues:?}");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("step b") && i.contains("covers no scenario")),
+            "{issues:?}"
+        );
     }
 
     #[test]
@@ -319,8 +337,14 @@ steps:
         let plan = Plan::from_yaml(include_str!("../tasks/widgets/plan.yaml")).unwrap();
         let feature = include_str!("../tasks/widgets/feature.feature");
         assert_eq!(plan.feature.as_deref(), Some("tasks/widgets/feature.feature"));
-        assert!(!plan.story.as_deref().unwrap().contains("Scenario"), "the Gherkin lives in the feature file");
-        for title in ["A valid name creates a widget with a generated id", "An invalid name is rejected"] {
+        assert!(
+            !plan.story.as_deref().unwrap().contains("Scenario"),
+            "the Gherkin lives in the feature file"
+        );
+        for title in [
+            "A valid name creates a widget with a generated id",
+            "An invalid name is rejected",
+        ] {
             assert!(feature.contains(title), "{title}");
         }
         let scenarios = ids(&[

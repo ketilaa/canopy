@@ -514,8 +514,15 @@ mod tests {
         let submit = &declared[2].parameters;
         assert_eq!(submit["required"], json!(["declared_imports", "files"]));
         let keys: Vec<&String> = submit["properties"].as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["declared_imports", "files"], "the checklist must come first so it is written first");
-        assert_eq!(submit["properties"]["declared_imports"]["items"]["required"], json!(["file", "import"]));
+        assert_eq!(
+            keys,
+            ["declared_imports", "files"],
+            "the checklist must come first so it is written first"
+        );
+        assert_eq!(
+            submit["properties"]["declared_imports"]["items"]["required"],
+            json!(["file", "import"])
+        );
         assert_eq!(declared[0], plain[0]);
     }
 }

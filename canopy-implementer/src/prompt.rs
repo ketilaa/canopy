@@ -271,7 +271,11 @@ mod tests {
     #[test]
     fn a_retry_after_a_build_failure_shows_the_previous_answer_and_says_it_was_undone_not_to_read_again() {
         for stage in [Stage::Compile, Stage::Test] {
-            let (_, user) = tool_messages(&step(), &ShownFiles::default(), Some(&failure(stage, "G.java:1:1: boom", true)));
+            let (_, user) = tool_messages(
+                &step(),
+                &ShownFiles::default(),
+                Some(&failure(stage, "G.java:1:1: boom", true)),
+            );
             assert!(user.contains("Your previous answer") && user.contains("class G {}"));
             assert!(user.contains("G.java:1:1: boom"));
             assert!(user.contains("was undone"), "{user}");

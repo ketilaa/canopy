@@ -115,10 +115,12 @@ impl Rejection {
                     paths = paths.join(", ")
                 )
             }
-            Rejection::ImportsNotDeclared => "Not submitted. submit_files needs the `declared_imports` list: for every file, each \
+            Rejection::ImportsNotDeclared => {
+                "Not submitted. submit_files needs the `declared_imports` list: for every file, each \
                  class it uses from another package and its qualified name, written before the files. Send it \
                  again with the `declared_imports` list first."
-                .to_string(),
+                    .to_string()
+            }
             Rejection::DeclaredImportAbsent(entries) => {
                 let lines: Vec<String> = entries
                     .iter()
@@ -343,11 +345,18 @@ pub fn check_declared_imports(
     required: bool,
 ) -> Result<(), Rejection> {
     let Some(declared) = declared else {
-        return if required { Err(Rejection::ImportsNotDeclared) } else { Ok(()) };
+        return if required {
+            Err(Rejection::ImportsNotDeclared)
+        } else {
+            Ok(())
+        };
     };
     let mut absent: Vec<(String, String)> = Vec::new();
     for entry in declared {
-        let Some(file) = files.files.iter().find(|f| f.path.trim_start_matches("./") == entry.file.trim_start_matches("./"))
+        let Some(file) = files
+            .files
+            .iter()
+            .find(|f| f.path.trim_start_matches("./") == entry.file.trim_start_matches("./"))
         else {
             continue;
         };
@@ -374,7 +383,9 @@ fn missing_imports_in(changed: &[&(String, &str, bool)], root: &Path) -> Vec<(St
         if let (true, Some(qualified), Some(class)) = (
             is_production(relative) && relative.ends_with(".java"),
             java::qualified_name(relative),
-            Path::new(relative).file_stem().map(|s| s.to_string_lossy().into_owned()),
+            Path::new(relative)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned()),
         ) {
             let entry = index.entry(class).or_default();
             if !entry.contains(&qualified) {
@@ -670,8 +681,14 @@ mod tests {
             &dir,
             &[
                 (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
-                (CONTROLLER, "package com.example;\nclass Controller { void post(Request r) { } }\n"),
-                (CONTROLLER_TEST, "package com.example;\nclass ControllerTest { void t() { new Controller(); } }\n"),
+                (
+                    CONTROLLER,
+                    "package com.example;\nclass Controller { void post(Request r) { } }\n",
+                ),
+                (
+                    CONTROLLER_TEST,
+                    "package com.example;\nclass ControllerTest { void t() { new Controller(); } }\n",
+                ),
             ],
             &[],
             StepKind::BehaviorChange,
@@ -691,7 +708,10 @@ mod tests {
                     "package com.example;\nclass Mapper { Request map() { return null; } }\n",
                 ),
                 (CONTROLLER, "package com.example;\nclass Controller { Mapper m; }\n"),
-                (CONTROLLER_TEST, "package com.example;\nclass ControllerTest { void t() { new Controller(); } }\n"),
+                (
+                    CONTROLLER_TEST,
+                    "package com.example;\nclass ControllerTest { void t() { new Controller(); } }\n",
+                ),
             ],
             &[],
             StepKind::BehaviorChange,
@@ -706,7 +726,10 @@ mod tests {
             &dir,
             &[
                 (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
-                (CONTROLLER, "package com.example;\nclass Controller { void post(Request r) { } }\n"),
+                (
+                    CONTROLLER,
+                    "package com.example;\nclass Controller { void post(Request r) { } }\n",
+                ),
                 ("src/test/java/com/example/OtherTest.java", "class OtherTest { }\n"),
             ],
             &[],
@@ -714,7 +737,10 @@ mod tests {
         );
         assert_eq!(
             r,
-            Err(Rejection::TestsUnrelated(vec!["Request".to_string(), "Controller".to_string()]))
+            Err(Rejection::TestsUnrelated(vec![
+                "Request".to_string(),
+                "Controller".to_string()
+            ]))
         );
     }
 
@@ -726,7 +752,10 @@ mod tests {
             &dir,
             &[
                 (REQUEST, "package com.example;\nrecord Request(String name) { }\n"),
-                (GREETER_TEST, "package com.example;\nclass GreeterTest { void t() { new Greeter(); new Greeter(); } }\n"),
+                (
+                    GREETER_TEST,
+                    "package com.example;\nclass GreeterTest { void t() { new Greeter(); new Greeter(); } }\n",
+                ),
             ],
             &[GREETER_TEST],
             StepKind::BehaviorChange,
@@ -741,27 +770,43 @@ mod tests {
         let dir = repo();
         let r = check(
             &dir,
-            &[(OTHER_PKG, "package com.example.other;\npublic class Holder { Optional<String> o; }\n"), (GREETER_TEST, NEW_TEST)],
+            &[
+                (
+                    OTHER_PKG,
+                    "package com.example.other;\npublic class Holder { Optional<String> o; }\n",
+                ),
+                (GREETER_TEST, NEW_TEST),
+            ],
             &[GREETER_TEST],
             StepKind::BehaviorChange,
         );
         assert_eq!(
             r,
-            Err(Rejection::MissingImports(vec![(OTHER_PKG.to_string(), vec!["java.util.Optional".to_string()])]))
+            Err(Rejection::MissingImports(vec![(
+                OTHER_PKG.to_string(),
+                vec!["java.util.Optional".to_string()]
+            )]))
         );
         let message = r.unwrap_err().message();
-        assert!(message.contains(OTHER_PKG) && message.contains("import java.util.Optional;"), "{message}");
+        assert!(
+            message.contains(OTHER_PKG) && message.contains("import java.util.Optional;"),
+            "{message}"
+        );
     }
 
     #[test]
-    fn a_class_of_the_repository_in_another_package_must_be_imported_too_and_one_created_in_the_same_submission_counts() {
+    fn a_class_of_the_repository_in_another_package_must_be_imported_too_and_one_created_in_the_same_submission_counts()
+    {
         let dir = repo();
         let holder = "package com.example.other;\npublic class Holder { Greeter g; Fresh f; }\n";
         let r = check(
             &dir,
             &[
                 (OTHER_PKG, holder),
-                ("src/main/java/com/example/fresh/Fresh.java", "package com.example.fresh;\npublic class Fresh { }\n"),
+                (
+                    "src/main/java/com/example/fresh/Fresh.java",
+                    "package com.example.fresh;\npublic class Fresh { }\n",
+                ),
                 (GREETER_TEST, NEW_TEST),
             ],
             &[GREETER_TEST],
@@ -779,16 +824,36 @@ mod tests {
     #[test]
     fn imports_that_are_there_let_the_submission_through_and_test_files_are_checked_as_well() {
         let dir = repo();
-        let ok = "package com.example.other;\nimport java.util.Optional;\npublic class Holder { Optional<String> o; }\n";
+        let ok =
+            "package com.example.other;\nimport java.util.Optional;\npublic class Holder { Optional<String> o; }\n";
         assert_eq!(
-            check(&dir, &[(OTHER_PKG, ok), ("src/test/java/com/example/other/HolderTest.java", "package com.example.other;\nclass HolderTest { Holder h; }\n")], &[], StepKind::BehaviorChange),
+            check(
+                &dir,
+                &[
+                    (OTHER_PKG, ok),
+                    (
+                        "src/test/java/com/example/other/HolderTest.java",
+                        "package com.example.other;\nclass HolderTest { Holder h; }\n"
+                    )
+                ],
+                &[],
+                StepKind::BehaviorChange
+            ),
             Ok(())
         );
         let bad_test = "package com.example;\nclass GreeterTest { void t() { new Greeter(); UUID.randomUUID(); } }\n";
-        let r = check(&dir, &[(GREETER, NEW_GREETER), (GREETER_TEST, bad_test)], &[GREETER, GREETER_TEST], StepKind::BehaviorChange);
+        let r = check(
+            &dir,
+            &[(GREETER, NEW_GREETER), (GREETER_TEST, bad_test)],
+            &[GREETER, GREETER_TEST],
+            StepKind::BehaviorChange,
+        );
         assert_eq!(
             r,
-            Err(Rejection::MissingImports(vec![(GREETER_TEST.to_string(), vec!["java.util.UUID".to_string()])]))
+            Err(Rejection::MissingImports(vec![(
+                GREETER_TEST.to_string(),
+                vec!["java.util.UUID".to_string()]
+            )]))
         );
     }
 
@@ -797,27 +862,39 @@ mod tests {
         let dir = repo();
         let r = check(
             &dir,
-            &[(GREETER, "package com.example;\npublic class Greeter { List<String> l; }\n")],
+            &[(
+                GREETER,
+                "package com.example;\npublic class Greeter { List<String> l; }\n",
+            )],
             &[GREETER],
             StepKind::Refactor,
         );
         assert_eq!(
             r,
-            Err(Rejection::MissingImports(vec![(GREETER.to_string(), vec!["java.util.List".to_string()])]))
+            Err(Rejection::MissingImports(vec![(
+                GREETER.to_string(),
+                vec!["java.util.List".to_string()]
+            )]))
         );
     }
 
     fn declared(pairs: &[(&str, &str)]) -> Vec<crate::files::DeclaredImport> {
         pairs
             .iter()
-            .map(|(f, i)| crate::files::DeclaredImport { file: f.to_string(), import: i.to_string() })
+            .map(|(f, i)| crate::files::DeclaredImport {
+                file: f.to_string(),
+                import: i.to_string(),
+            })
             .collect()
     }
 
     #[test]
     fn a_required_declaration_that_is_missing_is_refused_and_an_optional_one_is_not() {
         let submitted = files(&[(GREETER, "package com.example;\nclass Greeter { }\n")]);
-        assert_eq!(check_declared_imports(&submitted, None, true), Err(Rejection::ImportsNotDeclared));
+        assert_eq!(
+            check_declared_imports(&submitted, None, true),
+            Err(Rejection::ImportsNotDeclared)
+        );
         assert!(Rejection::ImportsNotDeclared.message().contains("declared_imports"));
         assert_eq!(check_declared_imports(&submitted, None, false), Ok(()));
     }
@@ -828,13 +905,25 @@ mod tests {
         let submitted = files(&[(GREETER, src)]);
         let ok = declared(&[(GREETER, "java.util.UUID")]);
         assert_eq!(check_declared_imports(&submitted, Some(&ok), true), Ok(()));
-        let wildcard = files(&[(GREETER, "package com.example;\nimport java.util.*;\nclass Greeter { }\n")]);
+        let wildcard = files(&[(
+            GREETER,
+            "package com.example;\nimport java.util.*;\nclass Greeter { }\n",
+        )]);
         assert_eq!(check_declared_imports(&wildcard, Some(&ok), true), Ok(()));
         let lie = declared(&[(GREETER, "java.util.Optional")]);
         let r = check_declared_imports(&submitted, Some(&lie), true);
-        assert_eq!(r, Err(Rejection::DeclaredImportAbsent(vec![(GREETER.to_string(), "java.util.Optional".to_string())])));
+        assert_eq!(
+            r,
+            Err(Rejection::DeclaredImportAbsent(vec![(
+                GREETER.to_string(),
+                "java.util.Optional".to_string()
+            )]))
+        );
         let message = r.unwrap_err().message();
-        assert!(message.contains(GREETER) && message.contains("import java.util.Optional;"), "{message}");
+        assert!(
+            message.contains(GREETER) && message.contains("import java.util.Optional;"),
+            "{message}"
+        );
     }
 
     #[test]

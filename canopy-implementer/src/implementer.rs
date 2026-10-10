@@ -387,7 +387,9 @@ impl Implementer {
                             // Files shown up front count as read: the model has their content.
                             let has_read = |p: &str| toolbox.has_read(p) || shown_paths.contains(p);
                             match scope_check
-                                .and_then(|_| gates::check_declared_imports(&files, imports.as_deref(), limits.declare_imports))
+                                .and_then(|_| {
+                                    gates::check_declared_imports(&files, imports.as_deref(), limits.declare_imports)
+                                })
                                 .and_then(|_| gates::check_submission(&files, root, &has_read, step.kind))
                             {
                                 Err(rejection) => (ToolOutcome::Refused, rejection.message()),
@@ -971,7 +973,11 @@ mod tests {
                 .tools
                 .iter()
                 .find(|tool| tool.name == "submit_files")
-                .and_then(|tool| tool.parameters["properties"].as_object().map(|p| p.keys().cloned().collect()))
+                .and_then(|tool| {
+                    tool.parameters["properties"]
+                        .as_object()
+                        .map(|p| p.keys().cloned().collect())
+                })
                 .unwrap_or_default();
             self.tools_seen.lock().unwrap().push(submit_properties);
             self.turns
@@ -1325,8 +1331,14 @@ mod tests {
     #[test]
     fn with_declared_imports_on_a_submission_without_the_list_is_refused_and_one_with_it_goes_through() {
         let files = [
-            ("src/main/java/com/example/F.java", "package com.example;\npublic class F { }\n"),
-            ("src/test/java/com/example/FTest.java", "package com.example;\nclass FTest { F f; }\n"),
+            (
+                "src/main/java/com/example/F.java",
+                "package com.example;\npublic class F { }\n",
+            ),
+            (
+                "src/test/java/com/example/FTest.java",
+                "package com.example;\nclass FTest { F f; }\n",
+            ),
         ];
         let rig = tool_rig(
             vec![calls(vec![submit(&files)]), calls(vec![submit_declared(&[], &files)])],

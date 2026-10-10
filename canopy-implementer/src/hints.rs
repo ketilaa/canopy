@@ -47,7 +47,11 @@ pub fn import_hint(digest: &str, root: &Path) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     for line in digest.lines() {
-        let Some(class) = line.trim().strip_prefix("symbol:").and_then(|s| s.trim().strip_prefix("class ")) else {
+        let Some(class) = line
+            .trim()
+            .strip_prefix("symbol:")
+            .and_then(|s| s.trim().strip_prefix("class "))
+        else {
             continue;
         };
         let class = class.trim();
@@ -221,7 +225,8 @@ mod tests {
     #[test]
     fn a_missing_well_known_java_class_gets_its_import_line() {
         let dir = repo();
-        let digest = "src/main/java/com/example/A.java:3:5: cannot find symbol\n  symbol:   class UUID\n  location: interface A";
+        let digest =
+            "src/main/java/com/example/A.java:3:5: cannot find symbol\n  symbol:   class UUID\n  location: interface A";
         let hint = import_hint(digest, dir.path()).expect("a hint");
         assert!(hint.contains("import java.util.UUID;"), "{hint}");
     }
@@ -254,7 +259,8 @@ mod tests {
     #[test]
     fn each_missing_class_is_listed_once() {
         let dir = repo();
-        let digest = format!("{MISSING_FORMATTER}\n{MISSING_FORMATTER}\nA.java:1:1: cannot find symbol\n  symbol:   class List");
+        let digest =
+            format!("{MISSING_FORMATTER}\n{MISSING_FORMATTER}\nA.java:1:1: cannot find symbol\n  symbol:   class List");
         let hint = import_hint(&digest, dir.path()).expect("a hint");
         assert_eq!(hint.matches("NameFormatter;").count(), 1, "{hint}");
         assert!(hint.contains("import java.util.List;"), "{hint}");

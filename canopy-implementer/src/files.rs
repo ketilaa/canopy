@@ -242,8 +242,17 @@ mod tests {
         )
         .unwrap();
         let declared = with.imports.as_ref().unwrap();
-        assert_eq!(declared[0], DeclaredImport { file: "a/B.java".into(), import: "java.util.Optional".into() });
-        assert_eq!(declared[1].import, "java.util.UUID", "an import line is reduced to the qualified name");
+        assert_eq!(
+            declared[0],
+            DeclaredImport {
+                file: "a/B.java".into(),
+                import: "java.util.Optional".into()
+            }
+        );
+        assert_eq!(
+            declared[1].import, "java.util.UUID",
+            "an import line is reduced to the qualified name"
+        );
         assert_eq!(with.files.files.len(), 1);
         let without = Submission::parse(r#"{"files":[{"path":"a/B.java","content":"x"}]}"#).unwrap();
         assert!(without.imports.is_none());

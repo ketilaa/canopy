@@ -26,7 +26,10 @@ const JDK_CLASSES: &[(&str, &str)] = &[
 
 /// The fully qualified name of a well-known JDK class, if `class` is one.
 pub fn jdk_class(class: &str) -> Option<&'static str> {
-    JDK_CLASSES.iter().find(|(name, _)| *name == class).map(|(_, full)| *full)
+    JDK_CLASSES
+        .iter()
+        .find(|(name, _)| *name == class)
+        .map(|(_, full)| *full)
 }
 
 /// `src/main/java/com/example/greeting/Greeter.java` gives `com.example.greeting`.
@@ -38,7 +41,9 @@ pub fn package_of(path: &str) -> Option<String> {
 
 /// The package a source or test file sits in, from its path.
 fn source_package_of(path: &str) -> Option<String> {
-    let inside = path.strip_prefix("src/main/java/").or_else(|| path.strip_prefix("src/test/java/"))?;
+    let inside = path
+        .strip_prefix("src/main/java/")
+        .or_else(|| path.strip_prefix("src/test/java/"))?;
     let (directory, _) = inside.rsplit_once('/')?;
     Some(directory.replace('/', "."))
 }
@@ -188,7 +193,10 @@ pub fn missing_imports(path: &str, source: &str, index: &HashMap<String, Vec<Str
                 None => continue,
             },
         };
-        let package = qualified.rsplit_once('.').map(|(p, _)| p.to_string()).unwrap_or_default();
+        let package = qualified
+            .rsplit_once('.')
+            .map(|(p, _)| p.to_string())
+            .unwrap_or_default();
         let covered = own_package.as_deref() == Some(package.as_str())
             || imports.contains(&qualified)
             || imports.contains(&format!("{package}.*"));
@@ -234,18 +242,27 @@ mod tests {
 
     #[test]
     fn the_package_and_imports_are_read_from_the_source() {
-        let src = "package com.example.service;\n\nimport java.util.Optional;\nimport com.example.domain.*;\n\nclass A {}\n";
+        let src =
+            "package com.example.service;\n\nimport java.util.Optional;\nimport com.example.domain.*;\n\nclass A {}\n";
         assert_eq!(package_in(src).as_deref(), Some("com.example.service"));
-        assert_eq!(imports_in(src), vec!["java.util.Optional".to_string(), "com.example.domain.*".to_string()]);
+        assert_eq!(
+            imports_in(src),
+            vec!["java.util.Optional".to_string(), "com.example.domain.*".to_string()]
+        );
     }
 
     #[test]
     fn a_known_class_used_without_an_import_is_missing() {
-        let src = "package com.example.service;\nclass WidgetService { Optional<Widget> find(UUID id) { return null; } }\n";
+        let src =
+            "package com.example.service;\nclass WidgetService { Optional<Widget> find(UUID id) { return null; } }\n";
         let idx = index(&[("Widget", "com.example.domain.Widget")]);
         assert_eq!(
             missing_imports(SERVICE, src, &idx),
-            vec!["com.example.domain.Widget".to_string(), "java.util.Optional".to_string(), "java.util.UUID".to_string()]
+            vec![
+                "com.example.domain.Widget".to_string(),
+                "java.util.Optional".to_string(),
+                "java.util.UUID".to_string()
+            ]
         );
     }
 
@@ -253,7 +270,10 @@ mod tests {
     fn an_imported_class_a_wildcard_covered_class_and_a_same_package_class_are_not_missing() {
         let src = "package com.example.service;\nimport java.util.Optional;\nimport com.example.domain.*;\n\
                    class WidgetService { Optional<Widget> a; Helper h; }\n";
-        let idx = index(&[("Widget", "com.example.domain.Widget"), ("Helper", "com.example.service.Helper")]);
+        let idx = index(&[
+            ("Widget", "com.example.domain.Widget"),
+            ("Helper", "com.example.service.Helper"),
+        ]);
         assert_eq!(missing_imports(SERVICE, src, &idx), Vec::<String>::new());
     }
 
@@ -279,13 +299,21 @@ mod tests {
     fn a_name_inside_a_longer_identifier_does_not_count_and_a_repository_class_beats_the_jdk() {
         let src = "package com.example.service;\nclass WidgetService { MyOptionalThing x; List y; }\n";
         let idx = index(&[("List", "com.example.domain.List")]);
-        assert_eq!(missing_imports(SERVICE, src, &idx), vec!["com.example.domain.List".to_string()]);
+        assert_eq!(
+            missing_imports(SERVICE, src, &idx),
+            vec!["com.example.domain.List".to_string()]
+        );
     }
 
     #[test]
     fn the_class_index_comes_from_src_main_java() {
         let dir = tempfile::tempdir().unwrap();
-        for rel in ["src/main/java/com/example/a/Alpha.java", "src/main/java/com/example/b/Alpha.java", "src/main/java/com/example/b/Beta.java", "src/test/java/com/example/a/GammaTest.java"] {
+        for rel in [
+            "src/main/java/com/example/a/Alpha.java",
+            "src/main/java/com/example/b/Alpha.java",
+            "src/main/java/com/example/b/Beta.java",
+            "src/test/java/com/example/a/GammaTest.java",
+        ] {
             let p = dir.path().join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, "class X {}").unwrap();
@@ -300,11 +328,19 @@ mod tests {
     fn a_file_without_a_package_line_takes_its_package_from_its_path_main_or_test() {
         let idx = index(&[("Greeter", "com.example.Greeter")]);
         assert_eq!(
-            missing_imports("src/test/java/com/example/GreeterTest.java", "class GreeterTest { Greeter g; }", &idx),
+            missing_imports(
+                "src/test/java/com/example/GreeterTest.java",
+                "class GreeterTest { Greeter g; }",
+                &idx
+            ),
             Vec::<String>::new()
         );
         assert_eq!(
-            missing_imports("src/test/java/com/other/GreeterTest.java", "class GreeterTest { Greeter g; }", &idx),
+            missing_imports(
+                "src/test/java/com/other/GreeterTest.java",
+                "class GreeterTest { Greeter g; }",
+                &idx
+            ),
             vec!["com.example.Greeter".to_string()]
         );
     }
