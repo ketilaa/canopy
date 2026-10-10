@@ -42,35 +42,9 @@ pub fn qualified_name(path: &str) -> Option<String> {
     Some(format!("{package}.{class}"))
 }
 
-/// The import lines for the classes of the given production paths, then for the JDK classes whose name
-/// appears as a whole word in `text`. Each line once, in order of first appearance.
-pub fn import_lines(paths: &[String], text: &str) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let mut add = |line: String| {
-        if !lines.contains(&line) {
-            lines.push(line);
-        }
-    };
-    for path in paths {
-        if let Some(name) = qualified_name(path) {
-            add(format!("import {name};"));
-        }
-    }
-    for (class, full) in JDK_CLASSES {
-        if crate::gates::mentions_word(text, class) {
-            add(format!("import {full};"));
-        }
-    }
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn paths(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
-    }
 
     #[test]
     fn the_package_comes_from_the_path_under_src_main_java() {
@@ -88,39 +62,5 @@ mod tests {
             qualified_name("src/main/java/com/example/widgets/domain/Widget.java").as_deref(),
             Some("com.example.widgets.domain.Widget")
         );
-    }
-
-    #[test]
-    fn production_paths_give_import_lines_and_test_paths_none() {
-        let lines = import_lines(
-            &paths(&[
-                "src/main/java/com/example/widgets/domain/Widget.java",
-                "src/test/java/com/example/widgets/domain/WidgetTest.java",
-            ]),
-            "",
-        );
-        assert_eq!(lines, vec!["import com.example.widgets.domain.Widget;".to_string()]);
-    }
-
-    #[test]
-    fn a_jdk_class_named_in_the_text_gets_its_import_line() {
-        let lines = import_lines(&[], "Optional<Widget> findById(UUID id)");
-        assert!(lines.contains(&"import java.util.Optional;".to_string()), "{lines:?}");
-        assert!(lines.contains(&"import java.util.UUID;".to_string()), "{lines:?}");
-        assert!(!lines.iter().any(|l| l.contains("List")), "{lines:?}");
-    }
-
-    #[test]
-    fn a_jdk_name_inside_a_longer_word_does_not_count() {
-        assert!(import_lines(&[], "OptionalThing and MyUUIDs").is_empty());
-    }
-
-    #[test]
-    fn a_line_is_given_once() {
-        let lines = import_lines(
-            &paths(&["src/main/java/a/B.java", "src/main/java/a/B.java"]),
-            "UUID UUID",
-        );
-        assert_eq!(lines.len(), 2, "{lines:?}");
     }
 }

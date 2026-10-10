@@ -3,7 +3,6 @@
 
 use crate::files::GeneratedFile;
 use crate::implementer::{Failure, StepRequest};
-use crate::java;
 use crate::llm::Message;
 use crate::observe::Stage;
 
@@ -77,28 +76,6 @@ pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&F
             user.push_str("\n## Files to create\n");
             for path in &step.scope.create {
                 user.push_str(&format!("- {path}\n"));
-            }
-        }
-        // Facts the harness can work out: where each production class lives and which JDK classes the task
-        // names. A class from another package that is not imported is the commonest compile failure.
-        let paths: Vec<String> = step
-            .scope
-            .modify
-            .iter()
-            .chain(&step.scope.create)
-            .chain(&step.scope.read_only)
-            .cloned()
-            .collect();
-        let mut text = step.instruction.clone();
-        for file in shown.modify.iter().chain(&shown.read_only) {
-            text.push('\n');
-            text.push_str(&file.content);
-        }
-        let imports = java::import_lines(&paths, &text);
-        if !imports.is_empty() {
-            user.push_str("\n## Imports\n");
-            for line in imports {
-                user.push_str(&format!("{line}\n"));
             }
         }
     }
@@ -380,45 +357,5 @@ mod tests {
         let (plain_rules, plain_user) = tool_messages(&step(), &ShownFiles::default(), None);
         assert!(!plain_rules.contains("listed under"));
         assert!(!plain_user.contains("Files to change") && !plain_user.contains("Files for reference"));
-    }
-
-    #[test]
-    fn a_scoped_task_lists_the_imports_of_its_production_classes_after_the_files_to_create() {
-        let step = StepRequest {
-            instruction: "Add Optional<Dep> find(UUID id).".into(),
-            scope: crate::implementer::Scope {
-                modify: vec![],
-                create: vec![
-                    "src/main/java/com/example/web/New.java".into(),
-                    "src/test/java/com/example/web/NewTest.java".into(),
-                ],
-                read_only: vec!["src/main/java/com/example/service/Dep.java".into()],
-            },
-            ..step()
-        };
-        let (_, user) = tool_messages(&step, &ShownFiles::default(), None);
-        let create = user.find("## Files to create").unwrap();
-        let imports = user.find("## Imports").expect("an imports section");
-        assert!(create < imports, "{user}");
-        let section = &user[imports..];
-        assert!(section.contains("import com.example.service.Dep;"), "{section}");
-        assert!(section.contains("import com.example.web.New;"), "{section}");
-        assert!(section.contains("import java.util.Optional;") && section.contains("import java.util.UUID;"), "{section}");
-        assert!(!section.contains("NewTest"), "{section}");
-    }
-
-    #[test]
-    fn an_unscoped_task_and_a_scoped_task_with_nothing_to_import_have_no_imports_section() {
-        let (_, plain) = tool_messages(&step(), &ShownFiles::default(), None);
-        assert!(!plain.contains("## Imports"));
-        let only_tests = StepRequest {
-            scope: crate::implementer::Scope {
-                modify: vec!["src/test/java/ATest.java".into()],
-                ..Default::default()
-            },
-            ..step()
-        };
-        let (_, user) = tool_messages(&only_tests, &ShownFiles::default(), None);
-        assert!(!user.contains("## Imports"), "{user}");
     }
 }
