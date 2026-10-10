@@ -100,6 +100,7 @@ impl Planner {
                 schema: draft::schema(&ids),
                 thinking: false,
             };
+            let context = request.facts.render();
             let (raw, plan, problems) = match self.generator.complete_structured(&structured) {
                 Err(e) => (None, None, vec![Problem::Model(e.to_string())]),
                 Ok(response) if response.finish_reason == "length" => (
@@ -115,6 +116,7 @@ impl Planner {
                         request.id,
                         request.story,
                         request.feature_path,
+                        &context,
                         request.root,
                     ) {
                         Err(reason) => (Some(response.content), None, vec![Problem::Unparseable(reason)]),

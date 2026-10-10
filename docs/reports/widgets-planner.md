@@ -26,6 +26,7 @@ model class with an id and a name" and the model reached for `jakarta.persistenc
 | 2 | `94a0905` | prompt rule "every step with production code carries a test"; overlap error names the lists | 0/10 | 0/10 | 8 runs still missing tests (the rule was in the request, confirmed in the event log); 2 overlap. |
 | 3 | `27c1166` | `tests` a required, non-empty field of every step | 0/10 | 0/10 | 10 runs: a test file listed in both `create` and `tests`. No missing tests. |
 | 4 | `f6c741d` | path patterns in the schema: `create`/`modify` under `src/main`, `tests` under `src/test` | 1/10 | 0/10 | 9 runs: a file in both `create` and `modify` (see below). |
+| 5 | `7999338` | harness decides create or modify (option A): the draft lists `files`, `read_only`, `tests` only | 4/10 | 3/10 | 6 runs: a file in both `files` and `read_only` (38 occurrences over both attempts, all that one pair); 1 duplicate step id; 1 step over the size cap. |
 
 ### What the batches showed
 
@@ -44,10 +45,17 @@ model class with an id and a name" and the model reached for `jakarta.persistenc
   such a plan runs is the end-to-end question, not yet asked at n=10.
 - **Cost.** A draft takes 20 to 40 s; a failed draft plus retry 40 to 80 s.
 
-### Open: who decides create or modify
+### Resolved: who decides create or modify
 
-Whether a path is `create` or `modify` is mechanically known: it is `modify` if the repository has it or an
-earlier step creates it, `create` otherwise. Having the model state it is where 9 of 10 batch-4 drafts
-fail. Computing it would move a fact out of the model (see `docs/principles/compute-facts-mechanically.md`)
-but it is Rust code that classifies model output, which the project's rules gate on a proposal and
-approval. Decision pending; see the session notes.
+Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
+step creates it, `create` otherwise. Having the model state it was where 9 of 10 batch-4 drafts failed.
+Decided (option A, approved): the draft no longer has `create`/`modify`; the harness assigns them in
+`draft::into_plan` from the repository and the earlier steps (see `docs/principles/compute-facts-mechanically.md`).
+Batch 5: 4/10 valid, 3 on the first draft, up from 1/10 and 0/10.
+
+### Open: a changed file listed again as read-only
+
+Every remaining rejection of an otherwise well-formed draft is one pair: the model lists a file it changes
+under `files` and again under `read_only` (38 of 38 duplicates in batch 5). The entry is redundant, since a
+changed file is shown to the Implementer anyway, and the retry naming the three lists did not change the
+model's behaviour. Options and decision: see the session notes; nothing implemented yet.

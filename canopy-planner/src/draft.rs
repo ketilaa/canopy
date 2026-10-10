@@ -50,11 +50,18 @@ pub fn schema(scenario_ids: &[String]) -> Value {
     })
 }
 
-/// The plan a draft describes. The id, the story, the feature path, every step's kind (a behaviour change)
-/// and whether each file is created or modified come from the harness, never from the model. A file is
+/// The plan a draft describes. The id, the story, the feature path, every step's kind (a behaviour change),
+/// every step's context (the repository facts) and whether each file is created or modified come from the harness, never from the model. A file is
 /// modified when the repository has it or an earlier step creates it, and created otherwise. The plan
 /// format's own validation decides what else is acceptable; its reason is returned as is.
-pub fn into_plan(content: &str, id: &str, story: &str, feature: Option<&str>, root: &Path) -> Result<Plan, String> {
+pub fn into_plan(
+    content: &str,
+    id: &str,
+    story: &str,
+    feature: Option<&str>,
+    context: &str,
+    root: &Path,
+) -> Result<Plan, String> {
     let draft: Value = serde_json::from_str(content).map_err(|e| format!("the answer is not valid JSON: {e}"))?;
     let mut steps = draft
         .get("steps")
@@ -65,12 +72,13 @@ pub fn into_plan(content: &str, id: &str, story: &str, feature: Option<&str>, ro
     for step in &mut steps {
         let Some(fields) = step.as_object_mut() else { continue };
         let step_id = fields.get("id").and_then(Value::as_str).unwrap_or("?").to_string();
-        for decided in ["kind", "create", "modify"] {
+        for decided in ["kind", "create", "modify", "context"] {
             if fields.contains_key(decided) {
                 return Err(format!("step {step_id}: {decided} is not yours to set; leave it out"));
             }
         }
         fields.insert("kind".into(), json!("behavior_change"));
+        fields.insert("context".into(), json!(context));
         let (create, modify) = classify(fields, &step_id, root, &created)?;
         created.extend(create.iter().cloned());
         fields.insert("create".into(), json!(create));
@@ -195,7 +203,19 @@ mod tests {
     const DRAFT: &str = r#"{"steps":[{"id":"a","instruction":"x","files":["./src/main/A.java"],"read_only":[],"tests":["src/test/ATest.java"],"covers":["first"]}]}"#;
 
     fn plan_of(draft: &str, root: &std::path::Path) -> Result<Plan, String> {
-        into_plan(draft, "p", "the story", Some("f.feature"), root)
+        into_plan(draft, "p", "the story", Some("f.feature"), "the facts", root)
+    }
+
+    #[test]
+    fn every_step_carries_the_repository_facts_as_its_context() {
+        let dir = scaffold();
+        let draft = r#"{"steps":[
+          {"id":"a","instruction":"x","files":["src/main/A.java"],"read_only":[],"tests":["src/test/ATest.java"],"covers":["first"]},
+          {"id":"b","instruction":"y","files":["src/main/B.java"],"read_only":[],"tests":["src/test/BTest.java"],"covers":["first"]}]}"#;
+        let plan = plan_of(draft, dir.path()).unwrap();
+        assert!(plan.steps.iter().all(|s| s.context.as_deref() == Some("the facts")));
+        let requests = plan.step_requests("ignored: the steps bring their own");
+        assert!(requests.iter().all(|r| r.context == "the facts"));
     }
 
     #[test]
@@ -279,7 +299,12 @@ mod tests {
     #[test]
     fn a_step_that_names_its_own_kind_create_or_modify_is_rejected_not_obeyed() {
         let dir = scaffold();
-        for field in ["\"kind\":\"refactor\"", "\"create\":[]", "\"modify\":[]"] {
+        for field in [
+            "\"kind\":\"refactor\"",
+            "\"create\":[]",
+            "\"modify\":[]",
+            "\"context\":\"x\"",
+        ] {
             let sneaky = DRAFT.replace("\"instruction\":\"x\",", &format!("\"instruction\":\"x\",{field},"));
             let e = plan_of(&sneaky, dir.path()).unwrap_err();
             assert!(e.contains("step a") && e.contains("not yours to set"), "{field}: {e}");
