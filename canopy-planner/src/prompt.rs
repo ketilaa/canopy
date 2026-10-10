@@ -59,7 +59,7 @@ pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
     }
     user.push_str(
         "For each scenario: ALWAYS name its id in covers of at least one step that helps make it pass.\n\
-For each case of a scenario outline: ALWAYS write its own test with a concrete input value.\n\n",
+For each case of a scenario outline: ALWAYS write a test with a concrete input value, in a step that covers the scenario, not in a step of its own.\n\n",
     );
     user.push_str(&format!(
         "## Repository\n{}\nALWAYS create new files under the main and test source directories above.\nFor each step: ALWAYS name in read_only every existing or earlier-created file that its code or tests use.\n",
@@ -132,7 +132,7 @@ mod tests {
             system.contains(&format!("at most {MAX_FILES_PER_STEP} files")),
             "{system}"
         );
-        assert!(user.contains("For each case of a scenario outline"), "{user}");
+        assert!(user.contains("not in a step of its own"), "{user}");
         assert!(system.contains("ALWAYS"), "{system}");
     }
 

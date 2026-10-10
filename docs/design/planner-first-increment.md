@@ -98,7 +98,10 @@ being per-task prose. Java rules stay in `java.rs`.
 One structured call, thinking off, `response_format` only (never with `tools`). The schema is closed where it
 can be:
 
-- `steps[].kind`: enum (`behavior_change`, `refactor`).
+- `steps[].kind`: not in the schema. Every drafted step is a behaviour change, set by the harness; a draft that
+  names a kind is rejected. A refactor step is exempt from the test rule, so letting the model declare one
+  made the rule optional (found in the first live run: all 8 steps came back `refactor`, and production code
+  with no test passed). Refactor steps return when a story needs them.
 - `steps[].covers[]`: enum of the scenario ids parsed in step 1, so an invented scenario cannot be written.
 - `steps[].create/modify/read_only[]`: strings, verified in step 4.
 - `steps[].instruction`: free text. This is the part that carries the knowledge, and the part the sweep

@@ -146,11 +146,11 @@ mod tests {
     const FEATURE: &str = "Feature: F\n  Scenario: First\n    When x\n  Scenario: Second\n    When y\n";
 
     const GOOD: &str = r#"{"steps":[
-      {"id":"a","instruction":"make it","kind":"behavior_change",
+      {"id":"a","instruction":"make it",
        "create":["src/main/java/com/example/widgets/domain/Widget.java","src/test/java/com/example/widgets/domain/WidgetTest.java"],
        "modify":[],"read_only":[],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
-      {"id":"a","instruction":"make it","kind":"behavior_change",
+      {"id":"a","instruction":"make it",
        "create":["src/main/java/com/example/widgets/domain/Widget.java","src/test/java/com/example/widgets/domain/WidgetTest.java"],
        "modify":[],"read_only":[],"covers":["first"]}]}"#;
 
