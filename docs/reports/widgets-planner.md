@@ -73,16 +73,30 @@ the Implementer passed before it stopped.
 | 2a | `071aeb4` | computed facts line: no database or JPA library, keep data in memory | 1 | 1/1 | 1 of 16 | no JPA anywhere; stuck loop at the controller step |
 | 2c | `2e8cbfa` | prompt rule: concrete implementation choices (record or class, field types, collection class) | 3 | 3/3 | 2, 2, 2 | 0 JPA mentions; all three stop at the controller step |
 | ro | `99f1b8a` | `read_only` removed from the draft; the harness computes it from the class names an instruction mentions | 3 | 1/3 (2 retries on the step-size rule) | 1, 2, 2 | same stop point as 2c |
+| cn | `623ab1e` | the draft names classes (`classes`, `test_classes`, qualified names under the root package); the harness derives the paths; the facts list classes, not files | 3 | 3/3 | 2, 1, 1 | same stop point; the server accepts the grouped `pattern` |
 
 What this says, with n this small: JPA disappeared once the storage fact and the concrete-mechanism rule
 were in (2a, 2c; the two are stacked, so which one did it is not known). Validity is now saturated at 3/3 and
 is no longer the useful measure; steps passed in the Implementer is. Computing `read_only` did not change
 that (ro vs 2c).
 
-What stops every run is the controller or service step. The Implementer's own gate refuses its submission
-repeatedly ("No changed test mentions WidgetController") until the stuck-loop guard fires. Why the submitted
-test does not mention the class is **not diagnosed**; the earlier explanation (unstated test wiring) is a
-hypothesis. Next: read that step's trace before changing the plan shape.
+### Diagnosis: what stops every run (2026-10-10)
+
+Seven stuck Implementer runs (2a, 2c, ro, and one from earlier) were read refusal by refusal. Six of the
+seven fail at the controller step on one refusal, repeated 5 to 10 times until the stuck-loop guard fires:
+"Not submitted. No changed test mentions WidgetController." The seventh failed on a compile error in the
+service. The submitted test is a legitimate HTTP-level test (`@SpringBootTest` with a random port and a
+`RestTemplate` posting to `/widgets`) that reaches the controller without ever writing its name, so the
+Implementer's no-test gate refuses it and the model, which cannot see why, resubmits the same thing.
+
+So the stop point is an Implementer gate that does not recognise a controller test written through HTTP,
+**not** a gap in the plan. The hand-written plan passes the gate because it prescribes
+`new WidgetController(...)` in the test, which names the class; that is why it carried the wiring text. An
+earlier explanation in this report ("unstated test wiring") was a hypothesis and is withdrawn. Note what
+this does to the measurements: from the controller step onward the Implementer, not the Planner, decides
+the outcome, so steps passed cannot show planner improvements beyond step 2 until the gate is dealt with.
+Options (not decided): accept a Spring integration test when it contains the controller's mapped path or
+carries `@SpringBootTest`/`@WebMvcTest`; or keep the gate and have the plan name the wiring.
 
 ### Resolved: who decides create or modify
 

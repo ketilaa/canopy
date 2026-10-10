@@ -95,22 +95,28 @@ being per-task prose. Java rules stay in `java.rs`.
 
 ### 3. The draft: schema and prompt
 
-One structured call, thinking off, `response_format` only (never with `tools`). The schema is closed where it
-can be:
+One structured call, thinking off, `response_format` only (never with `tools`). What the model writes is
+intent; what the harness can derive is not asked of it (principle:
+`docs/principles/compute-facts-mechanically.md`, extension of 2026-10-10). Per step the model gives:
 
-- `steps[].kind`: not in the schema. Every drafted step is a behaviour change, set by the harness; a draft that
-  names a kind is rejected. A refactor step is exempt from the test rule, so letting the model declare one
-  made the rule optional (found in the first live run: all 8 steps came back `refactor`, and production code
-  with no test passed). Refactor steps return when a story needs them.
-- `steps[].covers[]`: enum of the scenario ids parsed in step 1, so an invented scenario cannot be written.
-- `steps[].create/modify/read_only[]`: strings, verified in step 4.
-- `steps[].instruction`: free text. This is the part that carries the knowledge, and the part the sweep
-  measures.
+- `id` and `instruction` (free text: the part that carries the knowledge, and the part the sweeps measure);
+- `classes`: the production classes it creates or changes, as qualified names, grammar-constrained to the
+  root package;
+- `test_classes`: required and non-empty, each name ending in `Test`, so a step without a test cannot be
+  written;
+- `covers`: at least one scenario id, an enum of the ids parsed from the feature.
 
-The prompt gets: the story, the enumerated scenarios (outline rows listed), the facts block, and the step
-contract in the house style (ALWAYS/NEVER, rules next to what they govern). The hand-written widgets plan is
-**not** the example, because it would make the benchmark a recitation. A structural example with bracketed
-placeholders (`<entity>`, `<layer>`) teaches the shape; per `CLAUDE.md`, no concrete nouns.
+The harness supplies everything else: the plan id, story and feature path; every step's kind (always a
+behaviour change; a refactor step is exempt from the test rule, so the model may not declare one); the
+repository facts as every step's context; the source path of each class (`java.rs`); whether each file is
+created or modified (modified when the repository has it or an earlier step creates it); and what a step
+reads (every other production class its instruction names as a whole word). A draft that sets any of these
+is rejected. How the shape got here, batch by batch: `docs/reports/widgets-planner.md`.
+
+The prompt gets the story, the enumerated scenarios (outline rows listed), the facts block (build,
+dependencies, a computed storage line, existing classes by name) and the step contract in the house style
+(ALWAYS rules next to what they govern). The hand-written widgets plan is **not** the example, because it
+would make the benchmark a recitation; no concrete example nouns.
 
 ### 4. The verifier (the main deliverable of the deterministic half)
 
