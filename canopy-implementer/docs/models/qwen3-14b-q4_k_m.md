@@ -221,6 +221,19 @@ tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (widgets-planned plan v6 + the import hint on compile errors, harness `dc9838f`, Java 21.0.7,
+  GPU-accelerated server; batch `2026-10-10T05-53-31`, **10 runs**): **7/10 scored**. Per passed-step wall time
+  about 20 s. Of 42 step executions that passed, 33 needed one attempt, 5 two, 4 three. The three unscored runs
+  all end in a missing-import chain, none in anything else: runs 3 and 4 at step 4 (`WidgetService` missing in
+  `WidgetControllerTest`), run 8 at step 2 (`Optional` missing in the repository test). In each, the hinted
+  retry did not recover: attempt 2 ended in a stuck, budget or truncated stop (a repeated glob, read_file or a
+  cut-off answer), and attempt 3 had the same missing import again. The same-id test of v5 did not recur.
+  Compile failures seen: 11 on the first attempt, 3 more later, `Optional` (7) and `WidgetService` (5) the
+  commonest. In 12 of the compile failures the hint was in the next prompt; in about 9 of them the next
+  attempt compiled. There is no control without the hint, so this does not show that the hint helped; the
+  earlier batches (2/3 on both servers) differ in plan version and sample size too. What it does show is that
+  with the hint present the model can still fail on the same missing import when the retry goes into a
+  tool loop.
 - **confirmed** (the GPU-accelerated server, same model and flags, harness `52a48e6`, Java 21.0.7). Smoke test:
   `nav` 3/3, 4 tool calls each, under a minute for the batch. `widgets-planned` plan v5, batch
   `2026-10-10T05-44-49`, 3 runs: **2/3 scored**, the same as the Apple Silicon batch with this plan (`2026-10-09T13-42-27`).
