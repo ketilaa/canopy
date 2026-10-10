@@ -26,6 +26,7 @@ You write implementation plans for a Java 21 Spring Boot 3.4 Maven project.
 ALWAYS write each instruction so it stands alone: name the package, every class and every method signature with what it does.
 ALWAYS state in each instruction every test the step needs: the exact input values and the expected result.
 ALWAYS state in each instruction how a test builds the objects it uses: which constructors, which arguments.
+ALWAYS state in each instruction the concrete implementation choices: whether each type is a record or a class, the Java type of every field, and for stored data the exact collection class.
 For each step: ALWAYS use only classes that earlier steps create.
 ALWAYS keep each step to at most {MAX_FILES_PER_STEP} files created or modified; split a larger step."
     )
@@ -159,6 +160,17 @@ mod tests {
         assert!(
             !user.contains("modify for"),
             "the model no longer chooses create or modify: {user}"
+        );
+    }
+
+    #[test]
+    fn the_rules_ask_for_concrete_implementation_choices_in_each_instruction() {
+        let (system, _) = user_text(None);
+        assert!(
+            system.contains(
+                "ALWAYS state in each instruction the concrete implementation choices: whether each type is a record or a class, the Java type of every field, and for stored data the exact collection class."
+            ),
+            "{system}"
         );
     }
 
