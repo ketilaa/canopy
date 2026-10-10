@@ -14,3 +14,4 @@
 # Throwaway project the Implementer is run against: its own git repo, tags are the starting states
 /dogfooding/
 /canopy-implementer/runs/
+/canopy-planner/runs/

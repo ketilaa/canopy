@@ -9,6 +9,7 @@ pub mod facts;
 pub mod gherkin;
 pub mod planner;
 pub mod prompt;
+pub mod render;
 pub mod verify;
 
 #[cfg(test)]
