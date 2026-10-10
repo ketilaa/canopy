@@ -20,13 +20,22 @@ use canopy_implementer::plan::Plan;
 ///   planners differ in package and class names and never in `src/main/java/` plus dots to slashes.
 ///
 /// `test_classes` is required and cannot be empty, so a step without a test cannot be written. The names
-/// are grammar-constrained to the root package, and a test class ends in `Test`. `covers` can only name
+/// are grammar-constrained to the root package; a test class ends in `Test` and a production class never
+/// does (the model listed the class of a test-only step under `classes` in 13 of 14 attempts, retries
+/// included, when this was only an audit). `covers` can only name
 /// scenarios the feature has.
 pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
     let root = root_package.replace('.', "[.]");
-    let class_name = format!("^{root}([.][a-z][a-z0-9_]*)*[.][A-Z][A-Za-z0-9_]*");
-    let names = |suffix: &str| json!({ "type": "array", "items": { "type": "string", "pattern": format!("{class_name}{suffix}$") } });
-    let mut test_classes = names("Test");
+    let package = format!("^{root}([.][a-z][a-z0-9_]*)*[.]");
+    // A production class is any class name that does not end in `Test`, written as positive character
+    // classes (the grammar has no lookahead): the last character is not `t`, or it is `t` not after `s`, or
+    // `st` not after `e`, or `est` not after `T`. A one-letter name has no tail to check.
+    let production = format!(
+        "{package}[A-Z]([A-Za-z0-9_]*([A-Za-su-z0-9_]|[A-Za-rt-z0-9_]t|[A-Za-df-z0-9_]st|[A-SU-Za-z0-9_]est))?$"
+    );
+    let test = format!("{package}[A-Z][A-Za-z0-9_]*Test$");
+    let names = |pattern: &str| json!({ "type": "array", "items": { "type": "string", "pattern": pattern } });
+    let mut test_classes = names(&test);
     test_classes["minItems"] = json!(1);
     json!({
         "type": "object",
@@ -39,7 +48,7 @@ pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
                     "properties": {
                         "id": { "type": "string" },
                         "instruction": { "type": "string" },
-                        "classes": names(""),
+                        "classes": names(&production),
                         "test_classes": test_classes,
                         "covers": { "type": "array", "minItems": 1, "items": { "type": "string", "enum": scenario_ids } }
                     },
@@ -305,10 +314,7 @@ mod tests {
                 "{gone} is not the model's to give"
             );
         }
-        assert_eq!(
-            step["properties"]["classes"]["items"]["pattern"],
-            "^com[.]example[.]widgets([.][a-z][a-z0-9_]*)*[.][A-Z][A-Za-z0-9_]*$"
-        );
+        assert!(step["properties"]["classes"]["items"]["pattern"].is_string());
         let tests = &step["properties"]["test_classes"];
         assert_eq!(tests["minItems"], 1, "a step cannot be written without a test");
         assert_eq!(
@@ -366,6 +372,52 @@ mod tests {
                 "{key} of a plan step is neither model-authored nor harness-derived"
             );
         }
+    }
+
+    fn class_pattern(list: &str) -> regex::Regex {
+        let schema = schema(&ids(), ROOT);
+        let pattern = schema["properties"]["steps"]["items"]["properties"][list]["items"]["pattern"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        regex::Regex::new(&pattern).unwrap()
+    }
+
+    #[test]
+    fn the_classes_pattern_admits_production_class_names_and_never_one_ending_in_test() {
+        let classes = class_pattern("classes");
+        for ok in [
+            "com.example.widgets.Widget",
+            "com.example.widgets.A",
+            "com.example.widgets.domain.WidgetService",
+            "com.example.widgets.Contest",
+            "com.example.widgets.TestHelper",
+            "com.example.widgets.Widgettest",
+            "com.example.widgets.Ab",
+            "com.example.widgets.Request2",
+        ] {
+            assert!(classes.is_match(ok), "{ok} should be a production class name");
+        }
+        for bad in [
+            "com.example.widgets.WidgetTest",
+            "com.example.widgets.Test",
+            "com.example.widgets.ATest",
+            "com.example.widgets.domain.WidgetControllerTest",
+            "com.other.Widget",
+            "com.example.widgets.widget",
+            "com.example.widgets.Widget.java",
+        ] {
+            assert!(!classes.is_match(bad), "{bad} must not be a production class name");
+        }
+    }
+
+    #[test]
+    fn the_test_classes_pattern_admits_only_names_ending_in_test() {
+        let tests = class_pattern("test_classes");
+        assert!(tests.is_match("com.example.widgets.WidgetTest"));
+        assert!(tests.is_match("com.example.widgets.domain.ATest"));
+        assert!(!tests.is_match("com.example.widgets.Widget"));
+        assert!(!tests.is_match("com.example.widgets.WidgetTests"));
     }
 
     const DRAFT: &str = r#"{"steps":[{"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]}]}"#;
