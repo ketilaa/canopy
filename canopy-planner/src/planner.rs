@@ -147,12 +147,12 @@ mod tests {
 
     const GOOD: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
-       "create":["src/main/java/com/example/widgets/domain/Widget.java","src/test/java/com/example/widgets/domain/WidgetTest.java"],
-       "modify":[],"read_only":[],"covers":["first","second"]}]}"#;
+       "create":["src/main/java/com/example/widgets/domain/Widget.java"],
+       "modify":[],"read_only":[],"tests":[{"path":"src/test/java/com/example/widgets/domain/WidgetTest.java","action":"create"}],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
       {"id":"a","instruction":"make it",
-       "create":["src/main/java/com/example/widgets/domain/Widget.java","src/test/java/com/example/widgets/domain/WidgetTest.java"],
-       "modify":[],"read_only":[],"covers":["first"]}]}"#;
+       "create":["src/main/java/com/example/widgets/domain/Widget.java"],
+       "modify":[],"read_only":[],"tests":[{"path":"src/test/java/com/example/widgets/domain/WidgetTest.java","action":"create"}],"covers":["first"]}]}"#;
 
     struct Script {
         replies: Mutex<VecDeque<Result<LlmResponse, LlmError>>>,
