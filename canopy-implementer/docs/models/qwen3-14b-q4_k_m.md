@@ -221,6 +221,18 @@ tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (widgets-planned plan v6, the **import audit** before anything is written, import hint on retry,
+  undone-answer retry text, harness `f161667`, same server and flags; batch `2026-10-10T07-04-54`, 10 runs):
+  **10/10 scored** (the earlier batches with this plan: 7/10, 4/10, 7/10). 48 of 50 steps passed on the first
+  attempt, the other 2 on the second; the only failed attempts in the batch were one test failure and one
+  truncation. **No compile failure reached Maven**: the audit refused 21 submissions (a used class from another
+  package without its import), each answered with the exact import line, and in every case the model resubmitted
+  correctly inside the same attempt, so a refusal cost a tool call and not an attempt. Replayed first over 591
+  files of earlier passed steps: no false positive; it named every missing class in 58 of 66 recorded compile
+  failures. This is the largest single effect measured on this plan, against a first-attempt missing import that
+  had cost attempts in nearly every earlier batch. What is still unknown: how it holds on other plans and tasks,
+  and whether the audit's list of known classes (the repository plus a short JDK table) limits it when a plan
+  uses a library class outside that table.
 - **confirmed** (widgets-planned plan v6, import hint on retry, **retry text after a compile or test failure says
   the answer was undone** instead of "read the files again", harness `d21e6b6`, same server and flags; batch
   `2026-10-10T06-42-20`, 10 runs): **7/10 scored**, the same count as the batch with the old retry text
