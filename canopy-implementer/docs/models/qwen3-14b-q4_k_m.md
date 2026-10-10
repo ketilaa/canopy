@@ -23,6 +23,15 @@ llama-server \
 - The harness also sends sampling explicitly on every request, so results never depend on how the
   server was launched.
 - No `--repeat-penalty`: java-harness found 1.15 corrupted identifier spellings.
+
+### Second server: GPU-accelerated inference
+
+Some batches ran against a separate, GPU-accelerated llama-server (CUDA build, 16 GB VRAM, all layers on the
+GPU, `-ngl 99`) instead of the Apple Silicon one. Same model file, and the same flags as the command above
+(`-c 8192 -np 1 -ctk q8_0 -ctv q8_0 -fa on --jinja -n 2048`, same sampling). The model is identical, so
+pass/fail results are comparable; **wall times are not**: generation runs at about 64 tok/s against about 11
+tok/s, and a step takes 13 to 20 s where the Apple Silicon server takes 55 to 90 s. A batch record's `url` and
+`/props` capture say which server a batch used; the flag is `--url`.
 - Thinking is disabled per request with `chat_template_kwargs: {"enable_thinking": false}`, not by a
   server flag, so the same server can be A/B-tested with thinking later.
 
@@ -212,6 +221,16 @@ llama-server \
     class exercised indirectly; the refusal is what burned the attempt, not the code that was submitted.
   - run 2 then added a test the step did not ask for (a validation case), which fails because 400 handling is
     step 5; run 3 hit the completion cap and then resubmitted the same answer three times.
+- **confirmed** (the GPU-accelerated server, same model and flags, harness `52a48e6`, Java 21.0.7). Smoke test:
+  `nav` 3/3, 4 tool calls each, under a minute for the batch. `widgets-planned` plan v5, batch
+  `2026-10-10T05-44-49`, 3 runs: **2/3 scored**, the same as the Apple Silicon batch with this plan (`2026-10-09T13-42-27`).
+  Runs 1 and 3 passed the hidden test (15 and 19 tests added); run 3 had every step on the first attempt. Run 1
+  needed two attempts at step 4, on an unimported `WidgetService`, the same error as before. Run 2 failed at
+  step 2: the repository test for "saving a widget with an id that already exists replaces it" saved two
+  widgets from `Widget.create`, which gives each a different random id, so nothing was replaced; the same
+  failure on all three attempts. The plan does not say how a test makes two widgets with the same id (the
+  constructor takes the id). With only 3 runs per batch, the matching 2/3 says little about whether the two
+  servers differ; the difference that is certain is speed (about 4x per step).
 - **confirmed** (widgets-planned plan v5 + the no-test coverage-through-a-covered-class gate, harness `c031940`,
   Java 21.0.7, clean; batch `2026-10-09T13-42-27`, 3 runs): **2/3 scored**, hidden test passed in both,
   15 and 19 tests added; steps 1 to 3 first attempt in all three runs, step 5 first attempt in both runs that
