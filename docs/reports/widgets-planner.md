@@ -220,6 +220,27 @@ here either (the third time this session an audit with a named retry was not fol
 batches, with no (d), the same prompt gave 3 of 3 and 3 of 3 valid plans. An audit that rejects nine plans in
 ten is not a gate. Options not yet taken: keep (d) as a recorded diagnostic instead of a rejection.
 
+### Experiment grain: go with the model's grain (2026-10-11, `ae0805f`; baseline `baseline-01-widgets-grain`)
+
+The widgets scaffold with `spring-boot-starter-data-jpa`, `spring-boot-starter-validation` and `h2` added
+(Boot 3.4.5, unchanged), so the libraries the model reaches for exist. The "no database" and "no validation"
+facts disappeared on their own (they are computed), and one computed fact was added: "Spring Boot 3 uses
+`jakarta.*` packages, never `javax.*`". Three plans, one Implementer run on the valid ones.
+
+- Plans: 1 of 3 valid. Two failed for reasons unrelated to the baseline: both attempts hit the completion cap
+  (run-01) and a step touching 5 files (run-02). At n=3 this is not a validity result.
+- The valid plan reached 0 of 8: step 1 failed on the tests. The model wrote the right namespace
+  (`jakarta.validation.constraints.NotBlank`; no `javax`) and then mixed idioms: an annotation for the blank
+  check and a hand-written check in the constructor for the length, while its own unit test expected
+  `IllegalArgumentException` for a blank name. An annotation does not throw without a validator, so the test
+  failed (2 of 3 tests).
+
+So the namespace fact did what it was for, and having the library moved the failure from "the package does not
+exist" to "annotation validation is not exception-throwing validation": a different class, not an absence of
+failure. One Implementer run, so a direction. It does not show that going with the grain is better or worse;
+it shows the model's idiom brings its own trap, which a stated convention (how this project validates) would
+have to cover.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
