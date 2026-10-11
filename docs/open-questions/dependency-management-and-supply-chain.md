@@ -6,7 +6,7 @@ date_discovered: 2026-10-10
 related_principles: [compute-facts-mechanically.md]
 related_narratives: []
 related_reports: [widgets-planner.md]
-related_design_docs: [planner-first-increment.md, run-analysis-playbook.md]
+related_design_docs: [planner-first-increment.md, run-analysis-playbook.md, contract-routing.md, classpath-class-index.md]
 ---
 
 # Question
@@ -64,6 +64,7 @@ harness dropped both.
   `javax` against `jakarta`). The Implementer's import audit knows JDK classes only. A class index built from the
   project's real classpath (the dependency jars the build resolves) would let the harness refuse an unknown
   import with the exact qualified name, the same shape as the audit that took the widgets plan to 10 of 10.
+  Designed, with probe numbers: `docs/design/classpath-class-index.md`.
 
 # What We Don't Know
 

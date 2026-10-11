@@ -1,0 +1,103 @@
+# A class index from the project's real classpath
+
+Status: design, 2026-10-11. Nothing is built. Question it answers: when the model uses or imports a library
+class, can the harness check it against what the project can actually load, and say the exact fix?
+
+## Why
+
+A class the model has to place in a package it cannot look up is a recurring Implementer failure, and the
+harness has no way to answer it for library classes:
+
+- `LocalServerPort` imported from `org.springframework.boot.web.server` (it moved to
+  `...boot.test.web.server` in Boot 3.4; the model's prior is older): a compile error, three attempts, a lost step.
+- `javax.validation` against `jakarta.validation`, and `NotBlank`, `JpaRepository`, `@Entity` used in a project
+  that has neither library: each time a hand-written fact ("no validation library is available") was the fix.
+- JUnit imported in a main source file (`org.junit.jupiter.api` does not exist at compile scope).
+
+The import audit that took the hand-written plan to 10 of 10 knows JDK classes (a table of 14) and the project's
+own classes. It cannot say anything about a library class. The same shape of check, refuse before the build and
+name the exact line, extends to the classpath.
+
+## What the probes showed (2026-10-11, the widgets baseline, Boot 3.4.5)
+
+| Probe | Result |
+|---|---|
+| `mvn dependency:build-classpath` | works; 10.7 s cold (the plugin downloads once); 63 entries with the test scope |
+| scan the jars | 11,148 top-level classes, 10,257 distinct simple names, 0.7 s in Python |
+| `LocalServerPort` | exactly one candidate: `org.springframework.boot.test.web.server.LocalServerPort` |
+| `Test` | one: `org.junit.jupiter.api.Test` |
+| `Service` | two: `org.apache.catalina.Service` and `org.springframework.stereotype.Service` |
+| `NotBlank`, `JpaRepository`, `Entity` | none: not on the classpath |
+| ambiguity overall | 686 of 10,257 simple names in more than one package (6.7%), mostly internal classes |
+| the JDK | `jimage list $JAVA_HOME/lib/modules` lists about 28,000 entries including nested; `java.util.List` and `java.awt.List` both exist |
+
+So most lookups are unambiguous, a few need ranking, and an empty answer is itself information: the class is
+not there. That last case makes the computed absence lines ("no database library", "no validation library")
+special cases of one general check.
+
+## The index
+
+`simple name -> candidates`, each with the qualified name, where it comes from (`project`, a `compile` or
+`test` jar, or `jdk`) and the artifact. Built from:
+
+1. the project's own classes (what `java::class_index` already reads, plus classes earlier steps created);
+2. the JDK, from `jimage`;
+3. the build's resolved classpath, with the scope kept apart: compile and runtime classes for production code, plus
+   test-scope classes for test code. A production file that imports a class only present at test scope is a
+   finding in itself.
+
+Cached by a hash of `pom.xml` (and the classpath file), so it is rebuilt when a dependency changes and not
+otherwise. Only top-level public classes at first; nested classes (`Map.Entry`) are imported through their
+outer class and are left out.
+
+**No data is not absence.** Only when the classpath was resolved successfully may the harness say "not on the
+classpath". With Maven missing or offline the index is empty and every check passes through, as today.
+
+## Uses, in order of value over cost
+
+1. **The import audit, extended.** In `check_submission`, beside the JDK and project checks:
+   - a class used without an import, one candidate: refuse with the exact line (as now);
+   - several candidates: refuse listing them, ranked (below);
+   - an import that resolves to nothing but a class of the same simple name exists elsewhere: refuse and say
+     which (the `LocalServerPort` case);
+   - a class with no candidate at all: refuse with "X is not available on this project's classpath", which is
+     what the hand-written absence facts said, now derived and per class;
+   - production code importing a test-scope class: refuse.
+2. **A lookup tool** for the model, `find_class(name)`, in the existing tool conversation, for when it wants to
+   know before it writes. The refusal in 1 is the default and costs a tool call, not an attempt.
+3. **Dependency management.** A catalog entry (see the open question) declares the classes it provides. A refusal
+   for an absent class can then name the entry that would provide it ("`NotBlank` comes from
+   `spring-boot-starter-validation`, which this project does not have"), and adding a dependency changes the index.
+4. **Facts.** The computed absence lines can go once the audit says it per class.
+
+## Ranking among several candidates (deterministic, in order)
+
+1. a candidate already imported by the project's own sources, the most often;
+2. a project class over a library class over a JDK class;
+3. a package prefix the repository contract prefers (a decision the repository owns,
+   `docs/principles/hints-belong-in-repository-metadata.md`);
+4. otherwise, all candidates listed and none chosen.
+
+## Where it lives
+
+A new `canopy-implementer/src/classpath.rs` (the index and the jar scan, with `zip` or `unzip -Z1`), the Maven
+call beside the other build commands in `build.rs`, and the check in `java.rs`/`gates.rs` where the import audit
+already is. Language rules stay in `java.rs`. It does not use Roots: Roots indexes source and signatures, this
+indexes what is compiled. (Method and field names, such as `getName()` on a record, are Roots' job, and need its
+Java parser extended first.)
+
+## How to know it works, before it is built into the gate
+
+Replay it, as the import audit was replayed: take every stored submission, and for each recorded compile failure of
+the kind "package does not exist" or "cannot find symbol: class X", ask what the index would have said.
+Pre-registered:
+
+- it names the exact fix (one candidate) in at least 80% of those failures;
+- it refuses 0 submissions from steps that passed (no false positive), over the 591-file corpus the first audit used
+  and the runs since;
+- then a sweep on the widgets plan with the check in the gate, compared with the batches already recorded.
+
+## Not covered
+
+Methods and fields (Roots), Spring wiring, step shape, vulnerabilities and version freshness (the dependency
+catalog and its scan), Gradle, multi-module builds, shaded jars. Each is a limit to state when it bites.
