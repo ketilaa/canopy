@@ -79,7 +79,7 @@ pub fn provenance(scenario_ids: &[String], root_package: &str) -> Value {
 }
 
 /// The plan a draft describes. The id, the story, the feature path, every step's kind (a behaviour change),
-/// every step's context (the repository facts), the source path of every class, whether each file is created
+/// every step's context (the repository facts routed to the step's classes), the source path of every class, whether each file is created
 /// or modified, and what a step reads all come from the harness, never from the model. `existing` is every
 /// file the repository has. A file is modified when the repository has it or an earlier step creates it, and
 /// created otherwise. A step reads each other production class (existing or created by an earlier step) that
@@ -90,7 +90,7 @@ pub fn into_plan(
     id: &str,
     story: &str,
     feature: Option<&str>,
-    context: &str,
+    context: &dyn Fn(&[String]) -> String,
     root_package: &str,
     existing: &[String],
 ) -> Result<Plan, String> {
@@ -111,7 +111,6 @@ pub fn into_plan(
             }
         }
         fields.insert("kind".into(), json!("behavior_change"));
-        fields.insert("context".into(), json!(context_for_step(context, &created)));
         let instruction = fields
             .get("instruction")
             .and_then(Value::as_str)
@@ -137,6 +136,15 @@ pub fn into_plan(
                 "step {step_id}: test_classes is missing or empty; every step needs at least one test"
             ));
         }
+        let step_classes: Vec<String> = production
+            .iter()
+            .chain(&tests)
+            .filter_map(|path| java::qualified_name_of_source(path))
+            .collect();
+        fields.insert(
+            "context".into(),
+            json!(context_for_step(&context(&step_classes), &created)),
+        );
         let touched = classify(&production, &tests, &step_id, &known, &created)?;
         let read_only = read_only_for(&instruction, &touched.production, existing, &created);
         created.extend(touched.create.iter().cloned());
@@ -424,7 +432,42 @@ mod tests {
 
     fn plan_of(draft: &str, existing: &[&str]) -> Result<Plan, String> {
         let existing: Vec<String> = existing.iter().map(|s| s.to_string()).collect();
-        into_plan(draft, "p", "the story", Some("f.feature"), "the facts", ROOT, &existing)
+        into_plan(
+            draft,
+            "p",
+            "the story",
+            Some("f.feature"),
+            &|_| "the facts".to_string(),
+            ROOT,
+            &existing,
+        )
+    }
+
+    #[test]
+    fn a_steps_context_is_built_from_its_own_classes_production_and_test() {
+        let draft = r#"{"steps":[
+          {"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
+          {"id":"b","instruction":"Create B.","classes":["com.example.widgets.domain.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]}]}"#;
+        let plan = into_plan(
+            draft,
+            "p",
+            "s",
+            None,
+            &|classes| format!("facts for {}", classes.join(" + ")),
+            ROOT,
+            &[],
+        )
+        .unwrap();
+        assert!(plan.steps[0]
+            .context
+            .as_deref()
+            .unwrap()
+            .starts_with("facts for com.example.widgets.A + com.example.widgets.ATest"));
+        assert!(plan.steps[1]
+            .context
+            .as_deref()
+            .unwrap()
+            .starts_with("facts for com.example.widgets.domain.B + com.example.widgets.BTest"));
     }
 
     #[test]

@@ -6,7 +6,9 @@ use std::path::Path;
 
 use canopy_implementer::java;
 
-use crate::contract::Contract;
+use std::collections::BTreeSet;
+
+use crate::contract::{Consumer, Contract};
 
 /// How many existing files the rendered facts list before they are cut.
 pub const MAX_LISTED_FILES: usize = 100;
@@ -119,6 +121,35 @@ impl RepoFacts {
 
     /// The facts as the standing context of every step. Facts that are not known are left out.
     pub fn render(&self) -> String {
+        self.render_with(|contract| contract.render())
+    }
+
+    /// The facts for the planner's request: the derived facts and the contract entries meant for the planner.
+    pub fn render_for_planner(&self) -> String {
+        self.render_with(|contract| contract.render_for(Consumer::Planner, &BTreeSet::new()))
+    }
+
+    /// The facts for one implementation step: the derived facts and the contract entries for the step's layers.
+    pub fn render_for_step(&self, layers: &BTreeSet<String>) -> String {
+        self.render_with(|contract| contract.render_for(Consumer::Implementer, layers))
+    }
+
+    /// The layers of the given classes (qualified names): by name, and by annotation for a class whose source is
+    /// already in the repository at `root`. Empty without a contract or when nothing says.
+    pub fn layers_of_classes(&self, root: &Path, classes: &[String]) -> BTreeSet<String> {
+        let Some(contract) = &self.contract else {
+            return BTreeSet::new();
+        };
+        classes
+            .iter()
+            .flat_map(|class| {
+                let source = std::fs::read_to_string(root.join(java::main_source_path(class))).ok();
+                contract.layers_of(class, source.as_deref())
+            })
+            .collect()
+    }
+
+    fn render_with(&self, contract_lines: impl Fn(&Contract) -> Vec<String>) -> String {
         let directory = self.root_package.replace('.', "/");
         let mut build = match self.build_tool {
             BuildTool::Maven => "Maven".to_string(),
@@ -164,7 +195,7 @@ impl RepoFacts {
             lines.push("Storage: no database or JPA library is available.".to_string());
         }
         if let Some(contract) = &self.contract {
-            lines.extend(contract.render());
+            lines.extend(contract_lines(contract));
         }
         for (label, classes) in [
             ("Existing classes", &self.classes),
@@ -583,6 +614,101 @@ conventions:
             let rendered = RepoFacts::collect(dir.path()).unwrap().render();
             assert_eq!(rendered.contains("Namespace:"), expected, "{version}: {rendered}");
         }
+    }
+
+    const SCOPED: &str = "
+layers:
+  - {name: controller, suffix: Controller, annotation: RestController}
+  - {name: service, suffix: Service, annotation: Service}
+rules:
+  - id: controller-style
+    applies_to: {consumer: implementer, layers: [controller]}
+    content: Use constructor injection.
+  - id: naming
+    applies_to: {consumer: planner}
+    content: Name a class after its layer.
+  - id: everywhere
+    content: Records have no getters.
+";
+
+    fn scoped_facts() -> (tempfile::TempDir, RepoFacts) {
+        let dir = scaffold();
+        write(dir.path(), ".canopy/contract.yaml", SCOPED);
+        write(
+            dir.path(),
+            "src/main/java/com/example/widgets/WidgetManager.java",
+            "package x;\n@Service\nclass WidgetManager {}\n",
+        );
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        (dir, facts)
+    }
+
+    #[test]
+    fn the_planner_view_has_the_derived_facts_and_only_the_contract_rules_meant_for_the_planner() {
+        let (_dir, facts) = scoped_facts();
+        let text = facts.render_for_planner();
+        assert!(text.contains("Root package: com.example.widgets"), "{text}");
+        assert!(
+            text.contains("Stereotypes by class name: *Controller is @RestController, *Service is @Service."),
+            "{text}"
+        );
+        assert!(
+            text.contains("Convention (naming): Name a class after its layer."),
+            "{text}"
+        );
+        assert!(
+            text.contains("Convention (everywhere): Records have no getters."),
+            "{text}"
+        );
+        assert!(!text.contains("controller-style"), "{text}");
+    }
+
+    #[test]
+    fn a_step_view_has_the_derived_facts_and_only_the_rules_for_the_steps_layers() {
+        let (_dir, facts) = scoped_facts();
+        let layers: std::collections::BTreeSet<String> = ["service".to_string()].into();
+        let text = facts.render_for_step(&layers);
+        assert!(text.contains("Root package: com.example.widgets"), "{text}");
+        assert!(
+            text.contains("Stereotype: a class named *Service is @Service."),
+            "{text}"
+        );
+        assert!(text.contains("Convention (everywhere):"), "{text}");
+        assert!(
+            !text.contains("controller-style") && !text.contains("RestController") && !text.contains("naming"),
+            "{text}"
+        );
+        let controller: std::collections::BTreeSet<String> = ["controller".to_string()].into();
+        assert!(facts
+            .render_for_step(&controller)
+            .contains("Convention (controller-style): Use constructor injection."));
+        assert!(
+            facts.render().contains("controller-style"),
+            "the unscoped render still has everything"
+        );
+    }
+
+    #[test]
+    fn the_layers_of_planned_classes_come_from_names_and_those_of_existing_classes_also_from_annotations() {
+        let (dir, facts) = scoped_facts();
+        let layers = facts.layers_of_classes(
+            dir.path(),
+            &[
+                "com.example.widgets.WidgetController".to_string(),
+                "com.example.widgets.WidgetManager".to_string(),
+                "com.example.widgets.NewManager".to_string(),
+                "com.example.widgets.WidgetControllerTest".to_string(),
+            ],
+        );
+        assert_eq!(
+            layers.into_iter().collect::<Vec<_>>(),
+            ["controller", "service", "test"],
+            "WidgetManager is a service by its annotation; the not yet written NewManager is unclassified"
+        );
+        assert!(RepoFacts::collect(scaffold().path())
+            .unwrap()
+            .layers_of_classes(dir.path(), &["a.B".to_string()])
+            .is_empty());
     }
 
     /// The contract baselines are hand-written files; this keeps them valid. Skipped without the dogfooding repo.

@@ -279,6 +279,34 @@ fn run_one(
         )
         .map_err(|e| e.to_string())?;
         std::fs::write(run_dir.join("plan.md"), render_markdown(plan, &feature)).map_err(|e| e.to_string())?;
+        // What each step was routed: its layers (from its classes), and the contract rules it was given.
+        let routing: Vec<serde_json::Value> = plan
+            .steps
+            .iter()
+            .map(|step| {
+                let classes: Vec<String> = step
+                    .scope
+                    .create
+                    .iter()
+                    .chain(&step.scope.modify)
+                    .filter_map(|p| canopy_implementer::java::qualified_name_of_source(p))
+                    .collect();
+                let layers = facts.layers_of_classes(&checkout, &classes);
+                let rules = facts
+                    .contract
+                    .as_ref()
+                    .map(|c| c.rule_ids_for(canopy_planner::contract::Consumer::Implementer, &layers))
+                    .unwrap_or_default();
+                json!({
+                    "step": step.id,
+                    "layers": layers,
+                    "rules": rules,
+                    "context_chars": step.context.as_deref().map_or(0, str::len),
+                })
+            })
+            .collect();
+        std::fs::write(run_dir.join("routing.json"), serde_json::to_string_pretty(&routing).unwrap())
+            .map_err(|e| e.to_string())?;
         let diff = compare_created_files(plan, &golden);
         files_match_golden = Some(diff.matches());
         diff_json = json!({"matches": diff.matches(), "missing": diff.missing, "extra": diff.extra});

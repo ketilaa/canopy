@@ -64,7 +64,7 @@ For each case of a scenario outline: ALWAYS write a test with a concrete input v
     );
     user.push_str(&format!(
         "## Repository\n{}\nALWAYS name each class by its fully qualified name: classes for each production class the step creates or changes, test_classes for each test class it creates or changes.\n",
-        input.facts.render()
+        input.facts.render_for_planner()
     ));
     if let Some(previous) = previous {
         if !previous.raw.is_empty() {
@@ -180,6 +180,36 @@ mod tests {
                 "ALWAYS state in each instruction the concrete implementation choices: whether each type is a record or a class, the Java type of every field, and for stored data the exact collection class."
             ),
             "{system}"
+        );
+    }
+
+    #[test]
+    fn the_planner_is_given_the_contract_rules_meant_for_it_and_not_the_implementers() {
+        let dir = scaffold();
+        crate::testing::write(
+            dir.path(),
+            ".canopy/contract.yaml",
+            "layers:\n  - {name: controller, suffix: Controller}\nrules:\n  - {id: for-planner, applies_to: {consumer: planner}, content: Name layers by suffix.}\n  - {id: for-implementer, applies_to: {consumer: implementer, layers: [controller]}, content: Use constructor injection.}\n",
+        );
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        let feature = Feature::parse(FEATURE).unwrap();
+        let user = messages(
+            &Input {
+                story: "s",
+                feature: &feature,
+                facts: &facts,
+            },
+            None,
+        )[1]
+        .content
+        .clone();
+        assert!(
+            user.contains("Convention (for-planner): Name layers by suffix."),
+            "{user}"
+        );
+        assert!(
+            !user.contains("for-implementer") && !user.contains("constructor injection"),
+            "{user}"
         );
     }
 

@@ -100,7 +100,10 @@ impl Planner {
                 schema: draft::schema(&ids, &request.facts.root_package),
                 thinking: false,
             };
-            let context = request.facts.render();
+            let route = |classes: &[String]| {
+                let layers = request.facts.layers_of_classes(request.root, classes);
+                request.facts.render_for_step(&layers)
+            };
             let (raw, plan, problems) = match self.generator.complete_structured(&structured) {
                 Err(e) => (None, None, vec![Problem::Model(e.to_string())]),
                 Ok(response) if response.finish_reason == "length" => (
@@ -116,7 +119,7 @@ impl Planner {
                         request.id,
                         request.story,
                         request.feature_path,
-                        &context,
+                        &route,
                         &request.facts.root_package,
                         &request.facts.files,
                     ) {
@@ -213,6 +216,50 @@ mod tests {
 
     fn user(request: &StructuredRequest) -> &Message {
         request.messages.last().unwrap()
+    }
+
+    #[test]
+    fn each_step_of_a_plan_is_given_the_contract_rules_for_its_own_layers() {
+        let dir = scaffold();
+        crate::testing::write(
+            dir.path(),
+            ".canopy/contract.yaml",
+            "layers:\n  - {name: controller, suffix: Controller}\n  - {name: service, suffix: Service}\nrules:\n  - {id: controller-rule, applies_to: {consumer: implementer, layers: [controller]}, content: Use constructor injection.}\n  - {id: service-rule, applies_to: {consumer: implementer, layers: [service]}, content: Keep it stateless.}\n",
+        );
+        let draft = r#"{"steps":[
+          {"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.WidgetService"],"test_classes":["com.example.widgets.WidgetServiceTest"],"covers":["first"]},
+          {"id":"b","instruction":"Create WidgetController.","classes":["com.example.widgets.WidgetController"],"test_classes":["com.example.widgets.WidgetControllerTest"],"covers":["second"]}]}"#;
+        let requests = Arc::new(Mutex::new(vec![]));
+        let planner = Planner::new(Box::new(Script {
+            replies: Mutex::new(vec![reply(draft)].into()),
+            requests: requests.clone(),
+        }));
+        let feature = Feature::parse(FEATURE).unwrap();
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        let outcome = planner.plan(&Request {
+            id: "p",
+            story: "s",
+            feature_path: None,
+            feature: &feature,
+            facts: &facts,
+            root: dir.path(),
+        });
+        let plan = outcome.plan.expect("valid");
+        let context = |i: usize| plan.steps[i].context.clone().unwrap();
+        assert!(
+            context(0).contains("service-rule") && !context(0).contains("controller-rule"),
+            "{}",
+            context(0)
+        );
+        assert!(
+            context(1).contains("controller-rule") && !context(1).contains("service-rule"),
+            "{}",
+            context(1)
+        );
+        assert!(
+            context(0).contains("Root package: com.example.widgets"),
+            "derived facts reach every step"
+        );
     }
 
     #[test]
