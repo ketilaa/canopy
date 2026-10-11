@@ -305,8 +305,11 @@ fn run_one(
                 })
             })
             .collect();
-        std::fs::write(run_dir.join("routing.json"), serde_json::to_string_pretty(&routing).unwrap())
-            .map_err(|e| e.to_string())?;
+        std::fs::write(
+            run_dir.join("routing.json"),
+            serde_json::to_string_pretty(&routing).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
         let diff = compare_created_files(plan, &golden);
         files_match_golden = Some(diff.matches());
         diff_json = json!({"matches": diff.matches(), "missing": diff.missing, "extra": diff.extra});

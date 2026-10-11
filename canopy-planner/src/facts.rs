@@ -747,6 +747,37 @@ rules:
         );
     }
 
+    /// The routed baseline carries the same decisions as the unscoped memory one, scoped to layers.
+    #[test]
+    fn the_routed_widgets_baseline_routes_the_same_decisions_by_layer() {
+        let Some(dir) = crate::testing::baseline("java-widgets", "baseline-04-widgets-routed-memory") else {
+            return;
+        };
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        let layers = |class: &str| facts.layers_of_classes(dir.path(), &[class.to_string()]);
+        let service = facts.render_for_step(&layers("com.example.widgets.WidgetService"));
+        assert!(
+            service.contains("Convention (storage):") && service.contains("Convention (validation):"),
+            "{service}"
+        );
+        assert!(
+            service.contains("Stereotype: a class named *Service is @Service."),
+            "{service}"
+        );
+        assert!(!service.contains("RestController"), "{service}");
+        let controller = facts.render_for_step(&layers("com.example.widgets.WidgetController"));
+        assert!(
+            controller.contains("Convention (validation):") && !controller.contains("Convention (storage):"),
+            "{controller}"
+        );
+        let model = facts.render_for_step(&layers("com.example.widgets.Widget"));
+        assert!(
+            model.contains("Convention (storage):"),
+            "a class with no known layer fails open: {model}"
+        );
+        assert!(facts.render_for_planner().contains("Convention (storage):"));
+    }
+
     #[test]
     fn a_long_file_list_is_cut_and_says_how_many_were_left_out() {
         let dir = scaffold();
