@@ -171,12 +171,10 @@ mod tests {
 
     const GOOD: &str = r#"{"steps":[
       {"id":"a","instruction":"make Widget",
-       "classes":["com.example.widgets.domain.Widget"],
-       "test_classes":["com.example.widgets.domain.WidgetTest"],"covers":["first","second"]}]}"#;
+       "classes":["com.example.widgets.domain.Widget"],"covers":["first","second"]}]}"#;
     const UNCOVERED: &str = r#"{"steps":[
       {"id":"a","instruction":"make Widget",
-       "classes":["com.example.widgets.domain.Widget"],
-       "test_classes":["com.example.widgets.domain.WidgetTest"],"covers":["first"]}]}"#;
+       "classes":["com.example.widgets.domain.Widget"],"covers":["first"]}]}"#;
 
     struct Script {
         replies: Mutex<VecDeque<Result<LlmResponse, LlmError>>>,
@@ -239,8 +237,8 @@ mod tests {
             "layers:\n  - {name: controller, suffix: Controller}\n  - {name: service, suffix: Service}\nrules:\n  - {id: controller-rule, applies_to: {consumer: implementer, layers: [controller]}, content: Use constructor injection.}\n  - {id: service-rule, applies_to: {consumer: implementer, layers: [service]}, content: Keep it stateless.}\n",
         );
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.WidgetService"],"test_classes":["com.example.widgets.WidgetServiceTest"],"covers":["first"]},
-          {"id":"b","instruction":"Create WidgetController.","classes":["com.example.widgets.WidgetController"],"test_classes":["com.example.widgets.WidgetControllerTest"],"covers":["second"]}]}"#;
+          {"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.WidgetService"],"covers":["first"]},
+          {"id":"b","instruction":"Create WidgetController.","classes":["com.example.widgets.WidgetController"],"covers":["second"]}]}"#;
         let requests = Arc::new(Mutex::new(vec![]));
         let planner = Planner::new(Box::new(Script {
             replies: Mutex::new(vec![reply(draft)].into()),

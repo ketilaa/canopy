@@ -63,7 +63,7 @@ pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
 For each case of a scenario outline: ALWAYS write a test with a concrete input value, in a step that covers the scenario, not in a step of its own.\n\n",
     );
     user.push_str(&format!(
-        "## Repository\n{}\nALWAYS name each class by its fully qualified name: classes for each production class the step creates or changes, test_classes for each test class it creates or changes.\n",
+        "## Repository\n{}\nALWAYS name each class by its fully qualified name: classes for each production class the step creates or changes. A step that only adds tests to classes that exist lists no classes and names its test classes in test_classes.\n",
         input.facts.render_for_planner()
     ));
     if let Some(previous) = previous {
@@ -163,7 +163,7 @@ mod tests {
             "{user}"
         );
         assert!(
-            user.contains("test_classes for each test class it creates or changes"),
+            user.contains("A step that only adds tests to classes that exist lists no classes and names its test classes in test_classes."),
             "{user}"
         );
         assert!(

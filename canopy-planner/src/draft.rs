@@ -35,8 +35,6 @@ pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
     );
     let test = format!("{package}[A-Z][A-Za-z0-9_]*Test$");
     let names = |pattern: &str| json!({ "type": "array", "items": { "type": "string", "pattern": pattern } });
-    let mut test_classes = names(&test);
-    test_classes["minItems"] = json!(1);
     json!({
         "type": "object",
         "properties": {
@@ -49,7 +47,7 @@ pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
                         "id": { "type": "string" },
                         "instruction": { "type": "string" },
                         "classes": names(&production),
-                        "test_classes": test_classes,
+                        "test_classes": names(&test),
                         "covers": { "type": "array", "minItems": 1, "items": { "type": "string", "enum": scenario_ids } }
                     },
                     "required": ["id", "instruction", "classes", "test_classes", "covers"],
@@ -86,6 +84,8 @@ pub fn provenance(scenario_ids: &[String], root_package: &str) -> Value {
 pub enum DiagnosticKind {
     /// A class in `classes` that the step's instruction never names.
     UnnamedClass,
+    /// `test_classes` named by a step that has classes: ignored, the step's tests are derived from its classes.
+    IgnoredTestClasses,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +98,11 @@ pub struct Diagnostic {
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
+            DiagnosticKind::IgnoredTestClasses => write!(
+                f,
+                "step {}: test_classes {} is ignored; the tests of a step's classes are derived",
+                self.step, self.class
+            ),
             DiagnosticKind::UnnamedClass => write!(
                 f,
                 "step {}: {} is listed in classes but the instruction never names it",
@@ -119,6 +124,23 @@ pub fn diagnostics(content: &str) -> Vec<Diagnostic> {
     for step in steps {
         let id = step.get("id").and_then(Value::as_str).unwrap_or("?");
         let instruction = step.get("instruction").and_then(Value::as_str).unwrap_or_default();
+        let simple_names = |key: &str| -> Vec<String> {
+            step.get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|c| c.rsplit('.').next().unwrap_or(c).to_string())
+                .collect()
+        };
+        let ignored = simple_names("test_classes");
+        if !simple_names("classes").is_empty() && !ignored.is_empty() {
+            found.push(Diagnostic {
+                step: id.to_string(),
+                kind: DiagnosticKind::IgnoredTestClasses,
+                class: ignored.join(", "),
+            });
+        }
         for class in step
             .get("classes")
             .and_then(Value::as_array)
@@ -178,12 +200,28 @@ pub fn into_plan(
             .unwrap_or_default()
             .to_string();
         let production = class_names(fields, "classes", &step_id, root_package, false)?;
-        let tests = class_names(fields, "test_classes", &step_id, root_package, true)?;
-        if tests.is_empty() {
-            return Err(format!(
-                "step {step_id}: test_classes is missing or empty; every step needs at least one test"
-            ));
-        }
+        let listed_tests = class_names(fields, "test_classes", &step_id, root_package, true)?;
+        // The tests of a step's classes are derived (`XTest` for `X`); only a step with no class names its tests.
+        let tests = match (production.is_empty(), listed_tests.is_empty()) {
+            // Named alongside classes, they are ignored (and recorded by `diagnostics`): the model named an existing,
+            // unrelated test in 43% of plans, and the harness would then have to make the step change it.
+            (false, false) => production
+                .iter()
+                .filter_map(|path| java::qualified_name_of_source(path))
+                .map(|class| java::test_source_path(&format!("{class}Test")))
+                .collect(),
+            (true, true) => {
+                return Err(format!(
+                    "step {step_id}: a step needs classes, or test_classes when it only adds tests"
+                ))
+            }
+            (true, false) => listed_tests,
+            (false, true) => production
+                .iter()
+                .filter_map(|path| java::qualified_name_of_source(path))
+                .map(|class| java::test_source_path(&format!("{class}Test")))
+                .collect(),
+        };
         let step_classes: Vec<String> = production
             .iter()
             .chain(&tests)
@@ -358,11 +396,112 @@ mod tests {
     }
 
     #[test]
-    fn the_schema_asks_for_class_names_and_intent_only_and_closes_what_can_be_closed() {
+    fn the_tests_of_a_steps_classes_are_derived_one_per_class_after_the_production_files() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Create A and B.","classes":["com.example.widgets.A","com.example.widgets.domain.B"],"covers":["first"]}]}"#;
+        let scope = plan_of(draft, &[]).unwrap().steps[0].scope.clone();
+        assert_eq!(
+            scope.create,
+            [
+                "src/main/java/com/example/widgets/A.java",
+                "src/main/java/com/example/widgets/domain/B.java",
+                "src/test/java/com/example/widgets/ATest.java",
+                "src/test/java/com/example/widgets/domain/BTest.java",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_derived_test_is_modified_when_it_exists_and_created_when_it_does_not() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Change A and B.","classes":["com.example.widgets.A","com.example.widgets.B"],"covers":["first"]}]}"#;
+        let scope = plan_of(
+            draft,
+            &[
+                "src/main/java/com/example/widgets/A.java",
+                "src/main/java/com/example/widgets/B.java",
+                "src/test/java/com/example/widgets/ATest.java",
+            ],
+        )
+        .unwrap()
+        .steps[0]
+            .scope
+            .clone();
+        assert_eq!(
+            scope.modify,
+            [
+                "src/main/java/com/example/widgets/A.java",
+                "src/main/java/com/example/widgets/B.java",
+                "src/test/java/com/example/widgets/ATest.java"
+            ]
+        );
+        assert_eq!(scope.create, ["src/test/java/com/example/widgets/BTest.java"]);
+    }
+
+    #[test]
+    fn a_step_with_no_classes_names_the_test_classes_it_adds_to() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Add a case.","classes":[],"test_classes":["com.example.widgets.SomeTest"],"covers":["first"]}]}"#;
+        let scope = plan_of(draft, &["src/test/java/com/example/widgets/SomeTest.java"])
+            .unwrap()
+            .steps[0]
+            .scope
+            .clone();
+        assert_eq!(scope.modify, ["src/test/java/com/example/widgets/SomeTest.java"]);
+        assert!(scope.create.is_empty());
+    }
+
+    #[test]
+    fn test_classes_named_by_a_step_with_classes_are_ignored_and_recorded_and_a_step_needs_classes_or_tests() {
+        let both = r#"{"steps":[{"id":"a","instruction":"A.","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
+        let scope = plan_of(both, &["src/test/java/com/example/widgets/WidgetTest.java"])
+            .unwrap()
+            .steps[0]
+            .scope
+            .clone();
+        assert_eq!(
+            scope.create,
+            [
+                "src/main/java/com/example/widgets/A.java",
+                "src/test/java/com/example/widgets/ATest.java"
+            ],
+            "the tests are derived from the classes; the unrelated existing test is not made a modify"
+        );
+        assert!(scope.modify.is_empty());
+        let notes: Vec<String> = diagnostics(both).iter().map(|d| d.to_string()).collect();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("step a") && n.contains("WidgetTest") && n.contains("derived")),
+            "{notes:?}"
+        );
+        let neither =
+            r#"{"steps":[{"id":"a","instruction":"Nothing.","classes":[],"test_classes":[],"covers":["first"]}]}"#;
+        let e = plan_of(neither, &[]).unwrap_err();
+        assert!(
+            e.contains("step a") && e.contains("classes") && e.contains("test_classes"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn the_context_closure_sees_the_derived_tests_so_the_test_layer_reaches_the_step() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"covers":["first"]}]}"#;
+        let plan = into_plan(draft, "p", "s", None, &|classes| classes.join("+"), ROOT, &[]).unwrap();
+        assert!(plan.steps[0]
+            .context
+            .as_deref()
+            .unwrap()
+            .starts_with("com.example.widgets.A+com.example.widgets.ATest"));
+    }
+
+    #[test]
+    fn the_schema_has_one_step_shape_and_asks_for_class_names_and_intent_only() {
         let schema = schema(&ids(), ROOT);
-        let step = &schema["properties"]["steps"]["items"];
         assert_eq!(schema["properties"]["steps"]["minItems"], 1);
         assert_eq!(schema["additionalProperties"], false);
+        let step = &schema["properties"]["steps"]["items"];
+        assert!(
+            step.get("oneOf").is_none() && step.get("anyOf").is_none(),
+            "alternatives made the free text loop"
+        );
         assert_eq!(step["additionalProperties"], false);
         for gone in ["files", "tests", "create", "modify", "kind", "read_only", "context"] {
             assert!(
@@ -370,18 +509,19 @@ mod tests {
                 "{gone} is not the model's to give"
             );
         }
-        assert!(step["properties"]["classes"]["items"]["pattern"].is_string());
-        let tests = &step["properties"]["test_classes"];
-        assert_eq!(tests["minItems"], 1, "a step cannot be written without a test");
-        assert_eq!(
-            tests["items"]["pattern"],
-            "^com[.]example[.]widgets([.][a-z][a-z0-9_]*)*[.][A-Z][A-Za-z0-9_]*Test$"
-        );
         assert_eq!(
             step["properties"]["covers"]["items"]["enum"],
             serde_json::json!(["first", "second"])
         );
         assert_eq!(step["properties"]["covers"]["minItems"], 1);
+        assert!(
+            step["properties"]["classes"].get("minItems").is_none(),
+            "a test-only step has no classes"
+        );
+        assert!(
+            step["properties"]["test_classes"].get("minItems").is_none(),
+            "a step with classes has none to give"
+        );
         let required: Vec<&str> = step["required"]
             .as_array()
             .unwrap()
@@ -389,45 +529,6 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert_eq!(required, ["id", "instruction", "classes", "test_classes", "covers"]);
-    }
-
-    #[test]
-    fn provenance_says_which_step_fields_the_model_wrote_and_which_the_harness_derived() {
-        let p = provenance(&ids(), ROOT);
-        assert_eq!(
-            p["model_authored"],
-            serde_json::json!(["classes", "covers", "id", "instruction", "test_classes"]),
-            "taken from the schema, so it cannot drift from what the model is asked for"
-        );
-        assert_eq!(
-            p["harness_derived_per_step"],
-            serde_json::json!(["context", "create", "kind", "modify", "read_only"])
-        );
-        assert_eq!(
-            p["harness_derived_per_plan"],
-            serde_json::json!(["feature", "id", "story"])
-        );
-        let authored: Vec<&str> = p["model_authored"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(Value::as_str)
-            .collect();
-        let derived: Vec<&str> = p["harness_derived_per_step"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(Value::as_str)
-            .collect();
-        assert!(authored.iter().all(|f| !derived.contains(f)), "a field has one author");
-        let plan = plan_of(DRAFT, &[]).unwrap();
-        let step = serde_json::to_value(&plan.steps[0]).unwrap();
-        for key in step.as_object().unwrap().keys() {
-            assert!(
-                authored.contains(&key.as_str()) || derived.contains(&key.as_str()),
-                "{key} of a plan step is neither model-authored nor harness-derived"
-            );
-        }
     }
 
     fn class_pattern(list: &str) -> regex::Regex {
@@ -476,7 +577,8 @@ mod tests {
         assert!(!tests.is_match("com.example.widgets.WidgetTests"));
     }
 
-    const DRAFT: &str = r#"{"steps":[{"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]}]}"#;
+    const DRAFT: &str =
+        r#"{"steps":[{"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"covers":["first"]}]}"#;
 
     fn plan_of(draft: &str, existing: &[&str]) -> Result<Plan, String> {
         let existing: Vec<String> = existing.iter().map(|s| s.to_string()).collect();
@@ -494,8 +596,8 @@ mod tests {
     #[test]
     fn a_steps_context_is_built_from_its_own_classes_production_and_test() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"Create B.","classes":["com.example.widgets.domain.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]}]}"#;
+          {"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"covers":["first"]},
+          {"id":"b","instruction":"Create B.","classes":["com.example.widgets.domain.B"],"covers":["first"]}]}"#;
         let plan = into_plan(
             draft,
             "p",
@@ -515,7 +617,7 @@ mod tests {
             .context
             .as_deref()
             .unwrap()
-            .starts_with("facts for com.example.widgets.domain.B + com.example.widgets.BTest"));
+            .starts_with("facts for com.example.widgets.domain.B + com.example.widgets.domain.BTest"));
     }
 
     #[test]
@@ -549,8 +651,8 @@ mod tests {
     #[test]
     fn every_step_carries_the_repository_facts_as_its_context() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"y B","classes":["com.example.widgets.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]}]}"#;
+          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"covers":["first"]},
+          {"id":"b","instruction":"y B","classes":["com.example.widgets.B"],"covers":["first"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
         assert!(plan
             .steps
@@ -561,9 +663,9 @@ mod tests {
     #[test]
     fn a_step_is_told_which_classes_earlier_steps_of_the_plan_create_and_the_first_step_is_not() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"y B","classes":["com.example.widgets.domain.B"],"test_classes":["com.example.widgets.BTest"],"covers":["first"]},
-          {"id":"c","instruction":"z A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
+          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"covers":["first"]},
+          {"id":"b","instruction":"y B","classes":["com.example.widgets.domain.B"],"covers":["first"]},
+          {"id":"c","instruction":"z A","classes":["com.example.widgets.A"],"covers":["second"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
         let context = |i: usize| plan.steps[i].context.clone().unwrap();
         assert_eq!(context(0), "the facts", "nothing was created before the first step");
@@ -573,14 +675,14 @@ mod tests {
         );
         assert_eq!(
             context(2),
-            "the facts\nClasses created by earlier steps: com.example.widgets.A, com.example.widgets.domain.B\nTest classes created by earlier steps: com.example.widgets.ATest, com.example.widgets.BTest",
+            "the facts\nClasses created by earlier steps: com.example.widgets.A, com.example.widgets.domain.B\nTest classes created by earlier steps: com.example.widgets.ATest, com.example.widgets.domain.BTest",
             "each class once, in the order the plan creates them; a class changed again is not created again"
         );
     }
 
     #[test]
     fn a_class_the_repository_has_is_modified_and_a_new_one_is_created() {
-        let draft = r#"{"steps":[{"id":"a","instruction":"x Existing New","classes":["com.example.widgets.Existing","com.example.widgets.New"],"test_classes":["com.example.widgets.ExistingTest","com.example.widgets.NewTest"],"covers":["first"]}]}"#;
+        let draft = r#"{"steps":[{"id":"a","instruction":"x Existing New","classes":["com.example.widgets.Existing","com.example.widgets.New"],"covers":["first"]}]}"#;
         let scope = plan_of(
             draft,
             &[
@@ -611,8 +713,8 @@ mod tests {
     #[test]
     fn a_class_an_earlier_step_creates_is_modified_by_a_later_one() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["first"]},
-          {"id":"b","instruction":"y A","classes":["com.example.widgets.A"],"test_classes":["com.example.widgets.ATest"],"covers":["second"]}]}"#;
+          {"id":"a","instruction":"x A","classes":["com.example.widgets.A"],"covers":["first"]},
+          {"id":"b","instruction":"y A","classes":["com.example.widgets.A"],"covers":["second"]}]}"#;
         let plan = plan_of(draft, &[]).unwrap();
         assert_eq!(plan.steps[0].scope.create.len(), 2);
         assert_eq!(plan.steps[1].scope.modify.len(), 2);
@@ -622,9 +724,9 @@ mod tests {
     #[test]
     fn read_only_is_every_other_production_class_the_instruction_names() {
         let draft = r#"{"steps":[
-          {"id":"a","instruction":"Create Widget.","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]},
-          {"id":"b","instruction":"Create WidgetService, which stores a Widget and reads Config.","classes":["com.example.widgets.WidgetService"],"test_classes":["com.example.widgets.WidgetServiceTest"],"covers":["first"]},
-          {"id":"c","instruction":"Change WidgetService to reject a blank name; Unrelated is not used.","classes":["com.example.widgets.WidgetService"],"test_classes":["com.example.widgets.WidgetServiceTest"],"covers":["second"]}]}"#;
+          {"id":"a","instruction":"Create Widget.","classes":["com.example.widgets.Widget"],"covers":["first"]},
+          {"id":"b","instruction":"Create WidgetService, which stores a Widget and reads Config.","classes":["com.example.widgets.WidgetService"],"covers":["first"]},
+          {"id":"c","instruction":"Change WidgetService to reject a blank name; Unrelated is not used.","classes":["com.example.widgets.WidgetService"],"covers":["second"]}]}"#;
         let plan = plan_of(
             draft,
             &[
@@ -663,7 +765,7 @@ mod tests {
 
     #[test]
     fn a_listed_class_the_instruction_never_names_is_a_diagnostic_and_not_a_rejection() {
-        let draft = r#"{"steps":[{"id":"a","instruction":"Create Widget and WidgetRepository.","classes":["com.example.widgets.Widget","com.example.widgets.WidgetRepository","com.example.widgets.WidgetController"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
+        let draft = r#"{"steps":[{"id":"a","instruction":"Create Widget and WidgetRepository.","classes":["com.example.widgets.Widget","com.example.widgets.WidgetRepository","com.example.widgets.WidgetController"],"covers":["first"]}]}"#;
         assert!(plan_of(draft, &[]).is_ok(), "the plan is still accepted");
         assert_eq!(
             diagnostics(draft),
@@ -687,11 +789,11 @@ mod tests {
             "Widget: a record.",
         ] {
             let draft = format!(
-                r#"{{"steps":[{{"id":"a","instruction":"{instruction}","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}}]}}"#
+                r#"{{"steps":[{{"id":"a","instruction":"{instruction}","classes":["com.example.widgets.Widget"],"covers":["first"]}}]}}"#
             );
             assert!(diagnostics(&draft).is_empty(), "{instruction}");
         }
-        let longer = r#"{"steps":[{"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
+        let longer = r#"{"steps":[{"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.Widget"],"covers":["first"]}]}"#;
         assert_eq!(diagnostics(longer).len(), 1, "Widget is not the word WidgetService");
     }
 
@@ -734,19 +836,12 @@ mod tests {
             let e = plan_of(&draft, &[]).unwrap_err();
             assert!(e.contains("step a") && e.contains(bad) && e.contains(why), "{bad}: {e}");
         }
-        let not_a_test = DRAFT.replace("com.example.widgets.ATest", "com.example.widgets.AChecks");
-        let e = plan_of(&not_a_test, &[]).unwrap_err();
+        let not_a_test = r#"{"steps":[{"id":"a","instruction":"x","classes":[],"test_classes":["com.example.widgets.AChecks"],"covers":["first"]}]}"#;
+        let e = plan_of(not_a_test, &[]).unwrap_err();
         assert!(
             e.contains("step a") && e.contains("AChecks") && e.contains("Test"),
             "{e}"
         );
-    }
-
-    #[test]
-    fn a_step_without_test_classes_is_rejected_even_if_the_schema_was_bypassed() {
-        let none = DRAFT.replace("\"test_classes\":[\"com.example.widgets.ATest\"],", "");
-        let e = plan_of(&none, &[]).unwrap_err();
-        assert!(e.contains("step a") && e.contains("test_classes"), "{e}");
     }
 
     #[test]
