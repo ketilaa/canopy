@@ -423,3 +423,33 @@ more on a missing setter the test invented (`setWidgetService`), one on truncati
 10 on a syntax error in a file it wrote (`')' or ',' expected`). Origin of the controller class, from the packets: the
 same one, with no statement of how a `*Controller` is tested (full context versus a sliced web test, and how its
 service is supplied). Next: a controller-layer rule for the same mechanism, one variable, n=10 on the same drafts.
+
+### Experiment: a contract rule for how controllers are tested (2026-10-11)
+
+Change: one more contract rule, on the `controller` layer: ALWAYS a web-slice test, `@WebMvcTest(<Controller>.class)`,
+`MockMvc` injected, the service supplied as a `@MockitoBean`; NEVER `@SpringBootTest`. The repository and service rule
+stays. Same three drafts, 10 runs (4, 3, 3), harness `beeb16d`.
+
+Prediction: no controller test uses `@SpringBootTest`; the `Failed to load ApplicationContext` stops (3 of 10 before)
+fall to at most 1; falsified at 3 or more.
+
+Result: **held.** All 7 runs that wrote a controller test used `@WebMvcTest`, none `@SpringBootTest`, and no stop on a
+context load (0 of 10). Steps passed 18 over 10 runs, 1.8 per run (1.1, then 1.5, now 1.8; direction only, n is small
+and the arms share three drafts).
+
+Stops now, one each unless stated: controller tests expecting 201 where the controller answers 200 (2 runs: a decision
+about the response status that nothing states), a Java text-block syntax error in a written file (2 runs), an invented
+getter on a request type, a repeated `glob` and a tool-call budget stop (planning of the step's own files), and in the
+third plan, repository and service steps (a `count()` on an `Iterator`, a type inference failure, `expected 2 but was 36`).
+
+Correction to the earlier entry: the `expected 2 but was 36` stop is not shared state. In the run where it still
+occurs, the test builds a fresh repository in `@BeforeEach` and the repository holds its map in an instance field; the
+36 is some other quantity the test computes. My earlier reading, from the first batch, was from the symptom and the
+`@SpringBootTest` that happened to be present, not from the failing assertion. The rule's effect on `@SpringBootTest`
+use stands; its effect on that particular failure does not.
+
+Next origin to test, from the packets: decisions the test and the implementation make separately and nothing states
+(response status of create, how an invalid value is reported, whether an absent entity is `null` or an exception).
+Candidates are contract rules (one line each, routed by layer) or a derived fact from the feature file's scenarios.
+Rung 1 first: the Gherkin feature already states the status code in its scenarios, so check whether the step is shown
+the scenario it implements before writing any rule.
