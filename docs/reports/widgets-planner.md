@@ -241,6 +241,31 @@ failure. One Implementer run, so a direction. It does not show that going with t
 it shows the model's idiom brings its own trap, which a stated convention (how this project validates) would
 have to cover.
 
+### Experiment contract: decisions in the repository, two contracts, one harness (2026-10-11, `f88be8a`, `c8c995d`)
+
+The stereotype, storage and validation decisions moved out of `facts.rs` into `.canopy/contract.yaml` in the
+repository (`4c9a0b3`). Two hand-written baselines differ only in the storage decision:
+`baseline-02-widgets-contract-memory` (original dependencies, "keep data in memory") and
+`baseline-03-widgets-contract-jpa` (data, validation and H2 starters, "persist with Spring Data JPA"). Same
+harness, n=3 plans each, an Implementer run on each valid plan.
+
+| Arm | Valid plans | Steps passed | Stop |
+|---|---|---|---|
+| memory contract (`f88be8a`) | 3 of 3 (all after a retry) | 3 of 7, 2 of 11, 2 of 8 | compile: `getName()` on a record or a request record (2 runs); `'void' type not allowed here` |
+| JPA contract (`c8c995d`) | 0 of 3 | not run | all three plans rejected by audit (d), "a listed class is not named in the instruction" |
+
+- The memory arm ran with the same facts as experiment val minus the hard-coded decisions, now rendered from
+  the contract. Its steps passed (3, 2, 2) are higher than val's (0, 3, 0) but n=3 each, so a direction. The
+  hard-coded stereotype, storage and validation decisions are gone from the Rust code; the harness line count
+  for them went to zero.
+- The JPA arm could not be measured: audit (d) rejected every plan (the same 8-of-10 effect as in pat). This
+  is the cost of leaving (d) as a hard rejection, and it blocks the comparison the experiment was for. The
+  decision to demote (d) to a recorded diagnostic is still open.
+- A recurring class appears in the memory arm: the model calls `getName()` on a record (accessor is `name()`)
+  in 2 of 3 runs, earlier seen as `getName()` and `getWidgets()` in the stop reasons of the cn batch. It is a
+  convention (records have no JavaBean getters) that a scoped contract rule or a signature from Roots
+  (`name()`) would state at the point of use.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
