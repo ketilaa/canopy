@@ -453,3 +453,33 @@ Next origin to test, from the packets: decisions the test and the implementation
 Candidates are contract rules (one line each, routed by layer) or a derived fact from the feature file's scenarios.
 Rung 1 first: the Gherkin feature already states the status code in its scenarios, so check whether the step is shown
 the scenario it implements before writing any rule.
+
+### Experiment: a step is shown the scenarios it covers (2026-10-11)
+
+Change (`777c59e`): the step's context ends with the scenarios it `covers`, rendered from the parsed feature (`covers`
+was ignored by the Implementer before). Same three drafts, the repository, service and controller test rules kept, 10
+runs (4, 3, 3), harness `777c59e`. (A first attempt was lost when the laptop slept with the lid closed; it was
+discarded and the whole experiment redone under `caffeinate`.)
+
+Prediction: "Status expected 201 but was 200" stops fall from 2 of 10 to 0; invalid-name tests assert 400; falsified
+at 2 or more status mismatches, or tests that contradict a shown scenario.
+
+Result: **mixed, and by my own threshold not a pass.** The shown scenario reached the tests: every controller test
+written (7 runs) asserts `isCreated` and `isBadRequest`, none contradicts a scenario, and "was 200" is gone (0 of 10).
+But 2 of 10 runs still stop on a status mismatch, now "expected 201 but was 400" for a valid name. Steps passed 17
+over 10 runs (1.7), against 1.8 before: no gain.
+
+Chain for the status stop (packet, run `18-56-35/run-02`): symptom, `Status expected:<201> but was:<400>`; proximate
+cause: the controller takes `@RequestBody String name` and returns `Widget` directly, with no `@ResponseStatus` and
+the exception mapped to a `RuntimeException`; the test posts JSON; origin: the scenario states the status but not the
+request shape (`a client posts a widget named "Alpha"`), and the implementation half of the step does not act on
+the status it was shown. So the test now follows the scenario and the implementation does not; the two halves of
+one step still disagree. Also seen: `@MockBean` (deprecated) written against the rule's `@MockitoBean` in 1 run; a
+model-step test expecting a constructor to throw on an invalid name, which the implementation does not do (2 runs):
+where validation lives is again a decision nothing states.
+
+Next origin: decisions that connect the test and the implementation of the same step and are stated nowhere (request
+body shape, where validation lives). The feature's wording is the stated source, so the candidate is rung 0 or 1
+again: a convention rule per layer ("a create answers 201 and the created resource; a request body is a JSON
+object of the fields") is a contract rule, and "validation lives in the model constructor or the service" can be
+decided once in the contract. Not run.
