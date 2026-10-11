@@ -11,6 +11,7 @@ repository and is meant to travel with the harness when the Implementer and Plan
 
 ```
 cargo run -p canopy-implementer --example analyze_runs -- [--json] <batch dir>...
+cargo run -p canopy-implementer --example analyze_runs -- --step <run dir> <step id>
 ```
 
 Reads stored Planner batches (`canopy-planner/runs/<batch>/run-NN/summary.json`) and Implementer batches
@@ -27,6 +28,11 @@ dominant class. The same report is in every Implementer `summary.json` under `re
 - `attempt-N.json` / `attempt-N.problems.json`: what the Planner's model answered and what was wrong with it.
 - `batch.json`: harness commit and whether the tree was dirty, server properties, sampling, task.
 
+`--step` prints the **causal packet** of one step of one stored run, in causal order: the instruction, the
+scope the harness derived (create, modify, read_only), the context lines, the files earlier steps left, the
+tool calls, each submission's head, every refusal in full and each failed attempt. Open it for every failure
+class before naming a cause (method 3).
+
 Read what is there before writing a one-off script. If a question needs a script twice, it belongs in
 `report.rs` or `analyze_runs`, with a test.
 
@@ -34,9 +40,26 @@ Read what is there before writing a one-off script. If a question needs a script
 
 1. **Group, do not narrate.** Describe failures as recurring classes with a frequency, never run by run.
    A class counts once per run. Say how many runs and how many batches the count rests on.
-2. **Find the dominant remaining cost.** Assume solved problems are solved. The next experiment attacks
-   the largest class that survives, not the most interesting one.
-3. **Separate who failed.** Planning failure (the plan was invalid or ambiguous), implementation failure
+2. **Find the dominant remaining cost by origin, not by symptom.** Assume solved problems are solved. Count
+   symptoms first, then trace each class to its origin (method 3) and re-rank by origin: several symptoms
+   often share one origin, and the largest symptom is often only where it shows. The next experiment
+   attacks the largest origin that survives, not the most interesting one.
+3. **Trace the causal chain; the symptom is not the cause.** For every failure class write the chain, with a
+   quoted line from the trace at each hop: symptom (where the run stopped) → proximate cause (what the model
+   did or the gate said) → origin (what the model was given, or not given, that made that likely) → the
+   earliest point at which it could have been made impossible, and at which escalation rung (0 make it
+   unrepresentable, 1 compute or look it up, 2 audit and recover, 3 teach). Rules for the chain:
+   - **First defect.** Walk back to the first step, file or field that was already wrong, not the last. A
+     step that fails on `new Widget(1L)` has its origin in the step that wrote `Widget`, or in the step that
+     was not shown it.
+   - **Read raw outputs.** Open at least three raw submissions or drafts per class, capped ones included,
+     and check them for repeated tokens. A counted label is not a reading.
+   - **Rung 0 and 1 before a gate.** Before recommending a gate, audit or retry, say why the wrong answer
+     cannot be made unrepresentable (schema, derived field) or looked up (a fact, a tool). Most classes in
+     the calibration table below were closed at rung 0 or 1.
+   - **Two origins are two classes.** A symptom with two origins is split and counted twice.
+
+   Then separate who failed. Planning failure (the plan was invalid or ambiguous), implementation failure
    (the model wrote bad code for a clear step), execution failure (the harness, a gate, the environment).
    Never attribute a downstream failure to the Planner without evidence from the trace. In this project a
    stop point blamed on "unstated wiring" was in fact a gate refusing a correct test; the attribution line of
@@ -85,6 +108,18 @@ Pattern: removing or tightening beat instructing, and an instruction for somethi
 did not hold either; the shape carried it. Validity saturates quickly (3/3), after which only downstream
 results (steps the Implementer passes) measure anything.
 
+Calibration: symptom against origin. Each row was first read at the symptom and later traced to an origin that
+was somewhere else. Use them to check a new chain: if the origin you name is the same place as the symptom,
+look one hop further back.
+
+| Symptom (where it showed) | Origin (where it came from) | Earliest point it was impossible |
+|---|---|---|
+| a controller step stopped on "no qualifying bean" | the service step before it did not annotate its class | rung 1: a stereotype convention by class name in the step's context |
+| "must change in this step" refused 87 times | the plan named an unrelated test in a modify step | rung 0: tests derived from the production classes, not named |
+| `TestTestTest...` to the token cap in 8 of 13 drafts | an unbounded pattern in the grammar | rung 0: bounded quantifiers |
+| a service step guessed an earlier class's constructor | `read_only` only held the classes the instruction mentioned, so the step never saw the class | rung 1: every earlier-created class is read-only context |
+| a hint told the model to change a file the step may not change | the hint knew the subject class but not the step's scope | rung 1: the hint takes the scope |
+
 Ambiguity hotspots:
 
 | Phrase in a plan | What went wrong | Resolved by |
@@ -126,13 +161,18 @@ At most one page, in this order:
 
 1. **Dominant remaining cost**: the class, its frequency, the runs and batches behind it.
 2. **Attribution**: planner, implementation or execution, with the trace evidence (quote the line).
+   Give the causal chain for the dominant class (symptom, proximate cause, origin, earliest point, rung),
+   a quoted line at each hop. Name any other class that shares the origin.
 3. **What is already solved**: one line, so it is not revisited.
-4. **Hypothesis** about the cause, marked as hypothesis or confirmed, and which intervention mechanism it
+4. **Origin and earliest point it was already wrong**: the first defect in the chain, and the rung at which it
+   could have been made impossible. If your recommendation is a gate, audit or retry, say why rung 0 and 1
+   do not apply.
+5. **Hypothesis** about the cause, marked as hypothesis or confirmed, and which intervention mechanism it
    points to.
-5. **One next experiment**: the change, the smallest n that can discriminate, the prediction, and what result
+6. **One next experiment**: the change, the smallest n that can discriminate, the prediction, and what result
    would falsify the hypothesis. Low cost, one variable.
-6. **Needs approval?** yes or no, and why.
-7. **Gaps**: observability the analysis lacked, if any.
+7. **Needs approval?** yes or no, and why.
+8. **Gaps**: observability the analysis lacked, if any.
 
 An answer that cannot name its evidence says "insufficient evidence" and asks for the missing observation
 instead of recommending.

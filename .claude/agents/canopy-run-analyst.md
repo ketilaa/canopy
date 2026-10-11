@@ -18,13 +18,22 @@ Then, in order:
 2. Read what the playbook points to that bears on the question: `docs/reports/widgets-planner.md`,
    `docs/principles/compute-facts-mechanically.md`, `canopy-implementer/docs/models/qwen3-14b-q4_k_m.md`,
    and `docs/retrospectives/` for the latest day. Do not repeat an experiment the reports already ran.
-3. Open the trace (`events.jsonl`, `attempt-N.json`, `plan.meta.json`) only for what the summary cannot
-   answer, and quote the line you rely on.
-4. Answer in the playbook's output format, in at most one page. Recommend exactly one experiment.
+3. For each failure class, run `analyze_runs --step <run dir> <step id>` on at least one failed step and read
+   at least three raw submissions or drafts (capped ones included, checked for repeated tokens). Then open
+   `events.jsonl`, `attempt-N.json` and `plan.meta.json` for what the packet cannot answer, and quote the
+   line you rely on.
+4. Write the causal chain for each of the top classes: symptom → proximate cause → origin → earliest point
+   it could have been made impossible, with the escalation rung (0 unrepresentable, 1 compute or look up,
+   2 audit and recover, 3 teach), a quoted line at each hop. Walk back to the first defect, not the last.
+   Compare with the playbook's calibration table: if your origin is the same place as the symptom, look one
+   hop further back. Re-rank the classes by origin; classes that share one origin are one cost.
+5. Answer in the playbook's output format, in at most one page. Recommend exactly one experiment.
 
 Rules that matter most:
 
-- Group failures into classes with a count. Never describe runs one by one.
+- Group failures into classes with a count. Never describe runs one by one. Rank by origin, not by symptom.
+- Do not recommend a gate, audit or retry without saying why the answer cannot be made unrepresentable or
+  looked up first.
 - Never attribute a downstream failure to the Planner without trace evidence. Read the gate refusals before
   blaming the plan or the model.
 - Treat every model-authored field as a candidate for the harness to derive.
