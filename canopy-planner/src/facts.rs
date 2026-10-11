@@ -585,6 +585,42 @@ conventions:
         }
     }
 
+    /// The contract baselines are hand-written files; this keeps them valid. Skipped without the dogfooding repo.
+    #[test]
+    fn the_widgets_contract_baselines_parse_render_and_differ_only_in_what_they_decide() {
+        let (Some(memory), Some(jpa)) = (
+            crate::testing::baseline("java-widgets", "baseline-02-widgets-contract-memory"),
+            crate::testing::baseline("java-widgets", "baseline-03-widgets-contract-jpa"),
+        ) else {
+            return;
+        };
+        let memory = RepoFacts::collect(memory.path()).unwrap();
+        let jpa = RepoFacts::collect(jpa.path()).unwrap();
+        for facts in [&memory, &jpa] {
+            let text = facts.render();
+            assert!(
+                text.contains("Stereotypes by class name: *Controller is @RestController"),
+                "{text}"
+            );
+            assert!(text.contains("Convention (validation): check values in code"), "{text}");
+            assert!(
+                facts.drift(std::path::Path::new("/nonexistent")).is_empty(),
+                "no classes to drift yet"
+            );
+        }
+        assert!(memory.render().contains("Convention (storage): keep data in memory"));
+        assert!(jpa
+            .render()
+            .contains("Convention (storage): persist with Spring Data JPA"));
+        assert!(memory
+            .render()
+            .contains("Storage: no database or JPA library is available."));
+        assert!(
+            !jpa.render().contains("Storage:"),
+            "JPA is on the classpath, so no absence line"
+        );
+    }
+
     #[test]
     fn a_long_file_list_is_cut_and_says_how_many_were_left_out() {
         let dir = scaffold();

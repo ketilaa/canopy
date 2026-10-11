@@ -201,6 +201,20 @@ fn run_one(
 
     let facts = RepoFacts::collect(&checkout).map_err(|e| e.to_string())?;
     std::fs::write(run_dir.join("facts.txt"), facts.render()).map_err(|e| e.to_string())?;
+    // The repository's own decisions: which contract (by content id), and where the repository disagrees with it.
+    let contract_id = std::fs::read_to_string(checkout.join(canopy_planner::contract::CONTRACT_PATH))
+        .ok()
+        .map(|text| content_id(&text));
+    let drift = facts.drift(&checkout);
+    println!(
+        "  contract: {}; drift: {}",
+        contract_id.as_deref().unwrap_or("none"),
+        if drift.is_empty() {
+            "none".to_string()
+        } else {
+            drift.join("; ")
+        }
+    );
     let feature = Feature::parse(task.feature).map_err(|e| e.to_string())?;
     let golden = Plan::from_yaml(task.golden).map_err(|e| e.to_string())?;
     let story = golden.story.clone().unwrap_or_default();
@@ -255,6 +269,8 @@ fn run_one(
             "planner_batch": batch_id,
             "planner_run": n,
             "plan_content_id": content_id(&yaml),
+            "contract_id": contract_id,
+            "contract_drift": drift,
             "provenance": canopy_planner::draft::provenance(&feature.scenario_ids(), &facts.root_package),
         });
         std::fs::write(
