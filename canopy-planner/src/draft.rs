@@ -319,6 +319,13 @@ fn with_scenarios(mut context: String, scenarios: &[String]) -> String {
     if !scenarios.is_empty() {
         context.push_str("\nScenarios this step helps make pass:\n");
         context.push_str(&scenarios.join("\n"));
+        // A case names its input in words ("a name of 51 characters"); a test written with the words as the value
+        // does not test the case. Placed after the cases it governs.
+        if scenarios.iter().any(|s| s.contains("Cases:")) {
+            context.push_str(
+                "ALWAYS write the concrete value a case describes in the test, never the words that describe it.\n",
+            );
+        }
     }
     context
 }
@@ -542,6 +549,30 @@ mod tests {
         );
         assert!(second < first, "{section}");
         assert!(context.starts_with("facts"), "{context}");
+    }
+
+    #[test]
+    fn a_step_that_covers_an_outline_is_told_to_write_the_value_a_case_describes_and_other_steps_are_not() {
+        let scenarios = |id: &str| match id {
+            "first" => Some("Scenario: First\nThen the status is 201\n".to_string()),
+            "second" => Some("Scenario: Second\nCases:\n- name = a name of 51 characters\n".to_string()),
+            _ => None,
+        };
+        let plan = |covers: &str| {
+            let draft = format!(
+                r#"{{"steps":[{{"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"covers":[{covers}]}}]}}"#
+            );
+            into_plan(&draft, "p", "s", None, &|_| "facts".to_string(), &scenarios, ROOT, &[]).unwrap()
+        };
+        let with_cases = plan(r#""second""#).steps[0].context.clone().unwrap();
+        assert!(with_cases.contains("ALWAYS write the concrete value"), "{with_cases}");
+        let cases_at = with_cases.find("Cases:").unwrap();
+        assert!(
+            with_cases.find("ALWAYS write the concrete value").unwrap() > cases_at,
+            "the rule follows the cases"
+        );
+        let without = plan(r#""first""#).steps[0].context.clone().unwrap();
+        assert!(!without.contains("concrete value"), "{without}");
     }
 
     #[test]
