@@ -68,6 +68,22 @@ harness dropped both.
 - How much of the remaining failure rate is dependency-related once the Implementer is shown signatures.
 - Which second story needs a real dependency, to benchmark any of this; widgets needs none.
 
+# The contract and ADRs
+
+The repository contract (`.canopy/contract.yaml`, first version 2026-10-11) is meant to be a projection of
+accepted ADRs, not a hand-edited file. The ADR is the record (decision, reason, alternatives, who accepted);
+the contract is what the harness renders from the accepted ones, regenerable, with each entry citing its ADR
+in `source`. A later ADR that supersedes an earlier one replaces its entry, and nothing is lost.
+
+What stands in the way: today's ADR (`canopy-core::Adr`) is `title`, `decision`, `reason`, `alternatives`, all
+free text, so there is nothing to render deterministically. An ADR proposal would need a typed `effects`
+section in a schema-constrained response (a stereotype, a convention with a closed set of topics, a
+dependency from the catalog) that the person accepts together with the prose. That is also where a dependency
+decision (option 2 above) naturally lives: accepting it renders both a catalog entry and a contract line.
+
+Until then the contract is a hand-written seed. Seeds are allowed and carry no `source`; the audit and the
+`source` field are the seam where ADR rendering plugs in.
+
 # Suggested Order (a proposal, not a decision)
 
 Signatures first (measurable on widgets). Option 3 as a single cheap comparison with versions held fixed.
