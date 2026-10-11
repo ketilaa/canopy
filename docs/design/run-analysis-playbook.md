@@ -72,6 +72,9 @@ direction, not effect size; sources are the batches in `docs/reports/widgets-pla
 | Schema tightening | required non-empty `tests` | missing tests 8/10 to 0/10 |
 | Schema tightening | path patterns by directory | a test listed as production code ended |
 | Derived fact | computed storage line ("no database or JPA library is available") | with the next row, JPA mentions 30 to 0; the two are stacked |
+| Removed model choice | the tests of a step's classes derived (`XTest` per class) instead of named | "must change in this step" refusals 87 mentions in 19 runs to 0 in 4; the unrelated-test pattern 43% of plans to 0 |
+| Schema tightening | every part of a class name and every list bounded | token-loop drafts (8 of 13 capped) to none in 10 plans; 10 of 10 valid on the first draft |
+| Schema tightening (failed) | `oneOf` for two step shapes | the free text looped in 2 of 4 plans; reverted |
 | Prompt wording | "state the concrete implementation choices" | see above |
 | Prompt wording | "every step carries its test" | ignored in 8 of 10 drafts, retry included |
 | Added context | facts and dependency list stamped into every step | no visible effect alone (JPA classes still written) |
@@ -92,6 +95,10 @@ Ambiguity hotspots:
 ## Things the analysis must not assume
 
 Known server and harness facts (cite them; do not re-derive):
+
+- A `pattern` with an unbounded `*` over a repeatable token lets the model loop (`TestTestTest...`) until the token cap;
+  bound every quantifier (`{0,n}`; the server accepts them). A `oneOf` in the response schema made the free-text fields
+  loop; use one shape. Check a capped output for repeated tokens, not only repeated sentences.
 
 - A response schema and `tools` must never be sent together; the schema wins and tool calls become impossible
   (`CLAUDE.md`, escalation order).

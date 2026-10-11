@@ -337,6 +337,28 @@ harness then derives `modify` for it. That pattern is in 43% of plans and in 4 o
 Derive the tests of a step's production classes instead of asking for them; details and the proposal in
 `docs/design/planner-first-increment.md`.
 
+### Derived tests, and a loop that was in the schema (2026-10-11, `bf4009e`, `9d18a39`)
+
+**Derived tests.** The harness now adds the test of each production class a step lists (`XTest` in the class's
+package); `test_classes` is read only for a step with no classes, and `test_classes` named alongside classes is
+ignored and recorded as a diagnostic. Five plans, one Implementer run each on the four valid: **0 "must change in
+this step" refusals in 11 steps**, against 87 mentions in 48 steps over 19 earlier runs the same day, and none of
+the four plans has a step listing an unrelated existing test in `modify` (43% of the earlier ones did). Steps
+passed 2, 1, 2, 2: unchanged in size, the failure class itself gone.
+
+**A schema with two step shapes (`oneOf`) is not usable.** It accepted derived tests for production steps and
+tests-only steps in the grammar, and the server accepted it, but the free-text `instruction` looped (one sentence
+repeated 62 to 151 times) in 2 of 4 plans, both attempts each. One shape, two optional lists, instead.
+
+**Correction.** An earlier statement here and in the session that the capped planner drafts were not loops was
+wrong: the check looked for repeated sentences and step ids. By repeated token, 8 of 13 capped drafts (6 of the
+7 before this change) are `TestTestTestTest...` inside a `test_classes` name, because the pattern
+`[A-Za-z0-9_]*Test` lets the grammar repeat `Test` without end. It was a tier-0 gap, not a model failure.
+A repetition penalty (considered) would have worked on the symptom; bounding the pattern removes the
+possibility. Name length, package depth and segment length, and every list are now bounded; the server accepts
+the quantifiers. Ten fresh plans: **10 of 10 valid on the first draft, no capped response, no loop**, 8 to 20 s
+each (the same schema produced a capped draft in 1 plan of 5 the batch before).
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
