@@ -137,6 +137,14 @@ impl RepoFacts {
                     .to_string(),
             );
         }
+        let boot_major = self
+            .spring_boot_version
+            .as_deref()
+            .and_then(|v| v.split('.').next())
+            .and_then(|major| major.parse::<u32>().ok());
+        if boot_major.is_some_and(|major| major >= 3) {
+            lines.push("Namespace: Spring Boot 3 uses jakarta.* packages, never javax.*.".to_string());
+        }
         if !self.has_validation_library() {
             lines.push(
                 "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation); check values in code."
@@ -495,6 +503,21 @@ mod tests {
             let facts = RepoFacts::collect(dir.path()).unwrap();
             assert!(facts.has_validation_library(), "{artifact}");
             assert!(!facts.render().contains("Validation:"), "{artifact}");
+        }
+    }
+
+    #[test]
+    fn spring_boot_3_and_later_state_the_jakarta_namespace_and_earlier_versions_do_not() {
+        let text = RepoFacts::collect(scaffold().path()).unwrap().render();
+        assert!(
+            text.contains("Namespace: Spring Boot 3 uses jakarta.* packages, never javax.*."),
+            "{text}"
+        );
+        for (version, expected) in [("2.7.18", false), ("3.0.0", true), ("3.4.5", true), ("4.0.0", true)] {
+            let dir = scaffold();
+            write(dir.path(), "pom.xml", &POM.replace("3.4.5", version));
+            let rendered = RepoFacts::collect(dir.path()).unwrap().render();
+            assert_eq!(rendered.contains("Namespace:"), expected, "{version}: {rendered}");
         }
     }
 

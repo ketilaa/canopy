@@ -15,7 +15,7 @@ Reset a repository to a state: `git checkout -q -f --detach <tag> && git clean -
 | `java-greeter` | `baseline-00-scaffold`, `candidate-01-greeter` | The empty scaffold, and a `Greeter` with `GreeterTest` that the Implementer itself produced (a real run's patch, applied unchanged). |
 | `java-naming` | `baseline-00-naming` | `Greeter` delegates how a name is shown to `format.NameFormatter`. `legacy.LegacyGreeter` looks similar, is marked do-not-change, and its test pins its exact output. |
 | `java-shop` | `baseline-00-shop` | `PriceCalculator` computes an order total that `InvoiceFormatter` prints and `OrderService` charges; the invoice test pins the exact output. |
-| `java-widgets` | `baseline-00-widgets` | An empty Spring Boot web application (application class and a web starter). The base for a full vertical slice built as a plan: domain object, in-memory repository, service, REST controller. |
+| `java-widgets` | `baseline-00-widgets`, `baseline-01-widgets-grain` | An empty Spring Boot web application (application class and a web starter). The base for a full vertical slice built as a plan: domain object, in-memory repository, service, REST controller. | `baseline-01-widgets-grain` is the same application with `spring-boot-starter-data-jpa`, `spring-boot-starter-validation` and `h2` added to the pom (Boot 3.4.5, versions managed by the BOM), so the libraries a model reaches for are available; it is for comparing a project that fits the model's habits with one that forbids them.
 
 ## Tasks
 
