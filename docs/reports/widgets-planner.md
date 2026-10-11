@@ -403,3 +403,23 @@ test: construct the class directly, no `@SpringBootTest`, no `@Autowired`", rout
 `expected 2 was 36` class gone. Falsified if shared-state stops remain. n = 10 runs on the same three plans.
 This is a rule in the contract, not code beyond render, so it needs no gated code; the rule text needs a person's
 review.
+
+### Experiment: a contract rule for how repositories and services are tested (2026-10-11)
+
+Change: one contract rule on the `repository` and `service` layers: ALWAYS test the class as a plain unit test,
+constructed with `new` in `@BeforeEach`; NEVER `@SpringBootTest` or `@Autowired` in its test. Same three drafts,
+same harness (`3ad4c8a`), 10 runs (4, 3, 3) against 15 before; only the rule differs.
+
+Prediction: `@SpringBootTest` in repository and service tests from about 12 of 15 runs to at most 2; the
+`expected 2 but was 36` class gone. Counted in the submitted files (not the trace text, which now quotes the rule).
+
+Result: **held.** Runs whose repository or service test used `@SpringBootTest` or `@Autowired`: 7 of the 12 that wrote
+one before (my earlier "about 12" counted the trace, which overstated it), 0 of the 8 that wrote one now. No
+shared-state stop (`expected 2 was 36`) in 10 runs. Steps passed 15 over 10 runs, 1.5 per run against 1.1; direction
+only at this n, and two of the three batches rest on 3 runs.
+
+What stops now: the controller step. 3 of 10 stop on `Failed to load ApplicationContext` for a controller test, one
+more on a missing setter the test invented (`setWidgetService`), one on truncation; the model step still stops 2 of
+10 on a syntax error in a file it wrote (`')' or ',' expected`). Origin of the controller class, from the packets: the
+same one, with no statement of how a `*Controller` is tested (full context versus a sliced web test, and how its
+service is supplied). Next: a controller-layer rule for the same mechanism, one variable, n=10 on the same drafts.
