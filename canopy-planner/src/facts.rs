@@ -6,6 +6,8 @@ use std::path::Path;
 
 use canopy_implementer::java;
 
+use crate::contract::Contract;
+
 /// How many existing files the rendered facts list before they are cut.
 pub const MAX_LISTED_FILES: usize = 100;
 
@@ -33,10 +35,14 @@ pub struct RepoFacts {
     pub classes: Vec<String>,
     /// The qualified names of the test classes (`src/test/java`), sorted.
     pub test_classes: Vec<String>,
+    /// The decisions the repository carries about itself (`.canopy/contract.yaml`), when it has them.
+    pub contract: Option<Contract>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum FactsError {
+    #[error("{0}")]
+    Contract(String),
     #[error("the repository has no pom.xml; only Maven repositories are supported")]
     NoBuildFile,
     #[error("no class annotated @SpringBootApplication under src/main/java, so there is no root package")]
@@ -58,6 +64,7 @@ impl RepoFacts {
                 .filter_map(|f| java::qualified_name_of_source(f))
                 .collect()
         };
+        let contract = Contract::read(root).map_err(FactsError::Contract)?;
         let classes = classes_under("src/main/java/");
         let test_classes = classes_under("src/test/java/");
         Ok(Self {
@@ -69,6 +76,7 @@ impl RepoFacts {
             files,
             classes,
             test_classes,
+            contract,
         })
     }
 
@@ -102,6 +110,13 @@ impl RepoFacts {
             .any(|d| d.artifact.contains("validation") || d.artifact.contains("hibernate-validator"))
     }
 
+    /// Where the repository disagrees with its own contract (empty without one). `root` is where it is.
+    pub fn drift(&self, root: &Path) -> Vec<String> {
+        self.contract
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.audit(root, &self.files))
+    }
+
     /// The facts as the standing context of every step. Facts that are not known are left out.
     pub fn render(&self) -> String {
         let directory = self.root_package.replace('.', "/");
@@ -131,12 +146,6 @@ impl RepoFacts {
                 .collect();
             lines.push(format!("Dependencies: {}", listed.join(", ")));
         }
-        if self.spring_boot_version.is_some() {
-            lines.push(
-                "Stereotypes by class name: *Controller is @RestController, *Service is @Service, *Repository is @Repository, *Config is @Configuration."
-                    .to_string(),
-            );
-        }
         let boot_major = self
             .spring_boot_version
             .as_deref()
@@ -147,12 +156,15 @@ impl RepoFacts {
         }
         if !self.has_validation_library() {
             lines.push(
-                "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation); check values in code."
+                "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation)."
                     .to_string(),
             );
         }
         if !self.has_database_library() {
-            lines.push("Storage: no database or JPA library is available; keep data in memory.".to_string());
+            lines.push("Storage: no database or JPA library is available.".to_string());
+        }
+        if let Some(contract) = &self.contract {
+            lines.extend(contract.render());
         }
         for (label, classes) in [
             ("Existing classes", &self.classes),
@@ -382,7 +394,7 @@ mod tests {
         assert!(!facts.has_database_library());
         let text = facts.render();
         assert!(
-            text.contains("Storage: no database or JPA library is available; keep data in memory."),
+            text.contains("Storage: no database or JPA library is available."),
             "{text}"
         );
     }
@@ -446,14 +458,66 @@ mod tests {
         assert!(!text.contains(".java"), "symbols, not paths: {text}");
     }
 
+    const CONTRACT: &str = "
+stereotypes:
+  - {suffix: Controller, annotation: RestController}
+  - {suffix: Service, annotation: Service}
+conventions:
+  - {topic: storage, rule: keep data in memory}
+";
+
     #[test]
-    fn a_spring_boot_project_states_the_stereotype_convention_by_class_name() {
-        let text = RepoFacts::collect(scaffold().path()).unwrap().render();
+    fn without_a_contract_the_facts_carry_no_stereotype_or_convention_lines() {
+        let facts = RepoFacts::collect(scaffold().path()).unwrap();
+        assert_eq!(facts.contract, None);
+        let text = facts.render();
+        assert!(!text.contains("Stereotypes") && !text.contains("Convention"), "{text}");
+    }
+
+    #[test]
+    fn a_contract_in_the_repository_is_rendered_into_the_facts_after_the_derived_ones() {
+        let dir = scaffold();
+        write(dir.path(), ".canopy/contract.yaml", CONTRACT);
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        assert!(facts.contract.is_some());
+        let text = facts.render();
         assert!(
-            text.contains(
-                "Stereotypes by class name: *Controller is @RestController, *Service is @Service, *Repository is @Repository, *Config is @Configuration."
-            ),
+            text.contains("Stereotypes by class name: *Controller is @RestController, *Service is @Service."),
             "{text}"
+        );
+        assert!(text.contains("Convention (storage): keep data in memory."), "{text}");
+        assert!(
+            text.find("Dependencies:").unwrap() < text.find("Stereotypes").unwrap()
+                && text.find("Convention").unwrap() < text.find("Existing classes").unwrap(),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_contract_that_is_not_valid_stops_the_facts_with_the_file_named() {
+        let dir = scaffold();
+        write(dir.path(), ".canopy/contract.yaml", "stereotypes: [broken");
+        let e = RepoFacts::collect(dir.path()).unwrap_err();
+        assert!(
+            matches!(&e, FactsError::Contract(m) if m.contains(".canopy/contract.yaml")),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn the_drift_of_the_repository_from_its_contract_is_reported_and_empty_without_one() {
+        let dir = scaffold();
+        write(
+            dir.path(),
+            "src/main/java/com/example/widgets/GadgetService.java",
+            "package x;\nclass GadgetService {}\n",
+        );
+        assert!(RepoFacts::collect(dir.path()).unwrap().drift(dir.path()).is_empty());
+        write(dir.path(), ".canopy/contract.yaml", CONTRACT);
+        let drift = RepoFacts::collect(dir.path()).unwrap().drift(dir.path());
+        assert_eq!(
+            drift,
+            ["com.example.widgets.GadgetService is named *Service but is not annotated @Service"]
         );
     }
 
@@ -480,7 +544,7 @@ mod tests {
         assert!(!facts.has_validation_library());
         assert!(
             facts.render().contains(
-                "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation); check values in code."
+                "Validation: no bean validation library is available (neither javax.validation nor jakarta.validation)."
             ),
             "{}",
             facts.render()
