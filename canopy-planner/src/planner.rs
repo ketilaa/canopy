@@ -6,7 +6,7 @@ use std::path::Path;
 use canopy_implementer::llm::{Generator, StructuredRequest};
 use canopy_implementer::plan::Plan;
 
-use crate::draft;
+use crate::draft::{self, Diagnostic};
 use crate::facts::RepoFacts;
 use crate::gherkin::Feature;
 use crate::prompt::{self, Input, Previous};
@@ -48,6 +48,8 @@ pub struct Attempt {
     /// What the model answered, when it answered. Kept even when it was rejected.
     pub raw: Option<String>,
     pub problems: Vec<Problem>,
+    /// Things worth recording about the draft that did not make it invalid.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +62,11 @@ pub struct Outcome {
 impl Outcome {
     pub fn is_valid(&self) -> bool {
         self.plan.is_some()
+    }
+
+    /// The diagnostics of the last attempt: what is worth knowing about the plan that was returned.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.attempts.last().map(|a| a.diagnostics.clone()).unwrap_or_default()
     }
 }
 
@@ -136,7 +143,12 @@ impl Planner {
                 }
             };
             let valid = problems.is_empty();
-            attempts.push(Attempt { raw, problems });
+            let diagnostics = raw.as_deref().map(draft::diagnostics).unwrap_or_default();
+            attempts.push(Attempt {
+                raw,
+                problems,
+                diagnostics,
+            });
             if valid {
                 return Outcome { plan, attempts };
             }
@@ -260,6 +272,19 @@ mod tests {
             context(0).contains("Root package: com.example.widgets"),
             "derived facts reach every step"
         );
+    }
+
+    #[test]
+    fn a_plan_whose_instruction_leaves_a_listed_class_unnamed_is_valid_and_carries_the_diagnostic() {
+        let unnamed = GOOD.replace("make Widget", "make it");
+        let (outcome, requests) = run(vec![reply(&unnamed)]);
+        assert_eq!(requests.len(), 1, "no retry: it is not a rejection");
+        assert!(outcome.is_valid());
+        let diagnostics = outcome.diagnostics();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].class, "Widget");
+        let (clean, _) = run(vec![reply(GOOD)]);
+        assert!(clean.diagnostics().is_empty());
     }
 
     #[test]

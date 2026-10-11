@@ -271,6 +271,7 @@ fn run_one(
             "plan_content_id": content_id(&yaml),
             "contract_id": contract_id,
             "contract_drift": drift,
+            "diagnostics": outcome.diagnostics().iter().map(|d| d.to_string()).collect::<Vec<_>>(),
             "provenance": canopy_planner::draft::provenance(&feature.scenario_ids(), &facts.root_package),
         });
         std::fs::write(
@@ -326,7 +327,9 @@ fn run_one(
     let first_draft_valid = outcome.attempts.first().is_some_and(|a| a.problems.is_empty());
     let snapshot = metrics.snapshot();
     let steps = outcome.plan.as_ref().map_or(0, |p| p.steps.len());
+    let diagnostics: Vec<String> = outcome.diagnostics().iter().map(|d| d.to_string()).collect();
     let summary = json!({
+        "diagnostics": diagnostics,
         "run": n,
         "valid": outcome.is_valid(),
         "attempts": outcome.attempts.len(),
@@ -347,6 +350,9 @@ fn run_one(
         outcome.attempts.len(),
         files_match_golden.map_or("n/a".to_string(), |m| m.to_string())
     );
+    for diagnostic in outcome.diagnostics() {
+        println!("    diagnostic: {diagnostic}");
+    }
     for problem in outcome.attempts.iter().flat_map(|a| &a.problems) {
         println!("    problem: {problem}");
     }

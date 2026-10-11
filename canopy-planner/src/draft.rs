@@ -78,6 +78,67 @@ pub fn provenance(scenario_ids: &[String], root_package: &str) -> Value {
     })
 }
 
+/// Something about a draft worth recording that does not make it invalid. An instruction that does not name a
+/// class its step lists was an audit that rejected the draft; it rejected 9 of 10 plans in one batch and 3 of 3 in
+/// each of two more, and a retry naming the problem did not change that. It is recorded so the rate can be read
+/// against how the steps then fare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticKind {
+    /// A class in `classes` that the step's instruction never names.
+    UnnamedClass,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub step: String,
+    pub kind: DiagnosticKind,
+    pub class: String,
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            DiagnosticKind::UnnamedClass => write!(
+                f,
+                "step {}: {} is listed in classes but the instruction never names it",
+                self.step, self.class
+            ),
+        }
+    }
+}
+
+/// The diagnostics of a draft's text; empty for anything that is not a draft.
+pub fn diagnostics(content: &str) -> Vec<Diagnostic> {
+    let Ok(draft) = serde_json::from_str::<Value>(content) else {
+        return vec![];
+    };
+    let Some(steps) = draft.get("steps").and_then(Value::as_array) else {
+        return vec![];
+    };
+    let mut found = Vec::new();
+    for step in steps {
+        let id = step.get("id").and_then(Value::as_str).unwrap_or("?");
+        let instruction = step.get("instruction").and_then(Value::as_str).unwrap_or_default();
+        for class in step
+            .get("classes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let simple = class.rsplit('.').next().unwrap_or(class);
+            if !mentions_word(instruction, simple) {
+                found.push(Diagnostic {
+                    step: id.to_string(),
+                    kind: DiagnosticKind::UnnamedClass,
+                    class: simple.to_string(),
+                });
+            }
+        }
+    }
+    found
+}
+
 /// The plan a draft describes. The id, the story, the feature path, every step's kind (a behaviour change),
 /// every step's context (the repository facts routed to the step's classes), the source path of every class, whether each file is created
 /// or modified, and what a step reads all come from the harness, never from the model. `existing` is every
@@ -118,19 +179,6 @@ pub fn into_plan(
             .to_string();
         let production = class_names(fields, "classes", &step_id, root_package, false)?;
         let tests = class_names(fields, "test_classes", &step_id, root_package, true)?;
-        // The instruction is what the Implementer is told to build, and the class list is what it may touch:
-        // a class listed but never named would be created with no description of it.
-        let unnamed: Vec<String> = production
-            .iter()
-            .filter_map(|path| std::path::Path::new(path).file_stem()?.to_str().map(str::to_string))
-            .filter(|class| !mentions_word(&instruction, class))
-            .collect();
-        if !unnamed.is_empty() {
-            return Err(format!(
-                "step {step_id}: {} listed in classes but not named in the instruction; name each in the instruction or remove it from classes",
-                unnamed.join(", ")
-            ));
-        }
         if tests.is_empty() {
             return Err(format!(
                 "step {step_id}: test_classes is missing or empty; every step needs at least one test"
@@ -614,16 +662,20 @@ mod tests {
     }
 
     #[test]
-    fn every_production_class_a_step_lists_must_be_named_in_its_instruction() {
+    fn a_listed_class_the_instruction_never_names_is_a_diagnostic_and_not_a_rejection() {
         let draft = r#"{"steps":[{"id":"a","instruction":"Create Widget and WidgetRepository.","classes":["com.example.widgets.Widget","com.example.widgets.WidgetRepository","com.example.widgets.WidgetController"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
-        let e = plan_of(draft, &[]).unwrap_err();
-        assert!(
-            e.contains("step a") && e.contains("WidgetController") && e.contains("instruction") && e.contains("remove"),
-            "{e}"
+        assert!(plan_of(draft, &[]).is_ok(), "the plan is still accepted");
+        assert_eq!(
+            diagnostics(draft),
+            [Diagnostic {
+                step: "a".into(),
+                kind: DiagnosticKind::UnnamedClass,
+                class: "WidgetController".into()
+            }]
         );
-        assert!(
-            !e.contains("WidgetRepository"),
-            "only the unnamed class is reported: {e}"
+        assert_eq!(
+            diagnostics(draft)[0].to_string(),
+            "step a: WidgetController is listed in classes but the instruction never names it"
         );
     }
 
@@ -637,10 +689,18 @@ mod tests {
             let draft = format!(
                 r#"{{"steps":[{{"id":"a","instruction":"{instruction}","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}}]}}"#
             );
-            assert!(plan_of(&draft, &[]).is_ok(), "{instruction}");
+            assert!(diagnostics(&draft).is_empty(), "{instruction}");
         }
         let longer = r#"{"steps":[{"id":"a","instruction":"Create WidgetService.","classes":["com.example.widgets.Widget"],"test_classes":["com.example.widgets.WidgetTest"],"covers":["first"]}]}"#;
-        assert!(plan_of(longer, &[]).is_err(), "Widget is not the word WidgetService");
+        assert_eq!(diagnostics(longer).len(), 1, "Widget is not the word WidgetService");
+    }
+
+    #[test]
+    fn diagnostics_of_something_that_is_not_a_draft_are_empty_and_a_step_without_classes_has_none() {
+        assert!(diagnostics("not json").is_empty());
+        assert!(diagnostics("{}").is_empty());
+        let tests_only = r#"{"steps":[{"id":"a","instruction":"Add a case.","classes":[],"test_classes":["com.example.widgets.SomeTest"],"covers":["first"]}]}"#;
+        assert!(diagnostics(tests_only).is_empty());
     }
 
     #[test]

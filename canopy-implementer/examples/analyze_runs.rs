@@ -80,11 +80,16 @@ fn main() {
                         classes.add("planner", &label);
                     }
                 }
+                // Recorded, not counted as a failure: a valid plan whose instruction leaves a listed class unnamed.
+                let noted = summary["diagnostics"].as_array().map_or(0, Vec::len);
+                if noted > 0 {
+                    classes.add("planner-note", "a listed class is not named in the instruction");
+                }
                 let joined: Vec<Value> = std::fs::read_to_string(run.join("implementer-runs.jsonl"))
                     .map(|t| t.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
                     .unwrap_or_default();
                 let mut line = format!(
-                    "  {name} planner: valid={valid} attempts={} steps={}",
+                    "  {name} planner: valid={valid} attempts={} steps={} notes={noted}",
                     summary["attempts"], summary["steps"]
                 );
                 for j in &joined {

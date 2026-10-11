@@ -278,7 +278,9 @@ Audit (d) has now blocked three sweeps in a row (pat 9 of 10, the JPA contract a
 the one batch where it passed (the memory arm, 3 of 3, every plan after a retry) was luck against that rate.
 The routing itself is covered by unit tests (the planner prompt omits implementer-only rules, a plan's steps get
 different contexts by layer, an unknown-layer step fails open), not yet by a run. The experiment needs (d)
-demoted from a rejection to a recorded diagnostic to be measurable; that decision is open.
+demoted from a rejection to a recorded diagnostic to be measurable. Decided: (d) is now a diagnostic. The draft's
+class list is no longer checked against the instruction; the plan carries the unnamed classes in
+`diagnostics` (summary.json, plan.meta.json), and `analyze_runs` reports the rate as a note, not a failure.
 
 ### Resolved: who decides create or modify
 
