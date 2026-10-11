@@ -483,3 +483,36 @@ body shape, where validation lives). The feature's wording is the stated source,
 again: a convention rule per layer ("a create answers 201 and the created resource; a request body is a JSON
 object of the fields") is a contract rule, and "validation lives in the model constructor or the service" can be
 decided once in the contract. Not run.
+
+### Experiment: two contract rules, then a line on case values (2026-10-11)
+
+Rules added to the contract copies (same three drafts, scenario context kept): validation lives in the domain object's
+constructor and throws `IllegalArgumentException` (layerless, so it also reaches the model step, which the contract
+cannot classify because the class has no suffix); a controller reads a JSON object, answers a create with 201 and the
+created object, and an `IllegalArgumentException` with 400.
+
+**Arm A (the two rules), 10 runs: worse.** 9 of 10 runs stopped on "Expected IllegalArgumentException to be thrown, but
+nothing was thrown" (2 of 10 before); steps passed 0.5 per run (1.7 before). Prediction falsified. The packet shows the
+rule itself was followed (the constructor throws) and the test is what fails: it passes the scenario's case words as
+the input, `new Widget("a name of 51 characters")`, a 23-character string. The case table cells are descriptions of an
+input, not values; the scenario context added earlier put them in front of the model, and the model used them literally.
+(The earlier scenario experiment had 2 of 10 of the same stop; the model step now owns the validation, so every run reaches it.)
+
+**Arm B (same, plus one line after the cases in the step's context, only for a step that covers an outline):** "ALWAYS
+write the concrete value a case describes in the test, never the words that describe it." 10 runs: "nothing thrown"
+stops 9 of 10 to 1 of 10; no run passes a case description as an input; steps passed 17 over 10 runs, 1.7 per run (the
+same as before the rules). Prediction held (at most 2; at least 1.7). A prompt change with a measured delta of 9 to 1 on
+the same drafts, one arm each; direction is clear, effect size is not.
+
+Remaining stops (10 runs): a controller answering 200 or 201 where the test expects 400 for an invalid name, in 3 runs of
+the first plan (the `create-response` rule asks for 400 on an `IllegalArgumentException`; present in the context, not
+followed: a compliance gap, not a missing fact); syntax errors in written files ('unclosed string literal', `')' or ','
+expected`: 3 runs); and in the repository step of the third plan: `testFindAll` expected 2 but was 36 / 5, and
+`expected Alpha but was Beta`.
+
+**Settled: the 36.** The earlier "shared state" reading and the later "some other quantity" were both unresolved. It is
+`assertEquals(2, allWidgets.iterator().next().getId().length())`: the test of `findAll` has no size to compare, because
+the repository returns an `Iterable`, so the model compares the length of the first id (36, a UUID) to the count it
+meant. Origin: the return type of a method that returns several objects is unstated; the test and the implementation
+choose separately. Rung 1 candidate: a contract rule on the repository and service layers ("a method that returns
+several objects returns a `java.util.List`"); the Roots Java signatures item is the general fix and is still parked.
