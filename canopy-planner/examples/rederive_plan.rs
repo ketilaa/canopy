@@ -8,6 +8,9 @@ use std::path::Path;
 use canopy_implementer::plan::Plan;
 use canopy_planner::draft::into_plan;
 use canopy_planner::facts::RepoFacts;
+use canopy_planner::gherkin::Feature;
+
+const WIDGETS_FEATURE: &str = include_str!("../../canopy-implementer/tasks/widgets/feature.feature");
 
 fn main() {
     for dir in std::env::args().skip(1) {
@@ -40,12 +43,14 @@ fn rederive(dir: &Path) -> Result<String, String> {
         let layers = facts.layers_of_classes(&root, classes);
         facts.render_for_step(&layers)
     };
+    let feature = Feature::parse(WIDGETS_FEATURE).map_err(|e| e.to_string())?;
     let plan = into_plan(
         &raw,
         &original.id,
         original.story.as_deref().unwrap_or_default(),
         original.feature.as_deref(),
         &route,
+        &|id| feature.render_scenario(id),
         &facts.root_package,
         &facts.files,
     )?;

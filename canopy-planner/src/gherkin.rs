@@ -63,6 +63,29 @@ impl Feature {
         Parser::default().run(text)
     }
 
+    /// One scenario as the model reads it: its title, its steps and, for an outline, its cases. `None` for an id the
+    /// feature does not have.
+    pub fn render_scenario(&self, id: &str) -> Option<String> {
+        let scenario = self.scenarios.iter().find(|s| s.id == id)?;
+        let mut out = format!("Scenario: {}\n", scenario.title);
+        for step in &scenario.steps {
+            out.push_str(&format!("{:?} {}\n", step.keyword, step.text));
+        }
+        if let Some(examples) = &scenario.examples {
+            out.push_str("Cases:\n");
+            for row in &examples.rows {
+                let cells: Vec<String> = examples
+                    .columns
+                    .iter()
+                    .zip(row)
+                    .map(|(column, cell)| format!("{column} = {cell}"))
+                    .collect();
+                out.push_str(&format!("- {}\n", cells.join(", ")));
+            }
+        }
+        Some(out)
+    }
+
     pub fn scenario_ids(&self) -> Vec<String> {
         self.scenarios.iter().map(|s| s.id.clone()).collect()
     }
@@ -319,6 +342,18 @@ mod tests {
     use super::*;
 
     const WIDGETS: &str = include_str!("../../canopy-implementer/tasks/widgets/feature.feature");
+
+    #[test]
+    fn a_scenario_renders_with_its_steps_and_the_cases_of_an_outline_and_an_unknown_id_renders_nothing() {
+        let feature = Feature::parse(WIDGETS).unwrap();
+        let ids = feature.scenario_ids();
+        let plain = feature.render_scenario(&ids[0]).unwrap();
+        assert!(plain.contains("the response status is 201"), "{plain}");
+        let outline = feature.render_scenario(&ids[1]).unwrap();
+        assert!(outline.contains("the response status is 400"), "{outline}");
+        assert!(outline.contains("a name of 51 characters"), "{outline}");
+        assert!(feature.render_scenario("no-such-scenario").is_none());
+    }
 
     #[test]
     fn the_widgets_feature_has_a_plain_scenario_and_an_outline_with_stable_ids() {

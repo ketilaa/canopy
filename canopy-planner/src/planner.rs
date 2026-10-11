@@ -127,6 +127,7 @@ impl Planner {
                         request.story,
                         request.feature_path,
                         &route,
+                        &|id| request.feature.render_scenario(id),
                         &request.facts.root_package,
                         &request.facts.files,
                     ) {

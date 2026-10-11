@@ -172,12 +172,14 @@ pub fn diagnostics(content: &str) -> Vec<Diagnostic> {
 /// created otherwise. A step reads each other production class (existing or created by an earlier step) that
 /// its instruction names. The plan format's own validation decides what else is acceptable; its reason is
 /// returned as is.
+#[allow(clippy::too_many_arguments)]
 pub fn into_plan(
     content: &str,
     id: &str,
     story: &str,
     feature: Option<&str>,
     context: &dyn Fn(&[String]) -> String,
+    scenario: &dyn Fn(&str) -> Option<String>,
     root_package: &str,
     existing: &[String],
 ) -> Result<Plan, String> {
@@ -231,9 +233,17 @@ pub fn into_plan(
             .chain(&tests)
             .filter_map(|path| java::qualified_name_of_source(path))
             .collect();
+        let covered: Vec<String> = fields
+            .get("covers")
+            .and_then(Value::as_array)
+            .map(|ids| ids.iter().filter_map(Value::as_str).filter_map(scenario).collect())
+            .unwrap_or_default();
         fields.insert(
             "context".into(),
-            json!(context_for_step(&context(&step_classes), &created)),
+            json!(with_scenarios(
+                context_for_step(&context(&step_classes), &created),
+                &covered
+            )),
         );
         let touched = classify(&production, &tests, &step_id, &known, &created)?;
         let read_only = read_only_for(&instruction, &touched.production, existing, &created);
@@ -303,6 +313,16 @@ fn class_names(
 
 /// The facts plus what the plan itself has created so far: the facts are about the repository before the
 /// plan, and a later step would otherwise be told that classes its own earlier steps made do not exist.
+/// The scenarios a step covers, as the feature states them: what the step helps make pass is a fact the harness
+/// holds, so the step is shown it instead of guessing (status codes, messages, which cases are rejected).
+fn with_scenarios(mut context: String, scenarios: &[String]) -> String {
+    if !scenarios.is_empty() {
+        context.push_str("\nScenarios this step helps make pass:\n");
+        context.push_str(&scenarios.join("\n"));
+    }
+    context
+}
+
 fn context_for_step(facts: &str, created: &[String]) -> String {
     let names = |prefix: &str| -> Vec<String> {
         created
@@ -499,10 +519,52 @@ mod tests {
         );
     }
 
+    fn plan_with_scenarios(draft: &str) -> Plan {
+        let scenarios = |id: &str| match id {
+            "first" => Some("Scenario: First\nThen the response status is 201".to_string()),
+            "second" => Some("Scenario: Second\nThen the response status is 400".to_string()),
+            _ => None,
+        };
+        into_plan(draft, "p", "s", None, &|_| "facts".to_string(), &scenarios, ROOT, &[]).unwrap()
+    }
+
+    #[test]
+    fn a_steps_context_ends_with_the_scenarios_it_covers_in_the_order_it_names_them() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"covers":["second","first"]}]}"#;
+        let context = plan_with_scenarios(draft).steps[0].context.clone().unwrap();
+        let section = context
+            .split("Scenarios this step helps make pass:")
+            .nth(1)
+            .expect(&context);
+        let (second, first) = (
+            section.find("status is 400").unwrap(),
+            section.find("status is 201").unwrap(),
+        );
+        assert!(second < first, "{section}");
+        assert!(context.starts_with("facts"), "{context}");
+    }
+
+    #[test]
+    fn a_step_that_covers_no_known_scenario_gets_no_scenario_section() {
+        let draft = r#"{"steps":[{"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"covers":["unknown"]}]}"#;
+        let context = plan_with_scenarios(draft).steps[0].context.clone().unwrap();
+        assert!(!context.contains("Scenarios this step"), "{context}");
+    }
+
     #[test]
     fn the_context_closure_sees_the_derived_tests_so_the_test_layer_reaches_the_step() {
         let draft = r#"{"steps":[{"id":"a","instruction":"Create A.","classes":["com.example.widgets.A"],"covers":["first"]}]}"#;
-        let plan = into_plan(draft, "p", "s", None, &|classes| classes.join("+"), ROOT, &[]).unwrap();
+        let plan = into_plan(
+            draft,
+            "p",
+            "s",
+            None,
+            &|classes| classes.join("+"),
+            &|_| None,
+            ROOT,
+            &[],
+        )
+        .unwrap();
         assert!(plan.steps[0]
             .context
             .as_deref()
@@ -644,6 +706,7 @@ mod tests {
             "the story",
             Some("f.feature"),
             &|_| "the facts".to_string(),
+            &|_| None,
             ROOT,
             &existing,
         )
@@ -660,6 +723,7 @@ mod tests {
             "s",
             None,
             &|classes| format!("facts for {}", classes.join(" + ")),
+            &|_| None,
             ROOT,
             &[],
         )

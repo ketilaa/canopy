@@ -32,30 +32,15 @@ ALWAYS keep each step to at most {MAX_FILES_PER_STEP} files created or modified;
     )
 }
 
-fn scenario_section(scenario: &Scenario) -> String {
-    let mut out = format!("### {}\nScenario: {}\n", scenario.id, scenario.title);
-    for step in &scenario.steps {
-        out.push_str(&format!("{:?} {}\n", step.keyword, step.text));
-    }
-    if let Some(examples) = &scenario.examples {
-        out.push_str("Cases:\n");
-        for row in &examples.rows {
-            let cells: Vec<String> = examples
-                .columns
-                .iter()
-                .zip(row)
-                .map(|(column, cell)| format!("{column} = {cell}"))
-                .collect();
-            out.push_str(&format!("- {}\n", cells.join(", ")));
-        }
-    }
-    out
+fn scenario_section(feature: &Feature, scenario: &Scenario) -> String {
+    let rendered = feature.render_scenario(&scenario.id).unwrap_or_default();
+    format!("### {}\n{rendered}", scenario.id)
 }
 
 pub fn messages(input: &Input, previous: Option<&Previous>) -> Vec<Message> {
     let mut user = format!("## Story\n{}\n\n## Scenarios\n", input.story.trim());
     for scenario in &input.feature.scenarios {
-        user.push_str(&scenario_section(scenario));
+        user.push_str(&scenario_section(input.feature, scenario));
         user.push('\n');
     }
     user.push_str(
