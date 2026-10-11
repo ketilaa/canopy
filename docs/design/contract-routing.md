@@ -37,7 +37,10 @@ everywhere.
 
 Derived facts (build, dependencies, the namespace, absences, existing classes) are not scoped yet; only the
 contract is. A step whose layers cannot be worked out gets every rule for its consumer: noise over a missing
-rule.
+rule. `test` alone does not count as a known layer (a record and its test have none): found by
+`routing.json`, where such a step had been given no rules at all, including the validation rule that matters most
+for a domain record. Scoping a rule is a claim about where it matters; the first routed contract scoped
+validation to the service and controller layers, and for this story the validation lives in the record.
 
 ## How a step's layers are found
 

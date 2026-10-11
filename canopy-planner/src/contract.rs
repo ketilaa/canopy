@@ -253,6 +253,12 @@ impl Contract {
         found
     }
 
+    /// Whether a layer of the code itself is known. `test` alone does not count: a record and its test have no
+    /// known layer, and a step with none gets every rule for its consumer.
+    fn classified(layers: &BTreeSet<String>) -> bool {
+        layers.iter().any(|l| l != TEST_LAYER)
+    }
+
     fn rules_for(&self, consumer: Consumer, layers: &BTreeSet<String>) -> Vec<&Rule> {
         self.rules
             .iter()
@@ -260,7 +266,7 @@ impl Contract {
             .filter(|r| {
                 consumer == Consumer::Planner
                     || r.applies_to.layers.is_empty()
-                    || layers.is_empty()
+                    || !Self::classified(layers)
                     || r.applies_to.layers.iter().any(|l| layers.contains(l))
             })
             .collect()
@@ -304,7 +310,7 @@ impl Contract {
             _ => {
                 for l in &self.layers {
                     if let Some(a) = &l.annotation {
-                        if layers.is_empty() || layers.contains(&l.name) {
+                        if !Self::classified(layers) || layers.contains(&l.name) {
                             lines.push(format!("Stereotype: a class named *{} is @{a}.", l.suffix));
                         }
                     }
@@ -569,6 +575,44 @@ conventions:
         assert!(
             !lines.iter().any(|l| l.contains("Convention (naming)")),
             "still not the planner's: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_step_that_only_has_the_test_layer_is_unclassified_and_gets_every_implementer_rule() {
+        let c = Contract::from_yaml(V2).unwrap();
+        // A plain record and its test: the test layer is there, but no layer of the code is known.
+        let only_test = c.render_for(Consumer::Implementer, &set(&["test"]));
+        assert!(
+            only_test.iter().any(|l| l.contains("spring-controller")),
+            "{only_test:?}"
+        );
+        assert!(only_test.iter().any(|l| l.contains("records")));
+        assert!(only_test
+            .iter()
+            .any(|l| l == "Stereotype: a class named *Service is @Service."));
+        assert_eq!(
+            c.rule_ids_for(Consumer::Implementer, &set(&["test"])),
+            ["spring-controller", "records"]
+        );
+        // Once a layer of the code is known, the step is scoped again, and `test` rules still apply.
+        let scoped = c.render_for(Consumer::Implementer, &set(&["service", "test"]));
+        assert!(!scoped.iter().any(|l| l.contains("spring-controller")), "{scoped:?}");
+    }
+
+    #[test]
+    fn a_rule_for_the_test_layer_applies_to_steps_that_have_tests() {
+        let c = Contract::from_yaml(
+            "layers:\n  - {name: service, suffix: Service}\nrules:\n  - {id: test-style, applies_to: {layers: [test]}, content: Keep tests small.}\n  - {id: service-only, applies_to: {layers: [service]}, content: Be stateless.}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            c.rule_ids_for(Consumer::Implementer, &set(&["service", "test"])),
+            ["test-style", "service-only"]
+        );
+        assert_eq!(
+            c.rule_ids_for(Consumer::Implementer, &set(&["service"])),
+            ["service-only"]
         );
     }
 
