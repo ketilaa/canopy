@@ -2,6 +2,10 @@
 //! dominant remaining cost is visible instead of re-derived by hand from each run.
 //!
 //! usage: analyze_runs [--json] <batch dir>...
+//!        analyze_runs --step <run dir> <step id>
+//!
+//! `--step` prints the causal packet of one step of one stored run: what it was told and allowed, what the
+//! earlier steps left, what the model did and what the harness said. Read it before naming an origin.
 //!
 //! A Planner batch is a directory of `run-NN/summary.json` with `attempt_problems`; an Implementer batch is
 //! one whose runs have an `events.jsonl`. Planner runs that were later run by the Implementer carry an
@@ -9,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use canopy_implementer::report::{class_of, FailureClasses, RunReport};
+use canopy_implementer::report::{class_of, FailureClasses, RunReport, StepPacket};
 use serde_json::{json, Value};
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -24,14 +28,42 @@ fn run_dirs(batch: &Path) -> Vec<PathBuf> {
     runs
 }
 
+fn print_step_packet(run: &Path, step_id: &str) {
+    let text = std::fs::read_to_string(run.join("events.jsonl")).unwrap_or_else(|e| {
+        eprintln!("cannot read {}/events.jsonl: {e}", run.display());
+        std::process::exit(1)
+    });
+    let events: Vec<Value> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .map(|v| v.get("event").cloned().unwrap_or(v))
+        .collect();
+    match StepPacket::from_events(&events, step_id) {
+        Some(packet) => println!("{}", packet.render()),
+        None => {
+            eprintln!("step {step_id} did not run in {}", run.display());
+            std::process::exit(1)
+        }
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, run, step] = args.as_slice() {
+        if flag == "--step" {
+            print_step_packet(Path::new(run), step);
+            return;
+        }
+    }
     let mut json_output = false;
     let mut batches: Vec<PathBuf> = Vec::new();
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--json" => json_output = true,
             "--help" | "-h" => {
-                eprintln!("usage: analyze_runs [--json] <batch dir>...");
+                eprintln!(
+                    "usage: analyze_runs [--json] <batch dir>...\n       analyze_runs --step <run dir> <step id>"
+                );
                 return;
             }
             other => batches.push(other.into()),
