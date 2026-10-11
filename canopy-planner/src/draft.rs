@@ -26,21 +26,25 @@ use canopy_implementer::plan::Plan;
 /// scenarios the feature has.
 pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
     let root = root_package.replace('.', "[.]");
-    let package = format!("^{root}([.][a-z][a-z0-9_]*)*[.]");
+    // Every part is bounded: an unbounded `[A-Za-z0-9_]*Test` let the model write TestTestTest... until the token
+    // cap in 8 of 13 capped drafts, and the grammar had nothing to stop it.
+    let package = format!("^{root}([.][a-z][a-z0-9_]{{0,19}}){{0,6}}[.]");
     // A production class is any class name that does not end in `Test`, written as positive character
     // classes (the grammar has no lookahead): the last character is not `t`, or it is `t` not after `s`, or
     // `st` not after `e`, or `est` not after `T`. A one-letter name has no tail to check.
     let production = format!(
-        "{package}[A-Z]([A-Za-z0-9_]*([A-Za-su-z0-9_]|[A-Za-rt-z0-9_]t|[A-Za-df-z0-9_]st|[A-SU-Za-z0-9_]est))?$"
+        "{package}[A-Z]([A-Za-z0-9_]{{0,38}}([A-Za-su-z0-9_]|[A-Za-rt-z0-9_]t|[A-Za-df-z0-9_]st|[A-SU-Za-z0-9_]est))?$"
     );
-    let test = format!("{package}[A-Z][A-Za-z0-9_]*Test$");
-    let names = |pattern: &str| json!({ "type": "array", "items": { "type": "string", "pattern": pattern } });
+    let test = format!("{package}[A-Z][A-Za-z0-9_]{{0,35}}Test$");
+    let names =
+        |pattern: &str| json!({ "type": "array", "maxItems": 6, "items": { "type": "string", "pattern": pattern } });
     json!({
         "type": "object",
         "properties": {
             "steps": {
                 "type": "array",
                 "minItems": 1,
+                "maxItems": 30,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -48,7 +52,7 @@ pub fn schema(scenario_ids: &[String], root_package: &str) -> Value {
                         "instruction": { "type": "string" },
                         "classes": names(&production),
                         "test_classes": names(&test),
-                        "covers": { "type": "array", "minItems": 1, "items": { "type": "string", "enum": scenario_ids } }
+                        "covers": { "type": "array", "minItems": 1, "maxItems": scenario_ids.len().max(1), "items": { "type": "string", "enum": scenario_ids } }
                     },
                     "required": ["id", "instruction", "classes", "test_classes", "covers"],
                     "additionalProperties": false
@@ -566,6 +570,44 @@ mod tests {
         ] {
             assert!(!classes.is_match(bad), "{bad} must not be a production class name");
         }
+    }
+
+    #[test]
+    fn a_class_name_is_bounded_so_a_repeated_token_cannot_run_on() {
+        let classes = class_pattern("classes");
+        let tests = class_pattern("test_classes");
+        let name = |len: usize| format!("com.example.widgets.W{}", "a".repeat(len - 1));
+        assert!(classes.is_match(&name(40)), "a name of 40 characters is fine");
+        assert!(!classes.is_match(&name(41)), "but not 41");
+        let test = |len: usize| format!("com.example.widgets.W{}Test", "a".repeat(len - 5));
+        assert!(tests.is_match(&test(40)) && !tests.is_match(&test(60)));
+        assert!(
+            !tests.is_match(&format!("com.example.widgets.Widget{}", "Test".repeat(20))),
+            "TestTestTest... is the loop the model fell into"
+        );
+        assert!(
+            !classes.is_match("com.example.widgets.a.b.c.d.e.f.g.Widget"),
+            "seven sub-packages is too many"
+        );
+        assert!(
+            classes.is_match("com.example.widgets.a.b.c.d.e.f.Widget"),
+            "six is the limit"
+        );
+        let long_segment = format!("com.example.widgets.{}.Widget", "a".repeat(21));
+        assert!(
+            !classes.is_match(&long_segment),
+            "a package segment is at most 20 characters"
+        );
+    }
+
+    #[test]
+    fn the_lists_are_bounded_too() {
+        let schema = schema(&ids(), ROOT);
+        let step = &schema["properties"]["steps"]["items"]["properties"];
+        assert_eq!(step["classes"]["maxItems"], 6);
+        assert_eq!(step["test_classes"]["maxItems"], 6);
+        assert_eq!(step["covers"]["maxItems"], 2, "as many as there are scenarios");
+        assert_eq!(schema["properties"]["steps"]["maxItems"], 30);
     }
 
     #[test]
