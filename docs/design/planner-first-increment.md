@@ -247,3 +247,26 @@ before it is enforced anywhere. Thresholds, fixed before the run:
 - It would reject at most 40% of the valid stored plans (above that it is not a gate; audit (d) rejected 9 of 10).
 - Of the executed steps that were refused with "must change in this step", at least 70% are flagged.
 - Of the flagged steps that were executed, at least 50% hit that refusal or failed.
+
+### Result (2026-10-11, `plan_replay`, 46 stored plans, 100 executed steps)
+
+| Pre-registered | Threshold | Measured | |
+|---|---|---|---|
+| plans the audit would reject | at most 40% | 43% (created basis), 52% (touched basis) | not met |
+| refused steps that are flagged | at least 70% | 38% (3 of 8) | not met |
+| flagged executed steps that were refused or failed | at least 50% | 60% (3 of 5) | met, on five steps |
+
+The redundancy audit is not worth enforcing: it rejects too many plans and misses most of what it was for. The
+refused steps it missed show a different cause. In each, the step lists an **existing test that is not a test of
+any class the step lists**: `create-widget-repository` lists `WidgetTest`, `create-widgetrepository-interface`
+lists `WidgetControllerTest`. The draft requires a non-empty `test_classes`, the model satisfies it with a test
+it already knows, the harness derives `modify` because that test exists, and the Implementer refuses because
+nothing about that test needs to change.
+
+Measured afterwards over the same plans (post hoc, fitted to these steps, so not a confirmation): 20 of 46 plans
+(43%) contain such a step; 8 of 100 executed steps do; 4 of the 8 steps refused with "must change in this step"
+have it. An audit for it would reject 43% of plans, so enforcing it is not an option either. The cause is the
+shape: the model is asked to name a test for a step, and it names one it knows. The tests of a production class are
+derivable (`XTest` for class `X`), which is the same argument as for the paths. Proposed, not built: the harness
+adds the test of each production class the step lists, and `test_classes` stays only for steps with no
+production class (test-only steps).

@@ -327,6 +327,16 @@ one run per plan), six refusals in three runs (a test-scope JUnit import in a pr
 `Service`, `LocalServerPort` from the wrong package). The class of "the code does not compile because of an
 import" went down; the failures behind it, behaviour tests and Spring wiring, are now what stops the runs.
 
+### Replaying the redundancy audit (2026-10-11, `plan_replay`)
+
+The audit for "must change in this step" (a step that modifies a class an earlier step had and covers nothing new
+for it) was pre-registered and replayed over 46 stored plans and 100 executed steps. It rejected 43% of the plans
+(limit 40%) and flagged 3 of the 8 refused steps (target 70%): not worth enforcing. The misses showed the real
+cause: the step lists an existing test unrelated to its classes, to satisfy the required `test_classes`, and the
+harness then derives `modify` for it. That pattern is in 43% of plans and in 4 of the 8 refused steps, post hoc.
+Derive the tests of a step's production classes instead of asking for them; details and the proposal in
+`docs/design/planner-first-increment.md`.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier

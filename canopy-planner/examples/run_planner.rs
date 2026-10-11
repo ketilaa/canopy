@@ -161,6 +161,7 @@ fn rule_name(rule: Rule) -> &'static str {
         Rule::Location => "location",
         Rule::MissingTest => "missing_test",
         Rule::StepSize => "step_size",
+        Rule::Redundant => "redundant",
     }
 }
 

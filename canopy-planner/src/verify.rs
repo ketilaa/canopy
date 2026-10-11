@@ -30,6 +30,18 @@ pub enum Rule {
     MissingTest,
     /// A step touches more files than one answer can hold.
     StepSize,
+    /// A step modifies a class an earlier step of the plan touched and covers no scenario that class was not
+    /// already covered for.
+    Redundant,
+}
+
+/// Which earlier steps count as having had a class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Basis {
+    /// Only a step that created it.
+    Created,
+    /// Any step that lists it, creating or modifying.
+    Touched,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +105,39 @@ pub fn verify(plan: &Plan, feature: &Feature, facts: &RepoFacts, root: &Path) ->
                 &step.id,
                 format!("touches {touched} files, more than {MAX_FILES_PER_STEP}; split the step"),
             ));
+        }
+    }
+    issues
+}
+
+/// The steps that modify a production class an earlier step had and cover nothing new for it: nothing is left for
+/// them to change, and the Implementer refuses such a step ("must change in this step"). Not part of [`verify`]:
+/// measured over stored plans first (`docs/design/planner-first-increment.md`).
+pub fn redundant_steps(plan: &Plan, basis: Basis) -> Vec<Issue> {
+    let is_production = |p: &String| p.starts_with("src/main/java/") && p.ends_with(".java");
+    let mut issues = Vec::new();
+    for (index, step) in plan.steps.iter().enumerate() {
+        for path in step.scope.modify.iter().filter(|p| is_production(p)) {
+            let earlier: Vec<&canopy_implementer::plan::PlanStep> = plan.steps[..index]
+                .iter()
+                .filter(|e| match basis {
+                    Basis::Created => e.scope.create.contains(path),
+                    Basis::Touched => e.scope.create.contains(path) || e.scope.modify.contains(path),
+                })
+                .collect();
+            let Some(first) = earlier.first() else { continue };
+            let already: std::collections::BTreeSet<&String> = earlier.iter().flat_map(|e| &e.covers).collect();
+            if step.covers.iter().all(|c| already.contains(c)) {
+                let class = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".java");
+                issues.push(issue(
+                    Rule::Redundant,
+                    &step.id,
+                    format!(
+                        "modifies {class} (already in step {}) but covers nothing {class} was not already covered for",
+                        first.id
+                    ),
+                ));
+            }
         }
     }
     issues
@@ -170,6 +215,86 @@ steps:
             "more than one rule fired: {issues:?}"
         );
         rules[0]
+    }
+
+    fn redundant(yaml: &str) -> Vec<Issue> {
+        redundant_steps(&Plan::from_yaml(yaml).unwrap(), Basis::Touched)
+    }
+
+    #[test]
+    fn on_the_created_basis_only_a_class_an_earlier_step_created_is_judged() {
+        let yaml = format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, modify: [{P}, {T}], covers: [first]}}\n  - {{id: b, instruction: y, modify: [{P}, {T}], covers: [first]}}\n"
+        );
+        let plan = Plan::from_yaml(&yaml).unwrap();
+        assert!(redundant_steps(&plan, Basis::Created).is_empty(), "no step created it");
+        assert_eq!(
+            redundant_steps(&plan, Basis::Touched).len(),
+            1,
+            "a step already touched it"
+        );
+    }
+
+    const P: &str = "src/main/java/com/example/widgets/Widget.java";
+    const T: &str = "src/test/java/com/example/widgets/WidgetTest.java";
+
+    #[test]
+    fn a_step_that_modifies_a_class_an_earlier_step_created_and_covers_nothing_new_is_redundant() {
+        let issues = redundant(&format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, create: [{P}, {T}], covers: [first]}}\n  - {{id: b, instruction: y, modify: [{P}, {T}], covers: [first]}}\n"
+        ));
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert_eq!(issues[0].rule, Rule::Redundant);
+        assert_eq!(issues[0].step.as_deref(), Some("b"));
+        assert!(
+            issues[0].message.contains("Widget") && issues[0].message.contains("step a"),
+            "{}",
+            issues[0].message
+        );
+    }
+
+    #[test]
+    fn a_modifying_step_that_covers_a_scenario_the_class_was_not_covered_for_is_not_redundant() {
+        let new_scenario = redundant(&format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, create: [{P}, {T}], covers: [first]}}\n  - {{id: b, instruction: y, modify: [{P}, {T}], covers: [first, second]}}\n"
+        ));
+        assert!(new_scenario.is_empty(), "{new_scenario:?}");
+    }
+
+    #[test]
+    fn what_earlier_steps_covered_for_the_class_adds_up_across_steps() {
+        let issues = redundant(&format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, create: [{P}, {T}], covers: [first]}}\n  - {{id: b, instruction: y, modify: [{P}, {T}], covers: [second]}}\n  - {{id: c, instruction: z, modify: [{P}, {T}], covers: [first, second]}}\n"
+        ));
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert_eq!(issues[0].step.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn a_class_the_repository_already_had_is_not_judged_and_neither_are_creating_or_test_only_steps() {
+        let preexisting = redundant(&format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, modify: [{P}, {T}], covers: [first]}}\n  - {{id: b, instruction: y, modify: [{P}, {T}], covers: [first]}}\n"
+        ));
+        assert_eq!(
+            preexisting.len(),
+            1,
+            "b modifies what a already modified; a itself is not judged"
+        );
+        assert_eq!(preexisting[0].step.as_deref(), Some("b"));
+        let first_touch = redundant(&format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, modify: [{P}, {T}], covers: [first]}}\n"
+        ));
+        assert!(
+            first_touch.is_empty(),
+            "the first step to touch a class has no earlier step to repeat"
+        );
+        let test_only = redundant(&format!(
+            "id: p\nsteps:\n  - {{id: a, instruction: x, create: [{P}, {T}], covers: [first]}}\n  - {{id: b, instruction: y, modify: [{T}], covers: [first]}}\n"
+        ));
+        assert!(
+            test_only.is_empty(),
+            "only production classes are judged: {test_only:?}"
+        );
     }
 
     #[test]
