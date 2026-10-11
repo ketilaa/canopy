@@ -373,3 +373,33 @@ Every remaining rejection of an otherwise well-formed draft in batch 5 was one p
 `files` and again under `read_only` (38 of 38 duplicates). `read_only` is no longer part of the draft; the
 harness computes it (`99f1b8a`). Principle: `docs/principles/compute-facts-mechanically.md`, extension of
 2026-10-10.
+
+### Experiment: every earlier-created class is read-only (2026-10-11)
+
+Change: `read_only` is every class an earlier step created plus the existing classes the instruction names (cap 8),
+instead of only the mentioned ones. Three stored drafts re-derived (`rederive_plan`), 5 runs each, 15 runs, harness
+`65cf0a5` and `6abed29`.
+
+Prediction: stops on an earlier class's constructor or method fall from 3 of 3 plans to at most 3 of 15 runs;
+consumer steps pass at least 8 of 15. Falsified if 5 or more of 15 still stop on an earlier class's signature.
+
+Result: first half held, second did not. Stops on an earlier class's signature: 1 of 15 (`getWidgets()` missing on a
+service) plus 2 "invalid method reference" in a repository step. Steps passed 6, 6, 5 of the 20, 21 and 40 possible,
+1.1 per run against 1.3 before, so no gain. The origin was real and is closed, but it was not the dominant one.
+
+What the stops are now (causal packet, `analyze_runs --step`): the test and the implementation disagree on a decision
+nobody stated, and the test is often wrong on its own. `@SpringBootTest` appears in the traces of 4, 3 and 5 of 5
+runs per plan, on plain repository and service classes, with a field `@Autowired` and then overwritten in `@BeforeEach`.
+The context is shared, so the stored widgets of other tests are still there (`expected: <2> but was: <36>`).
+Others: `WidgetTest` asserts a literal hash code and a `toString` it never fixed; a controller test that expects `null`
+on invalid input. Chain for the repository stop: symptom `testFindAll expected 2 was 36`; proximate cause: a
+`@SpringBootTest` test over a shared singleton; origin: nothing tells the model how a `*Repository` or `*Service` is
+tested; earliest point: rung 1, a contract rule keyed to those layers for the implementer (and the existing
+stereotype rule shows the mechanism works: services annotated 1 of 1 afterwards).
+
+Next experiment (one variable): a contract rule for the `repository` and `service` layers, "tested as a plain unit
+test: construct the class directly, no `@SpringBootTest`, no `@Autowired`", routed by name. Prediction: no
+`@SpringBootTest` in repository and service tests (from about 12 of 15 runs to at most 2), and the
+`expected 2 was 36` class gone. Falsified if shared-state stops remain. n = 10 runs on the same three plans.
+This is a rule in the contract, not code beyond render, so it needs no gated code; the rule text needs a person's
+review.
