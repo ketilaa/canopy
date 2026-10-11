@@ -123,7 +123,7 @@ pub fn imports_in(source: &str) -> Vec<String> {
 
 /// The identifiers a source file uses as code: not in comments, string or character literals, or the package
 /// and import lines, and not after a `.` (a qualified use needs no import).
-fn code_words(source: &str) -> Vec<String> {
+pub(crate) fn code_words(source: &str) -> Vec<String> {
     let chars: Vec<char> = source.chars().collect();
     let mut code = String::with_capacity(source.len());
     let mut i = 0;

@@ -8,6 +8,7 @@
 //! file, metrics, tests) are [`observe::RunObserver`]s of the same stream.
 
 pub mod build;
+pub mod classpath;
 pub mod files;
 pub mod gates;
 pub mod hints;
