@@ -103,6 +103,15 @@ impl ClassIndex {
         self.by_simple.get(simple).map_or(&[], Vec::as_slice)
     }
 
+    /// The candidates worth suggesting: a class in an `internal` package is not part of a library's API.
+    fn suggestable(&self, simple: &str) -> Vec<Candidate> {
+        self.candidates(simple)
+            .iter()
+            .filter(|c| !c.qualified.contains(".internal."))
+            .cloned()
+            .collect()
+    }
+
     pub fn contains(&self, qualified: &str) -> bool {
         self.qualified.contains(qualified)
     }
@@ -238,7 +247,7 @@ pub fn resolve_classpath(root: &Path) -> Result<Classpath, String> {
         let result = Command::new("mvn")
             .args(["-q", "dependency:build-classpath"])
             .arg(format!("-Dmdep.outputFile={}", out.display()))
-            .arg(format!("-Dmdep.includeScope={scope}"))
+            .arg(format!("-DincludeScope={scope}"))
             .current_dir(root)
             .output()
             .map_err(|e| format!("mvn: {e}"))?;
@@ -389,10 +398,9 @@ pub fn import_findings(
             continue;
         }
         let mut elsewhere: Vec<Candidate> = index
-            .candidates(simple)
-            .iter()
+            .suggestable(simple)
+            .into_iter()
             .filter(|c| !(production && c.origin == Origin::Test))
-            .cloned()
             .collect();
         elsewhere.extend(project.get(simple).into_iter().flatten().map(|q| Candidate {
             qualified: q.clone(),
@@ -423,10 +431,9 @@ pub fn import_findings(
             continue;
         }
         let usable: Vec<Candidate> = index
-            .candidates(&word)
-            .iter()
+            .suggestable(&word)
+            .into_iter()
             .filter(|c| !(production && c.origin == Origin::Test))
-            .cloned()
             .collect();
         if usable.is_empty() {
             continue;
@@ -680,6 +687,23 @@ mod tests {
             }]
         );
         assert!(findings(TEST, source).is_empty(), "a test may import it");
+    }
+
+    #[test]
+    fn a_class_in_an_internal_package_is_never_suggested() {
+        let mut index = ClassIndex::resolved_empty();
+        index.add_entries(["org/mockito/internal/matchers/NotNull.class"], Origin::Test);
+        let source = "package a;\nclass ThingTest { @NotNull String s; }\n";
+        assert!(
+            import_findings(TEST, source, &HashMap::new(), &index).is_empty(),
+            "an internal class is not something to import"
+        );
+        let wrong = "package a;\nimport x.NotNull;\nclass ThingTest { @NotNull String s; }\n";
+        let found = import_findings(TEST, wrong, &HashMap::new(), &index);
+        assert!(
+            found.iter().all(|f| !matches!(f, Finding::WrongImport { .. })),
+            "{found:?}"
+        );
     }
 
     #[test]

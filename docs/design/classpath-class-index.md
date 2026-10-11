@@ -1,6 +1,6 @@
 # A class index from the project's real classpath
 
-Status: design, 2026-10-11. Nothing is built. Question it answers: when the model uses or imports a library
+Status: the index and the replay are built (2026-10-11); the gate does not use it yet. Replay results below. Question it answers: when the model uses or imports a library
 class, can the harness check it against what the project can actually load, and say the exact fix?
 
 ## Why
@@ -101,3 +101,36 @@ Pre-registered:
 
 Methods and fields (Roots), Spring wiring, step shape, vulnerabilities and version freshness (the dependency
 catalog and its scan), Gradle, multi-module builds, shaded jars. Each is a limit to state when it bites.
+
+## Replay result (2026-10-11, `classpath_replay`, 105 stored widgets runs)
+
+152 compile failures, 107 of them about a missing class or package (the other 45 are of other kinds, such as a
+method that does not exist). The index and the existing audit together, run on the submission that failed:
+
+| Failures that involve a library or JDK class (87) | Count | Share |
+|---|---|---|
+| explained (the right diagnosis) | 84 | 97% |
+| of those, the exact import line | 50 | 57% |
+| of those, no import fixes it: the class is not on the classpath, or is test scope | 32 | 37% |
+| of those, several candidates and none chosen | 2 | 2% |
+| not explained | 3 | 3% |
+
+False positives: **0** refusals over the 661 files of steps that passed.
+
+Against what was pre-registered. "No false positive": met. "The exact fix in at least 80%": **not met as
+written** (57% had an exact import line). The target conflated two cases, and the split is the finding: in 37%
+(`javax.validation.constraints.NotNull`, `org.junit.jupiter.api.Test` in a production file) no import line exists,
+because the class is not available to that code; the index says so, where today the model burns attempts on a
+compile error it cannot act on. Counting a correct diagnosis, 97%; counting only a ready-to-paste line, 57%.
+
+The three not explained are classes the model uses but nobody declares: `NotNull`/`Size` used with no import and
+no library to provide them, and two invented project classes (`WidgetRepositoryImpl`, `WidgetCreateRequest`). They
+need a check for a type that is neither declared, imported nor known, which carries a false-positive risk and is
+not built.
+
+What the replay corrected in the first version: the Maven scope option was ignored (`includeScope`, not
+`mdep.includeScope`), so test jars were on the compile classpath and no test-scope finding could fire; and a class
+in an `internal` package (a Mockito matcher) was suggested for `NotNull`. Both fixed, with a test for the second.
+
+Next, if the gate is to use it: wire the findings into `check_submission` as a refusal before the build, and
+sweep the widgets plan against the batches already recorded.
