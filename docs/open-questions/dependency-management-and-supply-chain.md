@@ -60,6 +60,11 @@ harness dropped both.
    (name look-alikes, provenance, maintenance). Belongs with option 2, since the catalog is where versions
    and approvals live.
 
+- A wrong-package import of a library class (`LocalServerPort` taken from the wrong package, 2026-10-11; earlier
+  `javax` against `jakarta`). The Implementer's import audit knows JDK classes only. A class index built from the
+  project's real classpath (the dependency jars the build resolves) would let the harness refuse an unknown
+  import with the exact qualified name, the same shape as the audit that took the widgets plan to 10 of 10.
+
 # What We Don't Know
 
 - Whether going with the grain beats steering away from it: the experiment has not been run.

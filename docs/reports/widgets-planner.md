@@ -303,6 +303,22 @@ the record. The routed arm was rerun with the fix.
 A step-shape class recurs in both arms: files the plan lists as `modify` that the step then has no need to
 change ("must change in this step", 4 refusals over 3 runs), the cost of a test being required in every step.
 
+### Routed arm rerun with the fail-open fix (2026-10-11, `776acf1`)
+
+Three plans (valid 3 of 3), one Implementer run each: 3 of 21, 2 of 7, 0 of 7. `routing.json` now shows the
+record steps (layers `test` alone) given both rules, and the service, repository and controller steps given
+only theirs, so the routing does what it is meant to. The steps passed are in the same range as every other
+arm (unscoped memory 3, 2, 2; first routed run 1, 1, 2; JPA 1, 2, 1): at n=3 and one run per plan, **routing made
+no measurable difference to the Implementer**. That is the expected result for a contract of three rules; the
+point of routing is a contract that grows, and this experiment cannot show it either way. What it did show is
+that the routing records were worth having: they found the bug.
+
+Stops in this batch: the "must change in this step" refusals again (6 in run-01), and a compile error from a
+wrong import, `LocalServerPort` taken from `org.springframework.boot.web.server` (it is in
+`...boot.test.web.server`). The wrong-import class is the same shape as `javax` against `jakarta`: a symbol the
+model has to place in a package it cannot look up. The import audit only knows JDK classes; a lookup against the
+project's real classpath would resolve it (see `docs/open-questions/dependency-management-and-supply-chain.md`).
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
