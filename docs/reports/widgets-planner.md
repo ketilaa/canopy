@@ -282,6 +282,27 @@ demoted from a rejection to a recorded diagnostic to be measurable. Decided: (d)
 class list is no longer checked against the instruction; the plan carries the unnamed classes in
 `diagnostics` (summary.json, plan.meta.json), and `analyze_runs` reports the rate as a note, not a failure.
 
+### Audit (d) demoted, and the two blocked arms rerun (2026-10-11, `e240f9d`)
+
+With (d) a recorded diagnostic, plans were valid 3 of 3 in both arms again (the unnamed-class note appeared in
+5 of 6 plans, up to 14 classes in one 25-step plan). Implementer results, one run per plan:
+
+| Arm | Valid | Steps passed | Stops |
+|---|---|---|---|
+| routed memory contract (`baseline-04`) | 3 of 3 | 1 of 8, 1 of 8, 2 of 25 | budget; "must change in this step" refusals; stuck |
+| JPA contract (`baseline-03`) | 3 of 3 | 1 of 11, 2 of 9, 1 of 6 | no-test refusal on a repository; "must change" refusals; files outside the step's scope |
+| (reference) unscoped memory contract (`baseline-02`) | 3 of 3 | 3 of 7, 2 of 11, 2 of 8 | `getName()` on records; `'void' type not allowed` |
+
+Not a better result for routing or for JPA: the numbers are lower than the unscoped memory arm's, at n=3, one run
+per plan, which cannot separate them. What the rerun did show, through `routing.json`: a step with a record and
+its test (layers `test` alone) was given no contract rules, because the `test` layer made it look classified.
+That is a bug in the routing (fixed in `776acf1`: fail-open needs a known layer of the code), and the contract's
+own scoping was a guess: validation scoped to the service and controller layers, when for this story it lives in
+the record. The routed arm was rerun with the fix.
+
+A step-shape class recurs in both arms: files the plan lists as `modify` that the step then has no need to
+change ("must change in this step", 4 refusals over 3 runs), the cost of a test being required in every step.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
