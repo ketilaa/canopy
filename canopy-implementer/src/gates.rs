@@ -4,7 +4,7 @@
 //! safe, was every existing file read before being changed, does production code come with a test
 //! that mentions it. A rejection is a message for the model; nothing is written.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::files::{DeclaredImport, GeneratedFiles};
@@ -36,6 +36,9 @@ pub enum Rejection {
     TestsUnrelated(Vec<String>),
     /// Files that use a class from another package without importing it: each file and the qualified names to add.
     MissingImports(Vec<(String, Vec<String>)>),
+    /// Imports that do not fit the project's classpath: each file and what is wrong with it (a missing or
+    /// wrong-package import, a class that is not there, a test-scope class in production code).
+    Classpath(Vec<(String, Vec<String>)>),
     /// The submission carries no import checklist although one is required.
     ImportsNotDeclared,
     /// Imports the checklist lists that the file does not contain: each file and the qualified name.
@@ -146,6 +149,17 @@ impl Rejection {
                     lines.join("; ")
                 )
             }
+            Rejection::Classpath(files) => {
+                let lines: Vec<String> = files
+                    .iter()
+                    .map(|(path, findings)| format!("{path}: {}", findings.join("; ")))
+                    .collect();
+                format!(
+                    "Not submitted. These imports do not fit this project's classpath. {}. Fix them and call \
+                     submit_files again with all your files.",
+                    lines.join(" ")
+                )
+            }
             Rejection::TestsUnrelated(classes) => format!(
                 "Not submitted. No changed test mentions {}. Add a test that exercises it, then call \
                  submit_files again with all your files.",
@@ -228,6 +242,7 @@ pub fn check_submission(
     root: &Path,
     has_read: &dyn Fn(&str) -> bool,
     kind: StepKind,
+    classpath: Option<&crate::classpath::ClassIndex>,
 ) -> Result<(), Rejection> {
     if files.files.is_empty() {
         return Err(Rejection::Empty);
@@ -265,6 +280,12 @@ pub fn check_submission(
     let missing = missing_imports_in(&changed, root);
     if !missing.is_empty() {
         return Err(Rejection::MissingImports(missing));
+    }
+    if let Some(index) = classpath {
+        let findings = classpath_findings_in(&changed, root, index);
+        if !findings.is_empty() {
+            return Err(Rejection::Classpath(findings));
+        }
     }
     if kind == StepKind::Refactor {
         return Ok(());
@@ -444,7 +465,8 @@ pub fn check_declared_imports(
 
 /// The changed Java files that use a class they do not import, from the repository's classes plus the ones this
 /// submission adds. A deterministic audit: it reads the files and never changes them.
-fn missing_imports_in(changed: &[&(String, &str, bool)], root: &Path) -> Vec<(String, Vec<String>)> {
+/// The classes the project has: those on disk and those this submission adds.
+fn project_index(changed: &[&(String, &str, bool)], root: &Path) -> HashMap<String, Vec<String>> {
     let mut index = java::class_index(root);
     for (relative, _, _) in changed {
         if let (true, Some(qualified), Some(class)) = (
@@ -460,12 +482,34 @@ fn missing_imports_in(changed: &[&(String, &str, bool)], root: &Path) -> Vec<(St
             }
         }
     }
+    index
+}
+
+fn missing_imports_in(changed: &[&(String, &str, bool)], root: &Path) -> Vec<(String, Vec<String>)> {
+    let index = project_index(changed, root);
     changed
         .iter()
         .filter(|(relative, _, _)| relative.ends_with(".java"))
         .filter_map(|(relative, content, _)| {
             let missing = java::missing_imports(relative, content, &index);
             (!missing.is_empty()).then(|| (relative.clone(), missing))
+        })
+        .collect()
+}
+
+/// What the class index says about the imports of the changed files: each file and the messages.
+fn classpath_findings_in(
+    changed: &[&(String, &str, bool)],
+    root: &Path,
+    classpath: &crate::classpath::ClassIndex,
+) -> Vec<(String, Vec<String>)> {
+    let project = project_index(changed, root);
+    changed
+        .iter()
+        .filter(|(relative, _, _)| relative.ends_with(".java"))
+        .filter_map(|(relative, content, _)| {
+            let findings = crate::classpath::import_findings(relative, content, &project, classpath);
+            (!findings.is_empty()).then(|| (relative.clone(), findings.iter().map(|f| f.message()).collect()))
         })
         .collect()
 }
@@ -552,7 +596,143 @@ mod tests {
         kind: StepKind,
     ) -> Result<(), Rejection> {
         let read: BTreeSet<String> = read.iter().map(|s| s.to_string()).collect();
-        check_submission(&files(submitted), dir.path(), &|p| read.contains(p), kind)
+        check_submission(&files(submitted), dir.path(), &|p| read.contains(p), kind, None)
+    }
+
+    fn library_index(resolved: bool) -> crate::classpath::ClassIndex {
+        use crate::classpath::{ClassIndex, Origin};
+        let mut index = if resolved {
+            ClassIndex::resolved_empty()
+        } else {
+            ClassIndex::unresolved()
+        };
+        index.add_entries(
+            [
+                "org/springframework/boot/test/web/server/LocalServerPort.class",
+                "org/springframework/stereotype/Service.class",
+                "org/apache/catalina/Service.class",
+            ],
+            Origin::Compile,
+        );
+        index.add_entries(["org/junit/jupiter/api/Test.class"], Origin::Test);
+        index.add_entries(["java/util/List.class"], Origin::Jdk);
+        index
+    }
+
+    fn check_with_classpath(
+        dir: &tempfile::TempDir,
+        submitted: &[(&str, &str)],
+        index: &crate::classpath::ClassIndex,
+    ) -> Result<(), Rejection> {
+        let read: BTreeSet<String> = submitted.iter().map(|(p, _)| p.to_string()).collect();
+        check_submission(
+            &files(submitted),
+            dir.path(),
+            &|p| read.contains(p),
+            StepKind::BehaviorChange,
+            Some(index),
+        )
+    }
+
+    const WEB_TEST: &str = "src/test/java/com/example/GreeterWebTest.java";
+
+    #[test]
+    fn a_library_class_used_without_an_import_is_refused_with_the_exact_line_before_the_build() {
+        let dir = repo();
+        let source =
+            "package com.example;\nclass GreeterWebTest {\n    @LocalServerPort int port;\n    Greeter g;\n}\n";
+        let r = check_with_classpath(&dir, &[(WEB_TEST, source)], &library_index(true));
+        let rejection = r.unwrap_err();
+        assert!(matches!(rejection, Rejection::Classpath(_)), "{rejection:?}");
+        let message = rejection.message();
+        assert!(
+            message.contains(WEB_TEST)
+                && message.contains("import org.springframework.boot.test.web.server.LocalServerPort;"),
+            "{message}"
+        );
+        assert!(
+            message.starts_with("Not submitted.") && message.contains("call submit_files again"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_import_from_the_wrong_package_is_refused_naming_the_right_one() {
+        let dir = repo();
+        let source = "package com.example;\nimport org.springframework.boot.web.server.LocalServerPort;\nclass GreeterWebTest {\n    @LocalServerPort int port;\n    Greeter g;\n}\n";
+        let message = check_with_classpath(&dir, &[(WEB_TEST, source)], &library_index(true))
+            .unwrap_err()
+            .message();
+        assert!(
+            message.contains("org.springframework.boot.web.server.LocalServerPort")
+                && message.contains("org.springframework.boot.test.web.server.LocalServerPort"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn production_code_importing_a_class_only_tests_have_is_refused() {
+        let dir = repo();
+        let source =
+            "package com.example;\nimport org.junit.jupiter.api.Test;\npublic class Greeter { @Test void t() {} }\n";
+        let message = check_with_classpath(
+            &dir,
+            &[(GREETER, source), (GREETER_TEST, NEW_TEST)],
+            &library_index(true),
+        )
+        .unwrap_err()
+        .message();
+        assert!(
+            message.contains("test-scope") && message.contains("org.junit.jupiter.api.Test"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_submission_that_fits_the_classpath_is_accepted_and_so_is_every_submission_without_an_index() {
+        let dir = repo();
+        let good = "package com.example;\nimport org.springframework.boot.test.web.server.LocalServerPort;\nclass GreeterWebTest {\n    @LocalServerPort int port;\n    Greeter g;\n}\n";
+        assert_eq!(
+            check_with_classpath(&dir, &[(WEB_TEST, good)], &library_index(true)),
+            Ok(())
+        );
+        let bad = "package com.example;\nclass GreeterWebTest {\n    @LocalServerPort int port;\n    Greeter g;\n}\n";
+        let read: BTreeSet<String> = [WEB_TEST.to_string()].into();
+        assert_eq!(
+            check_submission(
+                &files(&[(WEB_TEST, bad)]),
+                dir.path(),
+                &|p| read.contains(p),
+                StepKind::BehaviorChange,
+                None
+            ),
+            Ok(()),
+            "no index, no new check"
+        );
+    }
+
+    #[test]
+    fn an_index_whose_classpath_was_not_resolved_never_claims_a_class_is_absent() {
+        let dir = repo();
+        let source = "package com.example;\nimport jakarta.validation.constraints.NotBlank;\nclass GreeterWebTest { @NotBlank String s; Greeter g; }\n";
+        assert!(check_with_classpath(&dir, &[(WEB_TEST, source)], &library_index(true)).is_err());
+        assert_eq!(
+            check_with_classpath(&dir, &[(WEB_TEST, source)], &library_index(false)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_existing_audit_for_the_repository_and_jdk_speaks_before_the_classpath_check() {
+        let dir = repo();
+        let source =
+            "package com.example.other;\npublic class Holder { Optional<String> o; @LocalServerPort int p; }\n";
+        let r = check_with_classpath(
+            &dir,
+            &[(OTHER_PKG, source), (GREETER_TEST, NEW_TEST)],
+            &library_index(true),
+        );
+        assert!(matches!(r, Err(Rejection::MissingImports(_))), "{r:?}");
     }
 
     const NEW_GREETER: &str = "package com.example;\npublic class Greeter { String v2; }\n";

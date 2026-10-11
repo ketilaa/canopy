@@ -123,9 +123,17 @@ pub struct Implementer {
     build: Box<dyn Build>,
     observer: Arc<dyn RunObserver>,
     max_attempts: u32,
+    /// The classes the project can load, when known: a submission whose imports do not fit it is refused.
+    classpath: Option<Arc<crate::classpath::ClassIndex>>,
 }
 
 impl Implementer {
+    /// Checks every submission's imports against `index` as well as against the repository and the JDK table.
+    pub fn with_classpath(mut self, index: Arc<crate::classpath::ClassIndex>) -> Self {
+        self.classpath = Some(index);
+        self
+    }
+
     pub fn new(
         generator: Box<dyn Generator>,
         build: Box<dyn Build>,
@@ -137,6 +145,7 @@ impl Implementer {
             build,
             observer,
             max_attempts,
+            classpath: None,
         }
     }
 
@@ -153,6 +162,7 @@ impl Implementer {
             build,
             observer,
             max_attempts,
+            classpath: None,
         }
     }
 
@@ -392,8 +402,15 @@ impl Implementer {
                                 .and_then(|_| {
                                     gates::check_declared_imports(&files, imports.as_deref(), limits.declare_imports)
                                 })
-                                .and_then(|_| gates::check_submission(&files, root, &has_read, step.kind))
-                            {
+                                .and_then(|_| {
+                                    gates::check_submission(
+                                        &files,
+                                        root,
+                                        &has_read,
+                                        step.kind,
+                                        self.classpath.as_deref(),
+                                    )
+                                }) {
                                 Err(rejection) => (ToolOutcome::Refused, rejection.message()),
                                 Ok(()) => {
                                     accepted = Some(files);

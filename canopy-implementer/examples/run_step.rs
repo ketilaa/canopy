@@ -344,7 +344,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath]";
 
 struct Config {
     task: String,
@@ -358,6 +358,8 @@ struct Config {
     declare_imports: bool,
     /// Run this plan instead of the task's hand-written one (a planned task only).
     plan: Option<PathBuf>,
+    /// Check each submission's imports against the project's classpath (on unless `--no-classpath`).
+    classpath: bool,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -373,6 +375,7 @@ fn parse_args() -> Result<Config, String> {
         out: crate_dir.join("runs"),
         declare_imports: false,
         plan: None,
+        classpath: true,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -395,6 +398,7 @@ fn parse_args() -> Result<Config, String> {
             "--attempts" => config.attempts = value("--attempts")?.parse().map_err(|e| format!("--attempts: {e}"))?,
             "--declare-imports" => config.declare_imports = true,
             "--plan" => config.plan = Some(value("--plan")?.into()),
+            "--no-classpath" => config.classpath = false,
             "--url" => config.url = value("--url")?,
             "--model" => config.model = value("--model")?,
             "--out" => config.out = value("--out")?.into(),
@@ -646,6 +650,18 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         Implementer::new(Box::new(client), Box::new(build), observers.clone(), config.attempts)
     };
 
+    // The classes the project can load, so a wrong or missing library import is refused before the build.
+    let classpath = config.classpath.then(|| {
+        let began = Instant::now();
+        let index = canopy_implementer::classpath::ClassIndex::for_repository(&config.repo);
+        println!("  classpath index: resolved {} in {:.1}s", index.resolved(), began.elapsed().as_secs_f64());
+        Arc::new(index)
+    });
+    let implementer = match &classpath {
+        Some(index) => implementer.with_classpath(index.clone()),
+        None => implementer,
+    };
+
     let started = Instant::now();
     let plan_text: Option<String> = match &config.plan {
         Some(path) => Some(std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?),
@@ -880,6 +896,7 @@ fn real_main() -> Result<(), String> {
         "sampling": Sampling::qwen3(),
         "max_attempts": config.attempts,
         "declare_imports": config.declare_imports,
+        "classpath_check": config.classpath,
         "plan_file": config.plan.as_ref().map(|p| p.display().to_string()),
         "runs": config.runs,
         "task": task.name,
