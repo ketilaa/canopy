@@ -9,7 +9,11 @@ use std::path::Path;
 /// exercises `X` by convention; if `X` exists in `src/main` and is not among the files just
 /// submitted, the failure is most likely a change in the wrong place, which a small model repeats
 /// even when told exactly which assertion failed.
-pub fn subject_hint(digest: &str, submitted: &[String], root: &Path) -> Option<String> {
+///
+/// `scope` is the files the step may create or change (empty for an unscoped step). When the subject is
+/// outside it the hint must not tell the model to change the subject: the gate would refuse exactly that, as
+/// it did twice in one run, so the hint says to correct the test.
+pub fn subject_hint(digest: &str, submitted: &[String], scope: &[String], root: &Path) -> Option<String> {
     let changed: Vec<&str> = submitted.iter().map(|p| p.trim_start_matches("./")).collect();
     let mut lines: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -28,10 +32,17 @@ pub fn subject_hint(digest: &str, submitted: &[String], root: &Path) -> Option<S
         if changed.contains(&path.as_str()) {
             continue;
         }
-        lines.push(format!(
-            "{test_class} tests {subject} ({path}), which you did not change. Either change {subject} so that the \
-             test passes, or correct the test."
-        ));
+        let may_change = scope.is_empty() || scope.iter().any(|p| p.trim_start_matches("./") == path);
+        lines.push(match may_change {
+            true => format!(
+                "{test_class} tests {subject} ({path}), which you did not change. Either change {subject} so that the \
+                 test passes, or correct the test."
+            ),
+            false => format!(
+                "{test_class} tests {subject} ({path}), which this step may not change. Correct the test so that it \
+                 matches how {subject} behaves."
+            ),
+        });
     }
     if lines.is_empty() {
         None
@@ -137,17 +148,50 @@ mod tests {
     fn a_failing_test_whose_subject_was_not_changed_gets_a_hint_naming_the_subject_and_its_path() {
         let dir = repo();
         let digest = "NameFormatterTest.trimsTheName:27 expected: <Ada> but was: <  ada  >\nTests run: 10, Failures: 1";
-        let hint = subject_hint(digest, &paths(&[GREETER]), dir.path()).expect("a hint");
+        let hint = subject_hint(digest, &paths(&[GREETER]), &[], dir.path()).expect("a hint");
         assert!(hint.contains("NameFormatterTest"), "{hint}");
         assert!(hint.contains("NameFormatter") && hint.contains(FORMATTER), "{hint}");
         assert!(hint.contains("did not change"), "{hint}");
     }
 
     #[test]
+    fn when_the_step_may_not_change_the_subject_the_hint_says_to_correct_the_test_and_not_to_change_the_subject() {
+        let dir = repo();
+        let digest = "NameFormatterTest.trimsTheName:27 expected: <Ada> but was: <  ada  >";
+        // The step's scope: it creates the test and the greeter; NameFormatter is outside it.
+        let scope = paths(&[
+            GREETER,
+            "src/test/java/com/example/greeting/format/NameFormatterTest.java",
+        ]);
+        let hint = subject_hint(digest, &paths(&[GREETER]), &scope, dir.path()).expect("a hint");
+        assert!(hint.contains("NameFormatterTest") && hint.contains(FORMATTER), "{hint}");
+        assert!(
+            hint.contains("may not change") && hint.contains("Correct the test"),
+            "{hint}"
+        );
+        assert!(
+            !hint.contains("Either change"),
+            "it must not tell the model to do what the scope refuses: {hint}"
+        );
+    }
+
+    #[test]
+    fn a_subject_inside_the_steps_scope_still_gets_the_either_or_hint() {
+        let dir = repo();
+        let digest = "NameFormatterTest.trimsTheName:27 expected: <Ada> but was: <  ada  >";
+        let scope = paths(&[GREETER, FORMATTER]);
+        let hint = subject_hint(digest, &paths(&[GREETER]), &scope, dir.path()).expect("a hint");
+        assert!(hint.contains("Either change NameFormatter"), "{hint}");
+    }
+
+    #[test]
     fn no_hint_when_the_subject_was_among_the_changed_files() {
         let dir = repo();
         let digest = "NameFormatterTest.trimsTheName:27 expected: <Ada> but was: <  ada  >";
-        assert_eq!(subject_hint(digest, &paths(&[GREETER, FORMATTER]), dir.path()), None);
+        assert_eq!(
+            subject_hint(digest, &paths(&[GREETER, FORMATTER]), &[], dir.path()),
+            None
+        );
     }
 
     #[test]
@@ -157,6 +201,7 @@ mod tests {
             subject_hint(
                 "OrphanTest.x:3 expected: <1> but was: <2>",
                 &paths(&[GREETER]),
+                &[],
                 dir.path()
             ),
             None
@@ -167,7 +212,7 @@ mod tests {
     fn errors_reported_with_the_exception_arrow_are_recognised_too() {
         let dir = repo();
         let digest = "GreeterTest.greetsGuestWhenTheNameIsNull:17 » NullPointer Cannot invoke \"String.trim()\"";
-        let hint = subject_hint(digest, &paths(&[FORMATTER]), dir.path()).expect("a hint");
+        let hint = subject_hint(digest, &paths(&[FORMATTER]), &[], dir.path()).expect("a hint");
         assert!(hint.contains("GreeterTest") && hint.contains(GREETER), "{hint}");
     }
 
@@ -177,7 +222,7 @@ mod tests {
         let digest =
             "NameFormatterTest.a:1 expected: <1> but was: <2>\nNameFormatterTest.b:2 expected: <1> but was: <2>\n\
                       GreeterTest.c:3 expected: <1> but was: <2>";
-        let hint = subject_hint(digest, &paths(&[GREETER]), dir.path()).expect("a hint");
+        let hint = subject_hint(digest, &paths(&[GREETER]), &[], dir.path()).expect("a hint");
         assert_eq!(
             hint.matches("NameFormatterTest").count(),
             1,
@@ -193,6 +238,7 @@ mod tests {
             subject_hint(
                 "Tests run: 10, Failures: 1, Errors: 0, Skipped: 0",
                 &paths(&[GREETER]),
+                &[],
                 dir.path()
             ),
             None
@@ -201,11 +247,12 @@ mod tests {
             subject_hint(
                 "src/main/A.java:3:4: cannot find symbol",
                 &paths(&[GREETER]),
+                &[],
                 dir.path()
             ),
             None
         );
-        assert_eq!(subject_hint("", &paths(&[GREETER]), dir.path()), None);
+        assert_eq!(subject_hint("", &paths(&[GREETER]), &[], dir.path()), None);
     }
 
     const MISSING_FORMATTER: &str =

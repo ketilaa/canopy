@@ -127,6 +127,11 @@ pub struct Implementer {
     classpath: Option<Arc<crate::classpath::ClassIndex>>,
 }
 
+/// The files a step may create or change (empty when it is unscoped).
+fn step_scope_paths(step: &StepRequest) -> Vec<String> {
+    step.scope.create.iter().chain(&step.scope.modify).cloned().collect()
+}
+
 impl Implementer {
     /// Checks every submission's imports against `index` as well as against the repository and the JDK table.
     pub fn with_classpath(mut self, index: Arc<crate::classpath::ClassIndex>) -> Self {
@@ -503,7 +508,7 @@ impl Implementer {
         let tested = self.build.test(root);
         if !tested.success {
             // The digest is what the build said; the hint is a fact the harness adds after it.
-            let feedback = match hints::subject_hint(&tested.digest, &files.paths(), root) {
+            let feedback = match hints::subject_hint(&tested.digest, &files.paths(), &step_scope_paths(step), root) {
                 Some(hint) => format!("{}\n\n{hint}", tested.digest),
                 None => tested.digest,
             };

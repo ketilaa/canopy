@@ -654,7 +654,11 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     let classpath = config.classpath.then(|| {
         let began = Instant::now();
         let index = canopy_implementer::classpath::ClassIndex::for_repository(&config.repo);
-        println!("  classpath index: resolved {} in {:.1}s", index.resolved(), began.elapsed().as_secs_f64());
+        println!(
+            "  classpath index: resolved {} in {:.1}s",
+            index.resolved(),
+            began.elapsed().as_secs_f64()
+        );
         Arc::new(index)
     });
     let implementer = match &classpath {
