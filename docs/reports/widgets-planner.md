@@ -266,6 +266,20 @@ harness, n=3 plans each, an Implementer run on each valid plan.
   convention (records have no JavaBean getters) that a scoped contract rule or a signature from Roots
   (`name()`) would state at the point of use.
 
+### Experiment routed: the same contract decisions, scoped by layer (2026-10-11, `fe5d064`; baseline `baseline-04-widgets-routed-memory`)
+
+The memory contract's decisions (stereotypes, storage, validation) in the v2 format, with the storage rule scoped
+to the repository and service layers and the validation rule to service and controller; the planner and each step
+are given only the entries that apply (`docs/design/contract-routing.md`). Three plans.
+
+Result: **0 of 3 plans valid; all three rejected by audit (d)** ("a listed class is not named in the
+instruction"), so no Implementer runs and no comparison with the unscoped memory arm (3, 2, 2 steps).
+Audit (d) has now blocked three sweeps in a row (pat 9 of 10, the JPA contract arm 3 of 3, this 3 of 3), and
+the one batch where it passed (the memory arm, 3 of 3, every plan after a retry) was luck against that rate.
+The routing itself is covered by unit tests (the planner prompt omits implementer-only rules, a plan's steps get
+different contexts by layer, an unknown-layer step fails open), not yet by a run. The experiment needs (d)
+demoted from a rejection to a recorded diagnostic to be measurable; that decision is open.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier
