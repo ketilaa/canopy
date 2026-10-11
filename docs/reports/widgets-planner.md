@@ -319,6 +319,14 @@ wrong import, `LocalServerPort` taken from `org.springframework.boot.web.server`
 model has to place in a package it cannot look up. The import audit only knows JDK classes; a lookup against the
 project's real classpath would resolve it (see `docs/open-questions/dependency-management-and-supply-chain.md`).
 
+### The classpath import check in the gate (2026-10-11, `5e16ea0`)
+
+Design and replay: `docs/design/classpath-class-index.md`. With the check on, twelve stored plans (conv, val,
+routed3, jpa2) rerun once each: compile-stage stops 7 to 3, test-stage stops 3 to 7, steps passed 15 to 17 (noise at
+one run per plan), six refusals in three runs (a test-scope JUnit import in a production file, an ambiguous
+`Service`, `LocalServerPort` from the wrong package). The class of "the code does not compile because of an
+import" went down; the failures behind it, behaviour tests and Spring wiring, are now what stops the runs.
+
 ### Resolved: who decides create or modify
 
 Whether a path is `create` or `modify` is mechanically known: `modify` if the repository has it or an earlier

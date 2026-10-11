@@ -1,6 +1,6 @@
 # A class index from the project's real classpath
 
-Status: the index and the replay are built (2026-10-11); the gate does not use it yet. Replay results below. Question it answers: when the model uses or imports a library
+Status: built and in the gate (2026-10-11, `5e16ea0`): `check_submission` takes the index and refuses before the build; `run_step` builds it once per run (`--no-classpath` turns it off). Replay and sweep results below. Question it answers: when the model uses or imports a library
 class, can the harness check it against what the project can actually load, and say the exact fix?
 
 ## Why
@@ -132,5 +132,26 @@ What the replay corrected in the first version: the Maven scope option was ignor
 `mdep.includeScope`), so test jars were on the compile classpath and no test-scope finding could fire; and a class
 in an `internal` package (a Mockito matcher) was suggested for `NotNull`. Both fixed, with a test for the second.
 
-Next, if the gate is to use it: wire the findings into `check_submission` as a refusal before the build, and
-sweep the widgets plan against the batches already recorded.
+
+## In the gate: a paired rerun (2026-10-11, `5e16ea0`)
+
+Twelve stored plans (four batches: conv, val, routed3, jpa2), each rerun once with the check on, on the same
+repository tag as its earlier run without it; one run per plan, so a direction.
+
+| | Without the check | With it |
+|---|---|---|
+| steps passed, summed over the 12 plans | 15 | 17 |
+| runs that stopped at the compile stage | 7 | 3 |
+| runs that stopped at the test stage | 3 | 7 |
+| classpath refusals | n/a | 6, in 3 runs |
+
+What the refusals said, from the traces: a test-scope `org.junit.jupiter.api.Test` imported in a production file;
+`Service` used without an import with two candidates (`org.apache.catalina.Service`,
+`org.springframework.stereotype.Service`); `import org.springframework.boot.web.server.LocalServerPort` refused with
+the right package named. Each cost a tool call and not an attempt.
+
+Reading it: the compile-stage stops fell from 7 to 3 and became test-stage stops, which is the expected shape (the
+code now compiles and fails on behaviour instead); steps passed barely moved, 15 against 17 over twelve single
+runs, which is within noise. The check refused nothing wrongly in the replay and nothing visible here. It removes a
+class of wasted attempt; it does not by itself raise how far a plan gets, because the next failure is the one
+behind it.
