@@ -236,3 +236,14 @@ Steps 1 to 4 need no model and can be finished and committed before the GPU serv
 - **Verifier as the failure.** The no-test gate once refused a correct submission and sent the model into a
   read loop. A verifier rule that rejects good plans will do the same, so every rejection in the plan-only
   batch is read before the end-to-end sweep.
+
+## Pre-registered: the redundancy audit replay (2026-10-11)
+
+Candidate rule: a step that modifies a production class an earlier step of the same plan created must cover at
+least one scenario that no earlier step touching that class covers; otherwise it is redundant (the Implementer
+refuses such a step with "must change in this step", having nothing new to change). Replay over the stored plans
+before it is enforced anywhere. Thresholds, fixed before the run:
+
+- It would reject at most 40% of the valid stored plans (above that it is not a gate; audit (d) rejected 9 of 10).
+- Of the executed steps that were refused with "must change in this step", at least 70% are flagged.
+- Of the flagged steps that were executed, at least 50% hit that refusal or failed.
