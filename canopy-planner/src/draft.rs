@@ -359,23 +359,37 @@ fn classify(
     })
 }
 
-/// The production classes a step reads: every existing or earlier-created `.java` file under `src/main`
-/// that the step does not itself list, whose class name its instruction names as a whole word. Sorted.
+/// The most files a step is given to read.
+const MAX_READ_ONLY: usize = 8;
+
+/// The production classes a step reads (`.java` files under `src/main` that it does not list itself): the ones
+/// its instruction names as a whole word, existing or created by an earlier step, and then, up to
+/// [`MAX_READ_ONLY`], the most recently created ones. A step is told what an earlier step made even when its own
+/// instruction does not name it: two service steps built `Widget` wrongly (a `long` id for a `String`) because
+/// the instruction said "a widget", `Widget` was not named, and its source never reached the step. Sorted.
 fn read_only_for(instruction: &str, own: &HashSet<String>, existing: &[String], created: &[String]) -> Vec<String> {
-    existing
+    let production = |path: &&String| path.starts_with("src/main/") && path.ends_with(".java") && !own.contains(*path);
+    let named = |path: &&String| {
+        std::path::Path::new(path.as_str())
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|class| mentions_word(instruction, class))
+    };
+    let mut chosen: BTreeSet<String> = existing
         .iter()
         .chain(created)
-        .filter(|path| path.starts_with("src/main/") && path.ends_with(".java") && !own.contains(*path))
-        .filter(|path| {
-            std::path::Path::new(path.as_str())
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|class| mentions_word(instruction, class))
-        })
+        .filter(production)
+        .filter(named)
+        .take(MAX_READ_ONLY)
         .cloned()
-        .collect::<BTreeSet<String>>()
-        .into_iter()
-        .collect()
+        .collect();
+    for path in created.iter().rev().filter(production) {
+        if chosen.len() >= MAX_READ_ONLY {
+            break;
+        }
+        chosen.insert(path.clone());
+    }
+    chosen.into_iter().collect()
 }
 
 /// Whether `word` occurs in `text` bounded by non-identifier characters on both sides.
@@ -764,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_is_every_other_production_class_the_instruction_names() {
+    fn read_only_is_every_class_an_earlier_step_created_and_the_existing_classes_the_instruction_names() {
         let draft = r#"{"steps":[
           {"id":"a","instruction":"Create Widget.","classes":["com.example.widgets.Widget"],"covers":["first"]},
           {"id":"b","instruction":"Create WidgetService, which stores a Widget and reads Config.","classes":["com.example.widgets.WidgetService"],"covers":["first"]},
@@ -788,9 +802,57 @@ mod tests {
                 "src/main/java/com/example/widgets/Config.java",
                 "src/main/java/com/example/widgets/Widget.java"
             ],
-            "an existing and an earlier-created class, each named whole-word; sorted"
+            "an existing class named whole-word, and the class an earlier step created; sorted"
         );
-        assert!(plan.steps[2].scope.read_only.is_empty());
+        assert_eq!(
+            plan.steps[2].scope.read_only,
+            ["src/main/java/com/example/widgets/Widget.java"],
+            "Widget is read although this instruction never names it (an earlier step made it); Config, which \
+             existed and is not named, is not; WidgetService is the step's own"
+        );
+    }
+
+    #[test]
+    fn a_class_an_earlier_step_created_is_read_even_when_the_instruction_does_not_name_it() {
+        let draft = r#"{"steps":[
+          {"id":"a","instruction":"Create Widget, a record with an id and a name.","classes":["com.example.widgets.Widget"],"covers":["first"]},
+          {"id":"b","instruction":"Create a service that validates a name and creates a widget.","classes":["com.example.widgets.WidgetService"],"covers":["first"]}]}"#;
+        let plan = plan_of(draft, &["src/main/java/com/example/widgets/Existing.java"]).unwrap();
+        assert_eq!(
+            plan.steps[1].scope.read_only,
+            ["src/main/java/com/example/widgets/Widget.java"],
+            "the instruction says 'a widget', never Widget: the step still needs the record's source"
+        );
+    }
+
+    #[test]
+    fn at_most_eight_files_are_read_the_named_ones_first_and_then_the_most_recently_created() {
+        let steps: Vec<String> = (1..=10)
+            .map(|i| {
+                format!(
+                    r#"{{"id":"s{i}","instruction":"Create C{i}.","classes":["com.example.widgets.C{i}"],"covers":["first"]}}"#
+                )
+            })
+            .collect();
+        let last = r#"{"id":"last","instruction":"Create Last using C1.","classes":["com.example.widgets.Last"],"covers":["first"]}"#;
+        let draft = format!(r#"{{"steps":[{},{last}]}}"#, steps.join(","));
+        let plan = plan_of(&draft, &[]).unwrap();
+        let read = &plan.steps[10].scope.read_only;
+        assert_eq!(read.len(), 8, "{read:?}");
+        assert!(
+            read.contains(&"src/main/java/com/example/widgets/C1.java".to_string()),
+            "named, so always read"
+        );
+        for recent in ["C10", "C9", "C8", "C7", "C6", "C5", "C4"] {
+            assert!(
+                read.contains(&format!("src/main/java/com/example/widgets/{recent}.java")),
+                "{recent} {read:?}"
+            );
+        }
+        assert!(
+            !read.contains(&"src/main/java/com/example/widgets/C2.java".to_string()),
+            "old and unnamed: left out"
+        );
     }
 
     #[test]
