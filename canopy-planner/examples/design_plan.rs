@@ -2,7 +2,7 @@
 //! the cases to check, written into the step's instruction (see `design.rs`). The plan and its repository are
 //! read from a planner run directory; `plan.designed.yaml` and `design-notes.txt` are written beside them.
 //!
-//! usage: design_plan [--url URL] [--model ID] [--plan FILE] <planner run dir>...
+//! usage: design_plan [--task widgets|widgets-create|widgets-invalid] [--url URL] [--model ID] [--plan FILE] <planner run dir>...
 //!        (the plan defaults to plan.rederived.yaml, then plan.yaml)
 use std::path::Path;
 use std::sync::Arc;
@@ -16,12 +16,26 @@ use canopy_planner::design::design_plan;
 use canopy_planner::facts::RepoFacts;
 use canopy_planner::gherkin::Feature;
 
-const WIDGETS_FEATURE: &str = include_str!("../../canopy-implementer/tasks/widgets/feature.feature");
+const FEATURES: [(&str, &str); 3] = [
+    (
+        "widgets",
+        include_str!("../../canopy-implementer/tasks/widgets/feature.feature"),
+    ),
+    (
+        "widgets-create",
+        include_str!("../../canopy-implementer/tasks/widgets-create/feature.feature"),
+    ),
+    (
+        "widgets-invalid",
+        include_str!("../../canopy-implementer/tasks/widgets-invalid/feature.feature"),
+    ),
+];
 
 fn main() {
     let mut url = "http://localhost:8080".to_string();
     let mut model = "Qwen/Qwen3-14B-GGUF:Q4_K_M".to_string();
     let mut plan_file: Option<String> = None;
+    let mut task = "widgets".to_string();
     let mut dirs = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -29,6 +43,7 @@ fn main() {
             "--url" => url = args.next().expect("--url needs a value"),
             "--model" => model = args.next().expect("--model needs a value"),
             "--plan" => plan_file = Some(args.next().expect("--plan needs a value")),
+            "--task" => task = args.next().expect("--task needs a value"),
             other => dirs.push(other.to_string()),
         }
     }
@@ -46,14 +61,14 @@ fn main() {
         observer,
     );
     for dir in dirs {
-        match design(&client, Path::new(&dir), plan_file.as_deref()) {
+        match design(&client, Path::new(&dir), plan_file.as_deref(), &task) {
             Ok(note) => println!("{dir}: {note}"),
             Err(e) => println!("{dir}: not designed: {e}"),
         }
     }
 }
 
-fn design(client: &LlmClient, dir: &Path, plan_file: Option<&str>) -> Result<String, String> {
+fn design(client: &LlmClient, dir: &Path, plan_file: Option<&str>, task: &str) -> Result<String, String> {
     let source = match plan_file {
         Some(name) => dir.join(name),
         None if dir.join("plan.rederived.yaml").exists() => dir.join("plan.rederived.yaml"),
@@ -63,7 +78,12 @@ fn design(client: &LlmClient, dir: &Path, plan_file: Option<&str>) -> Result<Str
         .map_err(|e| e.to_string())?;
     let root = dir.join("repo");
     let facts = RepoFacts::collect(&root).map_err(|e| e.to_string())?;
-    let feature = Feature::parse(WIDGETS_FEATURE).map_err(|e| e.to_string())?;
+    let text = FEATURES
+        .iter()
+        .find(|(name, _)| *name == task)
+        .map(|(_, text)| *text)
+        .ok_or_else(|| format!("unknown task {task}"))?;
+    let feature = Feature::parse(text).map_err(|e| e.to_string())?;
     let index = ClassIndex::for_repository(&root);
     println!("  classpath resolved: {}", index.resolved());
     let designed = design_plan(client, &plan, &facts, &feature, &root, Some(&index));

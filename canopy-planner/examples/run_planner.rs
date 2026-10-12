@@ -6,7 +6,7 @@
 //! Implementer's runner: `cargo run -p canopy-implementer --example run_step -- --task widgets-planned
 //! --plan <run dir>/plan.yaml`.
 //!
-//! usage: run_planner [--task widgets] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]
+//! usage: run_planner [--task widgets|widgets-create|widgets-invalid] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,8 +30,10 @@ struct Task {
     tag: &'static str,
     feature_path: &'static str,
     feature: &'static str,
-    /// The hand-written plan: the story comes from it, and it is the reference the draft is compared with.
-    golden: &'static str,
+    /// The story the plan implements.
+    story: &'static str,
+    /// The hand-written plan the draft is compared with, when there is one.
+    golden: Option<&'static str>,
 }
 
 const WIDGETS: Task = Task {
@@ -40,7 +42,30 @@ const WIDGETS: Task = Task {
     tag: "baseline-00-widgets",
     feature_path: "tasks/widgets/feature.feature",
     feature: include_str!("../../canopy-implementer/tasks/widgets/feature.feature"),
-    golden: include_str!("../../canopy-implementer/tasks/widgets/plan.yaml"),
+    story: "A client can create a widget with POST /widgets, giving a name. The widget gets a generated id. A name that is blank, missing, or longer than 50 characters is rejected.",
+    golden: Some(include_str!("../../canopy-implementer/tasks/widgets/plan.yaml")),
+};
+
+/// The success path of the widgets story, on the repository as it is at the contract tag.
+const WIDGETS_CREATE: Task = Task {
+    name: "widgets-create",
+    repo: "java-widgets",
+    tag: "baseline-06-widgets-contract",
+    feature_path: "tasks/widgets-create/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/widgets-create/feature.feature"),
+    story: "A client can create a widget with POST /widgets, giving a name. The widget gets a generated id, which is a UUID.",
+    golden: None,
+};
+
+/// The invalid-name paths, on a repository where the success path is already built (pass --tag).
+const WIDGETS_INVALID: Task = Task {
+    name: "widgets-invalid",
+    repo: "java-widgets",
+    tag: "baseline-06-widgets-contract",
+    feature_path: "tasks/widgets-invalid/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/widgets-invalid/feature.feature"),
+    story: "A widget name that is blank, missing, or longer than 50 characters is rejected with status 400. A name of exactly 50 characters is accepted.",
+    golden: None,
 };
 
 struct Config {
@@ -52,7 +77,7 @@ struct Config {
     out: PathBuf,
 }
 
-const USAGE: &str = "usage: run_planner [--task widgets] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]";
+const USAGE: &str = "usage: run_planner [--task widgets|widgets-create|widgets-invalid] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]";
 
 fn parse_args() -> Result<Config, String> {
     let mut config = Config {
@@ -83,7 +108,11 @@ fn parse_args() -> Result<Config, String> {
 fn task(name: &str) -> Result<&'static Task, String> {
     match name {
         "widgets" => Ok(&WIDGETS),
-        other => Err(format!("unknown task {other}; known: widgets")),
+        "widgets-create" => Ok(&WIDGETS_CREATE),
+        "widgets-invalid" => Ok(&WIDGETS_INVALID),
+        other => Err(format!(
+            "unknown task {other}; known: widgets, widgets-create, widgets-invalid"
+        )),
     }
 }
 
@@ -217,8 +246,11 @@ fn run_one(
         }
     );
     let feature = Feature::parse(task.feature).map_err(|e| e.to_string())?;
-    let golden = Plan::from_yaml(task.golden).map_err(|e| e.to_string())?;
-    let story = golden.story.clone().unwrap_or_default();
+    let golden = task
+        .golden
+        .map(|g| Plan::from_yaml(g).map_err(|e| e.to_string()))
+        .transpose()?;
+    let story = task.story.to_string();
 
     let metrics = Arc::new(MetricsObserver::new());
     let trace = TraceWriter::create(&run_dir.join("events.jsonl"), &format!("{batch_id}/run-{n:02}"))
@@ -312,9 +344,11 @@ fn run_one(
             serde_json::to_string_pretty(&routing).unwrap(),
         )
         .map_err(|e| e.to_string())?;
-        let diff = compare_created_files(plan, &golden);
-        files_match_golden = Some(diff.matches());
-        diff_json = json!({"matches": diff.matches(), "missing": diff.missing, "extra": diff.extra});
+        if let Some(golden) = &golden {
+            let diff = compare_created_files(plan, golden);
+            files_match_golden = Some(diff.matches());
+            diff_json = json!({"matches": diff.matches(), "missing": diff.missing, "extra": diff.extra});
+        }
     }
     let rules: Vec<&'static str> = outcome
         .attempts

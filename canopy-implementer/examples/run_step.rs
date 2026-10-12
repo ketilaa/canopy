@@ -291,6 +291,28 @@ Build: Maven, Java 21, JUnit 5; Spring Boot 3.4 with spring-boot-starter-web. Do
     untouched: &["pom.xml"],
 };
 
+/// The success path of the widgets story as a story of its own; the invalid names are the next story.
+const WIDGETS_CREATE: Task = Task {
+    name: "widgets-create",
+    default_tag: "baseline-06-widgets-contract",
+    instruction: "A client can create a widget with POST /widgets, giving a name. The widget gets a generated id, \
+which is a UUID.",
+    hidden_test: include_str!("../tasks/widgets-create/WidgetsHiddenTest.java"),
+    min_tests_added: 4,
+    ..WIDGETS_PLANNED
+};
+
+/// The invalid-name paths, on a repository where the success path is built (give its tag with --tag). The hidden
+/// test is the whole of it, so the success path is checked again.
+const WIDGETS_INVALID: Task = Task {
+    name: "widgets-invalid",
+    default_tag: "baseline-06-widgets-contract",
+    instruction: "A widget name that is blank, missing, or longer than 50 characters is rejected with status 400. A \
+name of exactly 50 characters is accepted.",
+    min_tests_added: 3,
+    ..WIDGETS_PLANNED
+};
+
 /// What the finished widgets slice must look like, which behaviour alone cannot show: every layer exists,
 /// each is connected to the next, and the controller reaches the repository only through the service.
 const WIDGETS_STRUCTURE: &[Check] = &[
@@ -337,14 +359,16 @@ fn task(name: &str) -> Result<Task, String> {
         "vat-planned" => Ok(VAT_PLANNED),
         "naming-planned" => Ok(NAMING_PLANNED),
         "widgets-planned" => Ok(WIDGETS_PLANNED),
+        "widgets-create" => Ok(WIDGETS_CREATE),
+        "widgets-invalid" => Ok(WIDGETS_INVALID),
         other => Err(format!(
-            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned, widgets-planned"
+            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned, widgets-planned, widgets-create, widgets-invalid"
         )),
     }
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces]";
 
 struct Config {
     task: String,
