@@ -669,3 +669,33 @@ the 20 designed steps was left undesigned (plan 2's controller: the placeholder 
 Caveats. n is 10 on three drafts with one design each, and the designs are themselves a sample: a fresh design of the same
 plan is a different design. Plan 1 got worse while the others got better, so the average hides a real regression risk.
 The model still copies the same tests into different classes and invents field types; the checks catch part of it.
+
+### Design pass, repeats and two fixes (2026-10-12)
+
+Repeat of the design arm with a fresh design of the same three plans: **1.0 steps per run** (2.7 in the first). The process
+varies as much as the designs do; the 2.7 was not an estimate of it. Read from the designs: plan 1's model step designed an
+`int id` with no way to generate it, so the model wrote `static int nextId` inside a method (compile error, 3 of 4 runs);
+plan 2's design tested a 50-character name as invalid (the limit is "longer than 50"), because the design prompt did not
+show the story, where the limit is.
+
+Two changes: the story is the first thing in the design prompt (test: `the_story_is_in_the_prompt_...`), and a contract
+rule for both consumers, ALWAYS type a generated identifier as `java.util.UUID` created with `UUID.randomUUID()`. The
+designs then use `java.util.UUID id`. Fresh designs, same drafts, 10 runs: **22 steps passed, 2.2 per run, and the early
+steps are reliable: the model step passed in 10 of 10 runs and the service step in 9 of 10** (the earlier arms lost 3 to 9
+runs at the model step). 9 of 10 runs then stop at the controller step: **0 of 9 controller steps pass**.
+
+Reading the controller stops (plan 3's design, packet and compile error): the design for a controller is contradictory
+and the Implementer follows it: `create` returns `ResponseEntity<Widget>`, its tests call `subject.create("")` and expect
+an `IllegalArgumentException`, although the same design has a handler that answers 400; the model then writes
+`ResponseEntity` code with mismatched generics (`inference variable T has incompatible bounds`), or a test with an
+anonymous class that does not implement the interface, or an unclosed string. The placeholder check missed
+`subject.create(...)`, a variant of `subject_setup`. The model does not know how to design the web layer even with the
+standalone MockMvc rule in its prompt; the hand plan states the controller test literally (one test method, a
+`perform(post("/widgets")...)` chain, three expectations).
+
+So the failure is no longer spread over the plan: it sits in one kind of step. Options for it: (1) a checkable
+convention per layer in the contract (for example that a test of a controller layer class contains `perform(`), enforced as
+a design check, with the prose rule teaching it; (2) split the plan the way the hand plan does (create with the 201 path
+first, the 400 validation as a separate modify step), so the controller test is one chain and one expectation; (3) give the
+design step for a controller the hand plan's chain as the model's fixed shape. None run. n is 10 on three drafts per arm;
+read these as direction.

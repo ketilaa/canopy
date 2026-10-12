@@ -362,6 +362,7 @@ ALWAYS write subject_setup as the Java expression that builds the object under t
 }
 
 fn messages(
+    story: &str,
     instruction: &str,
     classes: &[String],
     scenarios: &[String],
@@ -369,7 +370,11 @@ fn messages(
     earlier: &[String],
     previous: Option<&[String]>,
 ) -> Vec<Message> {
-    let mut user = format!("## Step\n{instruction}\n\n## Classes to design\n");
+    let mut user = String::new();
+    if !story.trim().is_empty() {
+        user.push_str(&format!("## Story\n{}\n\n", story.trim()));
+    }
+    user.push_str(&format!("## Step\n{instruction}\n\n## Classes to design\n"));
     for c in classes {
         user.push_str(&format!("- {c}\n"));
     }
@@ -439,6 +444,7 @@ pub fn design_plan(
             let request = StructuredRequest {
                 purpose: format!("design-{}-{attempt}", step.id),
                 messages: messages(
+                    plan.story.as_deref().unwrap_or_default(),
                     &step.instruction,
                     &classes,
                     &scenarios,
@@ -712,6 +718,27 @@ steps:
             "{model}"
         );
         assert_eq!(designed.plan.steps[2].instruction, "Add tests only.");
+    }
+
+    #[test]
+    fn the_story_is_in_the_prompt_because_its_limits_decide_the_boundary_values() {
+        let dir = scaffold();
+        let requests = Arc::new(Mutex::new(vec![]));
+        let generator = Script {
+            replies: Mutex::new(vec![reply(RECORD_DESIGN)].into()),
+            requests: requests.clone(),
+        };
+        let feature = Feature::parse("Feature: F\n  Scenario: First\n    When x\n").unwrap();
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        let mut plan = Plan::from_yaml(PLAN).unwrap();
+        plan.steps.truncate(1);
+        plan.story = Some("A name longer than 50 characters is rejected.".into());
+        design_plan(&generator, &plan, &facts, &feature, dir.path(), None);
+        let prompt = requests.lock().unwrap()[0].messages.last().unwrap().content.clone();
+        assert!(
+            prompt.starts_with("## Story\nA name longer than 50 characters is rejected."),
+            "{prompt}"
+        );
     }
 
     #[test]
