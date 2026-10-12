@@ -434,7 +434,10 @@ fn parse_args() -> Result<Config, String> {
         }
     }
     let chosen = task(&config.task)?;
-    if config.plan.is_some() && plan_for(chosen.name).is_none() {
+    // The widgets stories have no hand-written plan: they are run with a plan the Planner made (--plan).
+    let takes_a_plan =
+        plan_for(chosen.name).is_some() || chosen.name == "widgets-create" || chosen.name == "widgets-invalid";
+    if config.plan.is_some() && !takes_a_plan {
         return Err(format!("--plan needs a planned task, and {} has no plan", chosen.name));
     }
     if config.tag.is_empty() {
