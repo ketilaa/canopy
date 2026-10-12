@@ -5,6 +5,7 @@
 //! schema-constrained, and a verifier checks it before anything runs.
 
 pub mod contract;
+pub mod design;
 pub mod draft;
 pub mod facts;
 pub mod gherkin;

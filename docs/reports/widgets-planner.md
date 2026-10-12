@@ -640,3 +640,32 @@ run. The differences between the last four are inside what a repeat would probab
 is unknown. Each change fixed the failure it named and the next one appeared; one plan passed 8 of 8 steps and failed the
 story. This is the pattern of a harness that depends on decisions the plan leaves unstated, and the hand-written plan is
 the evidence that the Implementer can do the story when they are stated.
+
+### Experiment: a design pass that states each step's classes and test cases (2026-10-12)
+
+Why: the hand-written plan (10 of 10) states per step the shape of every class, every signature, how the test builds its
+subject and the exact values; the generated instructions are one terse line, although the draft prompt asks for all of
+that (the model ignores the rules when it must also draft the whole plan). `canopy-planner/src/design.rs`: after the draft,
+one schema-constrained call per step that creates production classes. The schema forces, per class, its shape, fields
+with types, constructor and methods with signatures, `subject_setup` (how a test builds the object) and tests as a
+`call` (a Java expression with every input written out) plus `expect`. The harness renders this into the step's
+instruction ("Design: ..."); later steps are shown earlier designs. Deterministic checks send the model back once with the
+problem named, and a step that fails twice keeps its original instruction: the placeholder `subject_setup` in a call, a
+call that is not a Java call, a type that is a class of no step, of the project or of the classpath (`ClassIndex`), and a
+test call with a different number of arguments than the design declares.
+
+First version (tests as free sentences, no checks), plan 1, 5 runs: **0 of 5 passed even the first step** (baseline 1.5
+steps per run). The designs were wrong in ways the Implementer then obeyed: a "too long" input of 44 characters, an `int`
+id, tests copied between classes. A wrong design in the instruction is worse than a short instruction.
+
+Second version (call/expect tests, the three checks), the same three drafts, 10 runs (4, 3, 3), harness `aa36a16` plus the
+design pass: **27 steps passed over 10 runs, 2.7 per run** (1.9 and 2.1 in the two arms before; 1.1 to 2.1 across the
+series). Per plan: plan 1 worse (1.0 against 1.5: 2 of 4 runs stop at the model step on syntax errors in the written class,
+whose design says `int id`), plan 2 better (3.3 against 2.0), plan 3 better (4.3 against 2.3, one run at 7 of 8). "Expected
+IllegalArgumentException, nothing thrown": 0 of 10 runs (3 of 10 before): the tests now carry the values
+(`"x".repeat(51)`), where the case-word line failed about one run in five. No complete run, so no acceptance. One plan of
+the 20 designed steps was left undesigned (plan 2's controller: the placeholder check rejected both answers).
+
+Caveats. n is 10 on three drafts with one design each, and the designs are themselves a sample: a fresh design of the same
+plan is a different design. Plan 1 got worse while the others got better, so the average hides a real regression risk.
+The model still copies the same tests into different classes and invents field types; the checks catch part of it.
