@@ -578,3 +578,34 @@ decision made separately by the test and the implementation of a step, stated no
 conditional hints will not stop. Whether they transfer is the measurement to make next (a different task under this
 contract, counting the new rules it needs), alongside the stub-first alternative that removes the decision instead of
 stating it.
+
+### Experiment: the mechanism, not the goal, in the controller rule (2026-10-12)
+
+Analyst-recommended (`canopy-run-analyst` on the collections arm: the controller step ends 7 of 10 runs, 0 of 7 pass it;
+origin: the context states the goal "answer an `IllegalArgumentException` with 400", not the Spring mechanism; the retry
+resubmitted byte-identical files in 6 of 13 consecutive pairs; plan 2's service stops come from a limit no step's context
+shows). Rule now names the mechanism: `@ResponseStatus(HttpStatus.CREATED)` on the create method, an
+`@ExceptionHandler(IllegalArgumentException.class)` method with `@ResponseStatus(HttpStatus.BAD_REQUEST)` in the controller,
+and the controller test stubs the mocked service with `thenThrow(new IllegalArgumentException(...))` for each invalid input.
+Same three drafts, 10 runs (4, 3, 3), harness `aa36a16`.
+
+Prediction: at least 4 of 7 controller steps pass (0 of 7 before); no final controller lacks the handler; steps passed at
+least 2.4 per run. Falsified at 1 or fewer of 7.
+
+Result: **falsified on the controller, with one thing that had not happened before.** Final controllers with
+`@ExceptionHandler`: 7 of 7, `@ResponseStatus`: 7 of 7 (5 of 5 and 1 of 5 before): the model does what the mechanism says.
+Controller steps passed: 1 of the 6 runs that reached one (the tests still stop on `expected 400 but was 201` when the
+mocked service is not stubbed, and on budget and stuck stops). Steps passed 21 over 10 runs, 2.1 per run.
+
+**First complete plan run: plan 3, run 2, 8 of 8 steps.** It did not pass the story: the hidden acceptance test failed,
+the application context does not start. From the final files (the digest does not carry the root cause, which is its own gap):
+`WidgetService` has no `@Service` and builds its repository with `new` in a field; the controller takes the service in its
+constructor, so there is no bean to inject. Every step's own tests passed because they construct the classes by hand (the
+unit-test rule), so nothing in the plan exercises the wiring. The plan also holds four classes named `...TestTestCases` in
+`src/main` (a draft naming test-case steps as production classes). Lessons: (1) a plan that passes every step is not a
+working story; step success needs a check that the application starts; (2) the stereotype rule (`*Service` is `@Service`) was
+present and not followed, which is a case for an audit against the contract rather than a stronger sentence; (3) the
+acceptance digest hides the root cause (`Failed to load ApplicationContext` without the exception), so a failed acceptance
+cannot be traced; (4) the hand-written plan avoids the controller wall by a test architecture the model can do (standalone
+MockMvc over real in-memory collaborators, no mocks, constructor injection), where the rule here asked for a mocked
+service and a stub the model often leaves out.
