@@ -132,6 +132,12 @@ pub fn problems(design: &StepDesign, classes: &[String]) -> Vec<String> {
         } else if t.fields.is_empty() && t.methods.is_empty() && t.constructor.is_empty() {
             problems.push(format!("{} has no fields, constructor or methods", t.class));
         }
+        if t.shape == "record" && !t.constructor.is_empty() && declared_arity(&t.constructor) != t.fields.len() {
+            problems.push(format!(
+                "{} is a record, whose constructor takes exactly its components; a value it generates belongs in a static factory method",
+                t.class
+            ));
+        }
     }
     for test in &design.tests {
         if !test.call.contains('(') {
@@ -139,9 +145,6 @@ pub fn problems(design: &StepDesign, classes: &[String]) -> Vec<String> {
                 "the call `{}` is not a Java call; write the expression with its inputs",
                 test.call
             ));
-        }
-        if test.call.contains("subject_setup") {
-            problems.push("a call names subject_setup; write the expression that builds the subject instead".into());
         }
     }
     if design.subject_setup.trim().is_empty() {
@@ -302,9 +305,43 @@ pub fn call_mismatches(design: &StepDesign) -> Vec<String> {
     problems
 }
 
+/// A call that names the subject (`subject_setup.f(x)` or `subject.f(x)`) means the expression `subject_setup` defines.
+/// The name is the prompt's own, so the call is written out in full here instead of sending the model back to do it.
+pub fn resolve_subject(design: &mut StepDesign) {
+    let setup = design.subject_setup.trim().to_string();
+    if setup.is_empty() {
+        return;
+    }
+    for test in &mut design.tests {
+        let mut out = String::new();
+        let mut word = String::new();
+        let chars: Vec<char> = test.call.chars().collect();
+        let mut i = 0;
+        let mut inside = false;
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '"' && (i == 0 || chars[i - 1] != '\\') {
+                inside = !inside;
+            }
+            if !inside && (c.is_alphanumeric() || c == '_') {
+                word.push(c);
+            } else {
+                let alias = matches!(word.as_str(), "subject_setup" | "subject") && c == '.' && !out.ends_with('.');
+                out.push_str(if alias { &setup } else { &word });
+                word.clear();
+                out.push(c);
+            }
+            i += 1;
+        }
+        out.push_str(&word);
+        test.call = out;
+    }
+}
+
 pub fn parse(content: &str, classes: &[String]) -> Result<StepDesign, Vec<String>> {
-    let design: StepDesign =
+    let mut design: StepDesign =
         serde_json::from_str(content).map_err(|e| vec![format!("the answer is not a design: {e}")])?;
+    resolve_subject(&mut design);
     match problems(&design, classes) {
         p if p.is_empty() => Ok(design),
         p => Err(p),
@@ -561,13 +598,47 @@ mod tests {
     }
 
     #[test]
-    fn a_test_whose_call_is_a_description_or_names_the_placeholder_is_a_problem() {
+    fn a_record_whose_constructor_differs_from_its_components_is_a_problem() {
+        let mut design: StepDesign = serde_json::from_str(RECORD_DESIGN).unwrap();
+        assert!(problems(&design, &classes(&[WIDGET])).is_empty());
+        design.types[0].constructor = "(String name)".into();
+        let found = problems(&design, &classes(&[WIDGET]));
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("is a record") && p.contains("static factory")),
+            "{found:?}"
+        );
+        design.types[0].constructor = "(UUID id, String name)".into();
+        assert!(problems(&design, &classes(&[WIDGET])).is_empty());
+    }
+
+    #[test]
+    fn a_test_whose_call_is_a_description_is_a_problem() {
         let mut design: StepDesign = serde_json::from_str(RECORD_DESIGN).unwrap();
         design.tests[0].call = "a name of 51 characters".into();
-        design.tests[1].call = "subject_setup.create(\"x\")".into();
         let found = problems(&design, &classes(&[WIDGET]));
         assert!(found.iter().any(|p| p.contains("is not a Java call")), "{found:?}");
-        assert!(found.iter().any(|p| p.contains("names subject_setup")), "{found:?}");
+    }
+
+    #[test]
+    fn a_call_on_the_subject_is_written_out_with_the_expression_that_builds_it() {
+        let reply = SERVICE_DESIGN.replace(
+            "new WidgetService().create(\\\"Alpha\\\")",
+            "subject.create(\\\"subject.x\\\") and subject_setup.create(\\\"Beta\\\")",
+        );
+        let design = parse(&reply, &classes(&[SERVICE])).unwrap();
+        assert_eq!(
+            design.tests[0].call, "new WidgetService().create(\"subject.x\") and new WidgetService().create(\"Beta\")",
+            "an alias becomes the setup, a word inside a string literal stays"
+        );
+        let mut plain = design.clone();
+        plain.tests[0].call = "mysubject.create(1) + subjects.x()".into();
+        resolve_subject(&mut plain);
+        assert_eq!(
+            plain.tests[0].call, "mysubject.create(1) + subjects.x()",
+            "only the whole word is an alias"
+        );
     }
 
     #[test]

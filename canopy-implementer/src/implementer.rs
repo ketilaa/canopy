@@ -374,7 +374,12 @@ impl Implementer {
                 tool_calls: turn.tool_calls.clone(),
             });
             for call in &turn.tool_calls {
-                tool_calls_made += 1;
+                // Asking whether a file the step itself creates exists costs nothing: the answer is known, and the
+                // question is a habit that used up the budget (7 of 10 runs lost an attempt to it).
+                let probe = probed_new_file(call, &step.scope.create);
+                if probe.is_none() {
+                    tool_calls_made += 1;
+                }
                 if tool_calls_made > limits.max_tool_calls {
                     return Err(failure(
                         Stage::Budget,
@@ -437,6 +442,13 @@ impl Implementer {
                             }
                         }
                     }
+                } else if let Some(path) = &probe {
+                    (
+                        ToolOutcome::Ok,
+                        format!(
+                            "`{path}` is a file this step creates. It does not exist yet; write it in submit_files."
+                        ),
+                    )
                 } else {
                     let result = toolbox.call(&call.name, &call.arguments);
                     (result.outcome, result.text)
@@ -534,6 +546,18 @@ impl StepRunner for Implementer {
     }
 }
 
+/// The path of a file the step creates, when the call is a `glob` or `read_file` of exactly that path.
+fn probed_new_file(call: &crate::llm::ToolCall, create: &[String]) -> Option<String> {
+    let key = match call.name.as_str() {
+        "glob" => "pattern",
+        "read_file" => "path",
+        _ => return None,
+    };
+    let arguments: serde_json::Value = serde_json::from_str(&call.arguments).ok()?;
+    let target = arguments.get(key)?.as_str()?;
+    create.iter().find(|path| path.as_str() == target).cloned()
+}
+
 fn failure(stage: Stage, feedback: String, files: Option<GeneratedFiles>) -> Failure {
     Failure { stage, feedback, files }
 }
@@ -554,12 +578,20 @@ fn read_shown(root: &Path, scope: &Scope, surfaces: Option<&dyn crate::surfaces:
     };
     let mut declared_text = surfaces
         .map(|s| {
-            let java: Vec<String> = scope.read_only.iter().filter(|p| p.ends_with(".java")).cloned().collect();
+            let java: Vec<String> = scope
+                .read_only
+                .iter()
+                .filter(|p| p.ends_with(".java"))
+                .cloned()
+                .collect();
             s.surfaces(root, &java)
         })
         .unwrap_or_default();
-    let (declared, whole): (Vec<String>, Vec<String>) =
-        scope.read_only.iter().cloned().partition(|p| declared_text.contains_key(p));
+    let (declared, whole): (Vec<String>, Vec<String>) = scope
+        .read_only
+        .iter()
+        .cloned()
+        .partition(|p| declared_text.contains_key(p));
     prompt::ShownFiles {
         modify: read(&scope.modify),
         read_only: read(&whole),
@@ -1475,6 +1507,45 @@ mod tests {
     }
 
     #[test]
+    fn asking_whether_a_file_the_step_creates_exists_does_not_use_up_the_tool_calls() {
+        let limits = ToolLimits {
+            max_tool_calls: 3,
+            ..ToolLimits::default()
+        };
+        let created = "src/main/java/com/example/Made.java";
+        let made_test = "src/test/java/com/example/MadeTest.java";
+        let rig = tool_rig(
+            vec![
+                calls(vec![glob(created), read_file(created), glob("src/test/**")]),
+                calls(vec![submit(&[
+                    (created, "package com.example;\npublic class Made { }\n"),
+                    (
+                        made_test,
+                        "package com.example;\nclass MadeTest { void t() { new Made(); } }\n",
+                    ),
+                ])]),
+            ],
+            vec![],
+            1,
+            limits,
+        );
+        let step = scoped(&[], &[created, made_test]);
+        let result = rig.implementer.run_step(rig.dir.path(), &step);
+        assert_eq!(
+            result,
+            StepOutcome::Passed { attempts: 1 },
+            "{:?}",
+            rig.observer.events()
+        );
+        assert!(!rig
+            .observer
+            .events()
+            .iter()
+            .any(|e| matches!(e, RunEvent::AttemptFailed(f) if f.stage == Stage::Budget)));
+        assert_eq!(tool_log(&rig).len(), 4, "every call was still carried out and recorded");
+    }
+
+    #[test]
     fn the_same_call_a_third_time_ends_the_attempt_and_the_retry_starts_fresh() {
         let rig = tool_rig(
             vec![
@@ -1804,7 +1875,10 @@ mod tests {
 
     impl crate::surfaces::Surfaces for FixedSurfaces {
         fn surfaces(&self, _: &Path, paths: &[String]) -> HashMap<String, String> {
-            paths.iter().filter_map(|p| self.0.get(p).map(|t| (p.clone(), t.clone()))).collect()
+            paths
+                .iter()
+                .filter_map(|p| self.0.get(p).map(|t| (p.clone(), t.clone())))
+                .collect()
         }
     }
 
@@ -1834,7 +1908,10 @@ mod tests {
             "public class Formatter\n  public String fmt(String s)\n".to_string(),
         )]));
         assert!(known.contains("public String fmt(String s)"), "{known}");
-        assert!(!known.contains("public class Formatter { }"), "the source is not repeated: {known}");
+        assert!(
+            !known.contains("public class Formatter { }"),
+            "the source is not repeated: {known}"
+        );
         let unknown = prompt_with_surfaces(HashMap::new());
         assert!(unknown.contains("public class Formatter { }"), "{unknown}");
         assert!(!unknown.contains("Declarations of files for reference"), "{unknown}");
