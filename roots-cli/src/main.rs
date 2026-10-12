@@ -61,6 +61,11 @@ enum Command {
     },
     /// List graph facts for a symbol as human-readable sentences
     Facts { symbol: String },
+    /// The declared surface of Java files (types, annotations, members), parsed from the files; no index needed
+    Surface {
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
     /// Manage workspaces
     Workspace {
         #[command(subcommand)]
@@ -97,6 +102,7 @@ fn main() {
         Command::Context { symbol, feature, project, file } =>
             commands::context::run(ws, symbol.as_deref(), feature.as_deref(), project.as_deref(), file.as_deref()),
         Command::Facts { symbol } => commands::facts::run(ws, &symbol),
+        Command::Surface { files } => commands::surface::run(&files),
         Command::Workspace { subcommand } => match subcommand {
             WorkspaceSubcommand::List          => commands::workspace::run(WorkspaceCmd::List),
             WorkspaceSubcommand::Add { name }  => commands::workspace::run(WorkspaceCmd::Add { name }),

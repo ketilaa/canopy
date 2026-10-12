@@ -887,6 +887,7 @@ name = "roots-parser"
 version = "0.1.0"
 dependencies = [
  "roots-core",
+ "serde",
  "streaming-iterator",
  "thiserror 2.0.18",
  "tree-sitter",

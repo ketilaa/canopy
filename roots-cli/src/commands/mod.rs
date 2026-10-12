@@ -10,5 +10,6 @@ pub mod index;
 pub mod init;
 pub mod query;
 pub mod status;
+pub mod surface;
 pub mod symbol;
 pub mod workspace;

@@ -14,3 +14,4 @@ tree-sitter-kotlin   = { git = "https://github.com/fwcd/tree-sitter-kotlin", rev
 tree-sitter-rust     = "0.23"
 streaming-iterator   = "0.1"
 thiserror            = { workspace = true }
+serde                = { workspace = true }
