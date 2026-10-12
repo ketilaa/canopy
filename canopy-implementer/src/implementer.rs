@@ -125,6 +125,8 @@ pub struct Implementer {
     max_attempts: u32,
     /// The classes the project can load, when known: a submission whose imports do not fit it is refused.
     classpath: Option<Arc<crate::classpath::ClassIndex>>,
+    /// Where the declarations of read-only Java files come from, when known.
+    surfaces: Option<Arc<dyn crate::surfaces::Surfaces>>,
 }
 
 /// The files a step may create or change (empty when it is unscoped).
@@ -136,6 +138,12 @@ impl Implementer {
     /// Checks every submission's imports against `index` as well as against the repository and the JDK table.
     pub fn with_classpath(mut self, index: Arc<crate::classpath::ClassIndex>) -> Self {
         self.classpath = Some(index);
+        self
+    }
+
+    /// Shows a step the declarations of its read-only Java files, from `surfaces`, instead of their source.
+    pub fn with_surfaces(mut self, surfaces: Arc<dyn crate::surfaces::Surfaces>) -> Self {
+        self.surfaces = Some(surfaces);
         self
     }
 
@@ -151,6 +159,7 @@ impl Implementer {
             observer,
             max_attempts,
             classpath: None,
+            surfaces: None,
         }
     }
 
@@ -168,6 +177,7 @@ impl Implementer {
             observer,
             max_attempts,
             classpath: None,
+            surfaces: None,
         }
     }
 
@@ -294,7 +304,7 @@ impl Implementer {
     ) -> Result<GeneratedFiles, Failure> {
         let toolbox = ToolBox::new(root);
         let tools = ToolBox::specs_with(limits.declare_imports);
-        let shown = read_shown(root, &step.scope);
+        let shown = read_shown(root, &step.scope, self.surfaces.as_deref());
         let shown_paths: std::collections::HashSet<&str> = step
             .scope
             .modify
@@ -529,7 +539,7 @@ fn failure(stage: Stage, feedback: String, files: Option<GeneratedFiles>) -> Fai
 }
 
 /// The content of the files a scoped step is shown up front. A file that is missing is simply not shown.
-fn read_shown(root: &Path, scope: &Scope) -> prompt::ShownFiles {
+fn read_shown(root: &Path, scope: &Scope, surfaces: Option<&dyn crate::surfaces::Surfaces>) -> prompt::ShownFiles {
     let read = |paths: &[String]| -> Vec<GeneratedFile> {
         paths
             .iter()
@@ -542,9 +552,24 @@ fn read_shown(root: &Path, scope: &Scope) -> prompt::ShownFiles {
             })
             .collect()
     };
+    let mut declared_text = surfaces
+        .map(|s| {
+            let java: Vec<String> = scope.read_only.iter().filter(|p| p.ends_with(".java")).cloned().collect();
+            s.surfaces(root, &java)
+        })
+        .unwrap_or_default();
+    let (declared, whole): (Vec<String>, Vec<String>) =
+        scope.read_only.iter().cloned().partition(|p| declared_text.contains_key(p));
     prompt::ShownFiles {
         modify: read(&scope.modify),
-        read_only: read(&scope.read_only),
+        read_only: read(&whole),
+        declared: declared
+            .into_iter()
+            .filter_map(|path| {
+                let content = declared_text.remove(&path)?;
+                Some(GeneratedFile { path, content })
+            })
+            .collect(),
     }
 }
 
@@ -1773,6 +1798,46 @@ mod tests {
             "the current content is in the prompt: {task}"
         );
         assert_eq!(tool_log(&rig).len(), 1, "it never needed to call read_file");
+    }
+
+    struct FixedSurfaces(HashMap<String, String>);
+
+    impl crate::surfaces::Surfaces for FixedSurfaces {
+        fn surfaces(&self, _: &Path, paths: &[String]) -> HashMap<String, String> {
+            paths.iter().filter_map(|p| self.0.get(p).map(|t| (p.clone(), t.clone()))).collect()
+        }
+    }
+
+    const FORMATTER: &str = "src/main/java/com/example/Formatter.java";
+
+    fn prompt_with_surfaces(surfaces: HashMap<String, String>) -> String {
+        let mut rig = tool_rig(
+            vec![calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])])],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_surfaces(Arc::new(FixedSurfaces(surfaces)));
+        let mut step = scoped(&[GREETER, GREETER_TEST], &[]);
+        step.scope.read_only = vec![FORMATTER.into()];
+        rig.implementer.run_step(rig.dir.path(), &step);
+        let ChatMessage::User(task) = &rig.requests.lock().unwrap()[0][1] else {
+            panic!()
+        };
+        task.clone()
+    }
+
+    #[test]
+    fn a_read_only_java_file_is_shown_as_its_declarations_when_they_are_known_and_as_source_when_not() {
+        let known = prompt_with_surfaces(HashMap::from([(
+            FORMATTER.to_string(),
+            "public class Formatter\n  public String fmt(String s)\n".to_string(),
+        )]));
+        assert!(known.contains("public String fmt(String s)"), "{known}");
+        assert!(!known.contains("public class Formatter { }"), "the source is not repeated: {known}");
+        let unknown = prompt_with_surfaces(HashMap::new());
+        assert!(unknown.contains("public class Formatter { }"), "{unknown}");
+        assert!(!unknown.contains("Declarations of files for reference"), "{unknown}");
     }
 
     #[test]

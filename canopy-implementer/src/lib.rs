@@ -23,6 +23,7 @@ pub mod report;
 pub mod sandbox;
 pub mod snapshot;
 pub mod structure;
+pub mod surfaces;
 pub mod tools;
 
 #[cfg(test)]

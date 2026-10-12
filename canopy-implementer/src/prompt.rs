@@ -55,6 +55,8 @@ pub fn messages(step: &StepRequest, current: &[GeneratedFile], previous: Option<
 pub struct ShownFiles {
     pub modify: Vec<GeneratedFile>,
     pub read_only: Vec<GeneratedFile>,
+    /// Read-only files shown as their declarations (annotations, constructors, method signatures), not their source.
+    pub declared: Vec<GeneratedFile>,
 }
 
 pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&Failure>) -> (String, String) {
@@ -72,6 +74,7 @@ pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&F
         };
         user.push_str(&section("Files to change", &shown.modify));
         user.push_str(&section("Files for reference (read-only)", &shown.read_only));
+        user.push_str(&section("Declarations of files for reference (read-only; read_file shows a whole file)", &shown.declared));
         if !step.scope.create.is_empty() {
             user.push_str("\n## Files to create\n");
             for path in &step.scope.create {
@@ -269,6 +272,23 @@ mod tests {
     }
 
     #[test]
+    fn declared_files_are_shown_as_their_declarations_under_their_own_heading() {
+        let mut scoped = step();
+        scoped.scope.create = vec!["src/B.java".into()];
+        let shown = ShownFiles {
+            declared: vec![GeneratedFile {
+                path: "src/A.java".into(),
+                content: "public class A\n  public A(String name)".into(),
+            }],
+            ..ShownFiles::default()
+        };
+        let (_, user) = tool_messages(&scoped, &shown, None);
+        let heading = user.find("Declarations of files for reference").expect(&user);
+        let declared = user.find("public A(String name)").expect(&user);
+        assert!(heading < declared && user.contains("### src/A.java"), "{user}");
+    }
+
+    #[test]
     fn a_retry_after_a_build_failure_shows_the_previous_answer_and_says_it_was_undone_not_to_read_again() {
         for stage in [Stage::Compile, Stage::Test] {
             let (_, user) = tool_messages(
@@ -357,6 +377,7 @@ mod tests {
                 path: "src/main/java/Dep.java".into(),
                 content: "class Dep {}".into(),
             }],
+            declared: vec![],
         }
     }
 

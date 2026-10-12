@@ -344,7 +344,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces]";
 
 struct Config {
     task: String,
@@ -360,6 +360,8 @@ struct Config {
     plan: Option<PathBuf>,
     /// Check each submission's imports against the project's classpath (on unless `--no-classpath`).
     classpath: bool,
+    /// Show read-only Java files as their declarations, from `roots surface` (off unless `--surfaces`).
+    surfaces: bool,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -376,6 +378,7 @@ fn parse_args() -> Result<Config, String> {
         declare_imports: false,
         plan: None,
         classpath: true,
+        surfaces: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -399,6 +402,7 @@ fn parse_args() -> Result<Config, String> {
             "--declare-imports" => config.declare_imports = true,
             "--plan" => config.plan = Some(value("--plan")?.into()),
             "--no-classpath" => config.classpath = false,
+            "--surfaces" => config.surfaces = true,
             "--url" => config.url = value("--url")?,
             "--model" => config.model = value("--model")?,
             "--out" => config.out = value("--out")?.into(),
@@ -665,6 +669,11 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         Some(index) => implementer.with_classpath(index.clone()),
         None => implementer,
     };
+    let implementer = if config.surfaces {
+        implementer.with_surfaces(Arc::new(canopy_implementer::surfaces::RootsSurfaces::new("roots")))
+    } else {
+        implementer
+    };
 
     let started = Instant::now();
     let plan_text: Option<String> = match &config.plan {
@@ -901,6 +910,7 @@ fn real_main() -> Result<(), String> {
         "max_attempts": config.attempts,
         "declare_imports": config.declare_imports,
         "classpath_check": config.classpath,
+        "surfaces": config.surfaces,
         "plan_file": config.plan.as_ref().map(|p| p.display().to_string()),
         "runs": config.runs,
         "task": task.name,
