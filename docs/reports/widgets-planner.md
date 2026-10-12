@@ -516,3 +516,32 @@ the repository returns an `Iterable`, so the model compares the length of the fi
 meant. Origin: the return type of a method that returns several objects is unstated; the test and the implementation
 choose separately. Rung 1 candidate: a contract rule on the repository and service layers ("a method that returns
 several objects returns a `java.util.List`"); the Roots Java signatures item is the general fix and is still parked.
+
+### Roots Java surface, shown instead of the source of read-only files (2026-10-12)
+
+Built (`74c112c`, `c83190d`): `roots surface <file>...` reads a Java file's declarations as written: types including
+records with their components, annotations with arguments (type, method, parameter), modifiers, supertypes, fields,
+constructors, methods with return types and `throws`; text rendering omits private members. External command, JSON, no
+index and no schema change. Replayed over 41 distinct production files the model wrote: 0 errors, 0 empty. The
+Implementer can show a step the declarations of its read-only Java files instead of their source (`--surfaces`, off by
+default, in `batch.json`).
+
+Experiment: the same three drafts and contract as the 1.7-steps arm, `--surfaces` on, 10 runs (4, 3, 3), declarations
+present in the prompt in the 9 runs that had a read-only file. Prediction: steps passed at least 1.7 (no harm) and
+smaller consumer prompts; falsified below 1.4 or with more symbol stops.
+
+Result: **falsified.** Steps passed 12 over 10 runs, 1.2 per run (1.7 before). Stops on a symbol the step got wrong
+(constructor arity, `cannot find symbol` on a method or class of an earlier class): 4 of 10 (about 1 of 15 and 1 of 10 in
+earlier arms). Prompt size was not measured.
+
+Chain (packet, run `06-51-19/run-03`, service step): the declarations were right (`public Widget(String name)`,
+`public String getId()`), and the service called `new Widget(id, name)`. Origin: the declaration drops what the body says.
+In the source the constructor assigns the id (`UUID.randomUUID()`); in the declarations `getId()` exists and nothing says
+who sets it, so the model supplies one. A surface states what can be called, not what the code does, and for a small class
+the body is the shortest statement of its behaviour. Same shape in the `setId` stop.
+
+Reading: surfaces are a size tool, not an accuracy tool. They fit a class whose source is too large to show; for the
+small classes of a greenfield task they remove information the model uses. Not tuned on widgets: no threshold was
+chosen on this data. Next, where the value should be, is brownfield: the Planner's facts today list existing classes by
+name only, and a step on a large existing class cannot be shown all of it. A task with existing code of realistic size
+is the test; a size rule (source below a limit, declarations above) is the candidate, and it needs that task to be set.
