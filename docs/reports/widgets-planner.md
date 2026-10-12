@@ -609,3 +609,34 @@ acceptance digest hides the root cause (`Failed to load ApplicationContext` with
 cannot be traced; (4) the hand-written plan avoids the controller wall by a test architecture the model can do (standalone
 MockMvc over real in-memory collaborators, no mocks, constructor injection), where the rule here asked for a mocked
 service and a stub the model often leaves out.
+
+### Experiment: the hand-written plan's test style, and constructor injection (2026-10-12)
+
+Two contract changes at once (not separable at this n): the controller test is a plain JUnit class with no Spring
+annotations and no Mockito, `MockMvcBuilders.standaloneSetup(new <Controller>(<collaborators made with new>)).build()`
+(the style of the hand-written plan, which passes 10 of 10: no mock to stub, validation flows through the real service); and
+controller and service take collaborators as constructor parameters, never `new` in a field, never field injection. The
+mechanism rule for the controller (status annotation, exception handler) stays. Same three drafts, 10 runs, harness `aa36a16`.
+
+Prediction: controller steps pass in at least 3 of those that reach one (1 of 6 before); steps passed at least 2.5 per run;
+falsified at 1 or fewer.
+
+Result: **falsified on both thresholds, but the direction moved.** Controller steps passed in 2 of the 5 runs that reached
+one (1 of 6 before). Steps passed 19 over 10 runs, 1.9 per run (2.1 before; within what these arms vary by). No complete run
+this time. Stops: 3 runs at the model step ("Expected IllegalArgumentException ... nothing was thrown"), 3 at the controller
+(a `')' or ',' expected` syntax error in the written file, two budget stops), 2 at the service in plan 2 (the 50-character
+limit no step owns), the rest in the "test cases" steps of plan 3.
+
+Reading of the model-step stop (packet `09-13-41/run-01`): the constructor is correct (`name.length() > 50` throws); the test
+is wrong: `new Widget("a name of 51 characters")`, the description of a case, 23 characters, written as the input. The line
+that tells the step to write the value was in the context of these steps (checked in the re-derived plans), and was not
+followed in 3 of 10 runs (1 of 10 in the arm before). A compliance rate near 80 to 90 percent for an instruction that is
+present, which is what a prompt line gives. An audit is not available without a false-positive risk: a cell of an outline can
+be a real value as well as a description, and the harness cannot tell which, so refusing a test that contains a cell would
+block a correct submission. Not built.
+
+What the whole series says. Arms of 10 runs on three drafts have moved 1.1, 1.5, 1.8, 1.7, 2.0, 2.1, 1.9 steps passed per
+run. The differences between the last four are inside what a repeat would probably show; no repeat has been run, so the noise
+is unknown. Each change fixed the failure it named and the next one appeared; one plan passed 8 of 8 steps and failed the
+story. This is the pattern of a harness that depends on decisions the plan leaves unstated, and the hand-written plan is
+the evidence that the Implementer can do the story when they are stated.
