@@ -545,3 +545,36 @@ small classes of a greenfield task they remove information the model uses. Not t
 chosen on this data. Next, where the value should be, is brownfield: the Planner's facts today list existing classes by
 name only, and a step on a large existing class cannot be shown all of it. A task with existing code of realistic size
 is the test; a size rule (source below a limit, declarations above) is the candidate, and it needs that task to be set.
+
+### Experiment: a contract rule for collections (2026-10-12)
+
+Rule on the repository and service layers: ALWAYS return a `java.util.List` from a method that returns several objects.
+Same three drafts and contract as the 1.7-steps arm, 10 runs (4, 3, 3), harness `eafd8be`, surfaces off.
+
+Prediction: the third plan's repository step passes in at least 2 of 3 (stopped on `findAll` in 3 of 3 before); steps
+passed at least 1.9; falsified if 2 or more of those 3 still stop on `findAll`, or steps passed below 1.7.
+
+Result: **held.** Steps passed 20 over 10 runs, **2.0 per run** (1.7 before; 1.1, 1.5, 1.8, 1.7, 2.0 across the
+experiments of the last two days, same three drafts, one change each). The third plan's repository step passed in 3 of 3
+and all three reached its controller step. In the submitted repository and service files `Iterable<` appears 0 times and a
+`List<...>` returning `findAll`/`getAll`/`list` 21 times. Direction only; n is 10 on three drafts.
+
+Remaining stops (10 runs): a controller answering 200 or 201 where the test expects 400, or 200 where it expects 201:
+5 runs, with the `create-response` rule present in the context and not acted on (a compliance gap; nothing in the code
+or the harness could make Spring map an `IllegalArgumentException` to 400 unless the model writes the handler); one
+compile stop from a deprecated `@MockBean` warning (the rule says `@MockitoBean`); and 3 runs of the second plan at the
+service step with "Expected IllegalArgumentException to be thrown, but nothing was thrown".
+
+Chain for the service stops (packet `08-16-32/run-01`): the service test expects an exception for a 51-character name; the
+service rejects only null and blank and otherwise calls `new Widget(name)`; the validation rule says the constructor
+validates and the service does not repeat the check; the plan's model step did not state the length limit, so no
+constructor checks it. The limit lives in the scenarios, and the model step covered only some. Origin: which step is
+responsible for which constraint is a plan decision, and the rule that moved validation into the model made that decision
+matter. Not run: show the model step the constraints of the outline cases (it covers the scenario, and the case table is
+in its context), or check at plan time that the step that owns a validation covers the outline.
+
+Note on direction. Five rules and one context line produced this sequence on one task. They are all of one kind (a
+decision made separately by the test and the implementation of a step, stated nowhere), which is the concern that the
+conditional hints will not stop. Whether they transfer is the measurement to make next (a different task under this
+contract, counting the new rules it needs), alongside the stub-first alternative that removes the decision instead of
+stating it.
