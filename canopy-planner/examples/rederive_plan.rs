@@ -2,7 +2,8 @@
 //! output is unchanged, so only what the harness derives (create or modify, read-only files, context) can differ.
 //! Writes `plan.rederived.yaml` beside the plan and says which steps' read-only files changed.
 //!
-//! usage: rederive_plan <planner run dir>...      (a run dir holds plan.yaml, attempt-N.json and repo/)
+//! usage: rederive_plan [--feature FILE] <planner run dir>...      (a run dir holds plan.yaml, attempt-N.json and repo/;
+//! the feature defaults to the widgets one)
 use std::path::Path;
 
 use canopy_implementer::plan::Plan;
@@ -13,16 +14,24 @@ use canopy_planner::gherkin::Feature;
 const WIDGETS_FEATURE: &str = include_str!("../../canopy-implementer/tasks/widgets/feature.feature");
 
 fn main() {
-    for dir in std::env::args().skip(1) {
+    let mut args = std::env::args().skip(1).peekable();
+    let feature = match args.peek().map(String::as_str) {
+        Some("--feature") => {
+            args.next();
+            std::fs::read_to_string(args.next().expect("--feature needs a file")).expect("the feature file")
+        }
+        _ => WIDGETS_FEATURE.to_string(),
+    };
+    for dir in args {
         let dir = Path::new(&dir);
-        match rederive(dir) {
+        match rederive(dir, &feature) {
             Ok(note) => println!("{}: {note}", dir.display()),
             Err(e) => println!("{}: not re-derived: {e}", dir.display()),
         }
     }
 }
 
-fn rederive(dir: &Path) -> Result<String, String> {
+fn rederive(dir: &Path, feature_text: &str) -> Result<String, String> {
     let original = Plan::from_yaml(&std::fs::read_to_string(dir.join("plan.yaml")).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     // The attempt that became the plan: the last one with no problems.
@@ -43,7 +52,7 @@ fn rederive(dir: &Path) -> Result<String, String> {
         let layers = facts.layers_of_classes(&root, classes);
         facts.render_for_step(&layers)
     };
-    let feature = Feature::parse(WIDGETS_FEATURE).map_err(|e| e.to_string())?;
+    let feature = Feature::parse(feature_text).map_err(|e| e.to_string())?;
     let plan = into_plan(
         &raw,
         &original.id,

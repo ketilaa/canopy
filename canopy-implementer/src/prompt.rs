@@ -7,7 +7,7 @@ use crate::llm::Message;
 use crate::observe::Stage;
 
 const RULES: &str = "\
-You write source files for a Java 21 Spring Boot 3.4 Maven project, one plan step at a time.
+You write source files for a Java Maven project, one plan step at a time.
 ALWAYS return every file the step needs, each one complete.
 ALWAYS keep the existing code and tests of a file you change, except what the step asks you to change.
 ALWAYS use paths relative to the project root, such as src/main/java/<package path>/<Class>.java.
@@ -17,7 +17,7 @@ NEVER change pom.xml or any file the step does not name or require.";
 
 /// `current` is what the step's existing files contain right now (a file that does not exist yet is simply absent).
 const TOOL_RULES: &str = "\
-You change files in a Java 21 Spring Boot 3.4 Maven project, one task at a time.
+You change files in a Java Maven project, one task at a time.
 ALWAYS use glob and read_file to find and read the files you need.
 ALWAYS read an existing file with read_file before you change it.
 ALWAYS finish by calling submit_files with the complete content of every file you create or change.

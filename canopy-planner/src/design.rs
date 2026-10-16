@@ -389,7 +389,7 @@ fn classes_of(scope: &Scope) -> Vec<String> {
 
 fn system_rules() -> &'static str {
     "\
-You design the classes of one step of an implementation plan for a Java 21 Spring Boot 3.4 Maven project.
+You design the classes of one step of an implementation plan for a Java Maven project.
 ALWAYS design every class listed for the step, each once.
 ALWAYS give each class its shape (record, class or interface), its fields with their Java types, its constructor parameters and every method signature with what it does.
 ALWAYS use only the classes listed in the earlier designs, the classes this step creates, and the JDK.

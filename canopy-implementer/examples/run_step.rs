@@ -313,6 +313,25 @@ name of exactly 50 characters is accepted.",
     ..WIDGETS_PLANNED
 };
 
+/// The order story on plain Java, run as a plan the Planner made (--plan). Plans choose their own class names, so
+/// there is no API-independent acceptance test: acceptance is that the whole suite passes after the last step.
+const ORDER_PLANNED: Task = Task {
+    name: "order-planned",
+    default_tag: "baseline-order-001",
+    instruction: "A customer can place an order for a product in a quantity. The order total is the product price \
+times the quantity, less 10 percent when that net total is 500.00 or more. A quantity that is zero or negative is \
+rejected. A placed order can be looked up by its id.",
+    context: "Root package: no.experis.orders.\nBuild: Maven, Java 21, JUnit 5; no framework. Do not change pom.xml.",
+    files: &[],
+    hidden_test: "package no.experis.orders;\n\nimport org.junit.jupiter.api.Test;\n\nclass OrderSuiteHiddenTest {\n    @Test\n    void theWholeSuiteRuns() {}\n}\n",
+    preserved_tests: &[],
+    tools: true,
+    repo: "java-orders",
+    hidden_test_path: "src/test/java/no/experis/orders/OrderSuiteHiddenTest.java",
+    min_tests_added: 4,
+    untouched: &["pom.xml"],
+};
+
 /// What the finished widgets slice must look like, which behaviour alone cannot show: every layer exists,
 /// each is connected to the next, and the controller reaches the repository only through the service.
 const WIDGETS_STRUCTURE: &[Check] = &[
@@ -361,14 +380,15 @@ fn task(name: &str) -> Result<Task, String> {
         "widgets-planned" => Ok(WIDGETS_PLANNED),
         "widgets-create" => Ok(WIDGETS_CREATE),
         "widgets-invalid" => Ok(WIDGETS_INVALID),
+        "order-planned" => Ok(ORDER_PLANNED),
         other => Err(format!(
-            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned, widgets-planned, widgets-create, widgets-invalid"
+            "unknown task {other}; known: create, trim, nav, pasted, hi, naming, vat, naming-planned, vat-planned, widgets-planned, widgets-create, widgets-invalid, order-planned"
         )),
     }
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces]";
 
 struct Config {
     task: String,
@@ -436,7 +456,7 @@ fn parse_args() -> Result<Config, String> {
     let chosen = task(&config.task)?;
     // The widgets stories have no hand-written plan: they are run with a plan the Planner made (--plan).
     let takes_a_plan =
-        plan_for(chosen.name).is_some() || chosen.name == "widgets-create" || chosen.name == "widgets-invalid";
+        plan_for(chosen.name).is_some() || chosen.name == "widgets-create" || chosen.name == "widgets-invalid" || chosen.name == "order-planned";
     if config.plan.is_some() && !takes_a_plan {
         return Err(format!("--plan needs a planned task, and {} has no plan", chosen.name));
     }

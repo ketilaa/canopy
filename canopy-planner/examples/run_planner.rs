@@ -68,6 +68,16 @@ const WIDGETS_INVALID: Task = Task {
     golden: None,
 };
 
+const ORDER: Task = Task {
+    name: "order",
+    repo: "java-orders",
+    tag: "baseline-order-001",
+    feature_path: "tasks/order/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/order/feature.feature"),
+    story: "A customer can place an order for a product in a quantity. The order total is the product price times the quantity, less 10 percent when that net total is 500.00 or more. A quantity that is zero or negative is rejected. A placed order can be looked up by its id.",
+    golden: None,
+};
+
 struct Config {
     task: String,
     runs: u32,
@@ -77,7 +87,7 @@ struct Config {
     out: PathBuf,
 }
 
-const USAGE: &str = "usage: run_planner [--task widgets|widgets-create|widgets-invalid] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]";
+const USAGE: &str = "usage: run_planner [--task widgets|widgets-create|widgets-invalid|order] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]";
 
 fn parse_args() -> Result<Config, String> {
     let mut config = Config {
@@ -110,8 +120,9 @@ fn task(name: &str) -> Result<&'static Task, String> {
         "widgets" => Ok(&WIDGETS),
         "widgets-create" => Ok(&WIDGETS_CREATE),
         "widgets-invalid" => Ok(&WIDGETS_INVALID),
+        "order" => Ok(&ORDER),
         other => Err(format!(
-            "unknown task {other}; known: widgets, widgets-create, widgets-invalid"
+            "unknown task {other}; known: widgets, widgets-create, widgets-invalid, order"
         )),
     }
 }

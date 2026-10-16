@@ -47,8 +47,8 @@ pub enum FactsError {
     Contract(String),
     #[error("the repository has no pom.xml; only Maven repositories are supported")]
     NoBuildFile,
-    #[error("no class annotated @SpringBootApplication under src/main/java, so there is no root package")]
-    NoApplicationClass,
+    #[error("no class annotated @SpringBootApplication under src/main/java and no <groupId> in pom.xml, so there is no root package")]
+    NoRootPackage,
 }
 
 impl RepoFacts {
@@ -58,7 +58,9 @@ impl RepoFacts {
         let mut files = Vec::new();
         walk(root, &root.join("src"), &mut files);
         files.sort();
-        let root_package = application_package(root, &files).ok_or(FactsError::NoApplicationClass)?;
+        let root_package = application_package(root, &files)
+            .or_else(|| group_id(&pom))
+            .ok_or(FactsError::NoRootPackage)?;
         let classes_under = |prefix: &str| -> Vec<String> {
             files
                 .iter()
@@ -245,6 +247,14 @@ fn application_package(root: &Path, files: &[String]) -> Option<String> {
         .and_then(|f| java::package_of(f))
 }
 
+/// The project's own `<groupId>`, not the parent's or a dependency's.
+fn group_id(pom: &str) -> Option<String> {
+    let own = ["parent", "dependencies", "dependencyManagement", "build"]
+        .iter()
+        .fold(pom.to_string(), |xml, tag| without(&xml, tag));
+    element(&own, "groupId").map(str::to_string)
+}
+
 fn strip_comments(xml: &str) -> String {
     let mut out = String::new();
     let mut rest = xml;
@@ -363,7 +373,32 @@ mod tests {
     }
 
     #[test]
-    fn a_repository_without_a_spring_boot_application_class_is_an_error() {
+    fn a_repository_without_an_application_class_takes_the_pom_group_id_as_its_root_package() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "pom.xml",
+            "<project><groupId>no.experis.orders</groupId><artifactId>orders</artifactId></project>",
+        );
+        let facts = RepoFacts::collect(dir.path()).unwrap();
+        assert_eq!(facts.root_package, "no.experis.orders");
+        assert_eq!(facts.spring_boot_version, None);
+    }
+
+    #[test]
+    fn the_application_class_package_wins_over_the_pom_group_id() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "pom.xml", POM);
+        write(
+            dir.path(),
+            "src/main/java/com/example/app/App.java",
+            "package com.example.app;\n@SpringBootApplication\nclass App {}\n",
+        );
+        assert_eq!(RepoFacts::collect(dir.path()).unwrap().root_package, "com.example.app");
+    }
+
+    #[test]
+    fn a_repository_with_neither_an_application_class_nor_a_group_id_has_no_root_package() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "pom.xml", POM);
         write(
@@ -371,7 +406,7 @@ mod tests {
             "src/main/java/com/example/Plain.java",
             "package com.example;\nclass Plain {}\n",
         );
-        assert_eq!(RepoFacts::collect(dir.path()), Err(FactsError::NoApplicationClass));
+        assert_eq!(RepoFacts::collect(dir.path()), Err(FactsError::NoRootPackage));
     }
 
     #[test]

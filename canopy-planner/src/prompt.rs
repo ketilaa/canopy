@@ -22,7 +22,7 @@ pub struct Previous<'a> {
 fn rules() -> String {
     format!(
         "\
-You write implementation plans for a Java 21 Spring Boot 3.4 Maven project.
+You write implementation plans for a Java Maven project.
 ALWAYS write each instruction so it stands alone: name the package, every class and every method signature with what it does.
 ALWAYS state in each instruction every test the step needs: the exact input values and the expected result.
 ALWAYS state in each instruction how a test builds the objects it uses: which constructors, which arguments.
@@ -214,6 +214,12 @@ mod tests {
             !system.contains("covers"),
             "those rules sit next to their content: {system}"
         );
+    }
+
+    #[test]
+    fn the_system_message_names_no_framework_the_repository_facts_state_it() {
+        let (system, _) = user_text(None);
+        assert!(!system.contains("Spring"), "{system}");
     }
 
     #[test]
