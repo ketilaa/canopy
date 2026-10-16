@@ -16,10 +16,14 @@ ALWAYS write tests with JUnit 5 (org.junit.jupiter.api) under src/test/java, in 
 NEVER change pom.xml or any file the step does not name or require.";
 
 /// `current` is what the step's existing files contain right now (a file that does not exist yet is simply absent).
-const TOOL_RULES: &str = "\
-You change files in a Java Maven project, one task at a time.
+const TOOL_RULES_HEAD: &str = "You change files in a Java Maven project, one task at a time.";
+
+/// Left out of a retry that shows the previous files: they are shown, so there is nothing to find.
+const TOOL_READ_RULES: &str = "\
 ALWAYS use glob and read_file to find and read the files you need.
-ALWAYS read an existing file with read_file before you change it.
+ALWAYS read an existing file with read_file before you change it.";
+
+const TOOL_RULES: &str = "\
 ALWAYS finish by calling submit_files with the complete content of every file you create or change.
 ALWAYS keep the existing code and tests of a file you change, except what the task asks you to change.
 ALWAYS include a test for every behaviour you add or change.
@@ -113,7 +117,11 @@ pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&F
             _ => "\nStart again: read the files again before you change them, then call submit_files.\n",
         });
     }
-    let mut rules = TOOL_RULES.to_string();
+    let previous_files_shown = previous.is_some_and(|failure| failure.files.is_some());
+    let mut rules = match previous_files_shown {
+        true => format!("{TOOL_RULES_HEAD}\n{TOOL_RULES}"),
+        false => format!("{TOOL_RULES_HEAD}\n{TOOL_READ_RULES}\n{TOOL_RULES}"),
+    };
     if !step.scope.is_empty() {
         rules.push_str(
             "\nALWAYS submit the files listed under \"Files to change\" and \"Files to create\", each at exactly its \
@@ -253,6 +261,26 @@ mod tests {
         let rules = &messages(&step(), &[], None)[0].content;
         assert!(rules.contains("ALWAYS keep"), "{rules}");
     }
+    #[test]
+    fn a_retry_that_shows_the_previous_files_is_not_told_to_go_and_find_files() {
+        let read_rules = ["ALWAYS use glob and read_file", "ALWAYS read an existing file with read_file"];
+        let (first, _) = tool_messages(&step(), &ShownFiles::default(), None);
+        for rule in read_rules {
+            assert!(first.contains(rule), "a first attempt reads what exists: {first}");
+        }
+        let compile = failure(Stage::Compile, "G.java:1:1: boom", true);
+        let (retry, _) = tool_messages(&step(), &ShownFiles::default(), Some(&compile));
+        for rule in read_rules {
+            assert!(!retry.contains(rule), "the files are shown, so there is nothing to find: {retry}");
+        }
+        assert!(retry.contains("ALWAYS finish by calling submit_files"), "{retry}");
+        let budget = failure(Stage::Budget, "used up", false);
+        let (spent, _) = tool_messages(&step(), &ShownFiles::default(), Some(&budget));
+        for rule in read_rules {
+            assert!(spent.contains(rule), "no previous files were shown, so reading is still how it starts: {spent}");
+        }
+    }
+
     #[test]
     fn the_tool_prompt_states_the_rules_the_task_and_the_project_and_does_not_show_files() {
         let (system, user) = tool_messages(&step(), &ShownFiles::default(), None);
