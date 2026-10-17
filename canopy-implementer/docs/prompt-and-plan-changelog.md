@@ -152,6 +152,11 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   107 (36%). Caveats: all but 2 of the retries are from the widgets stories on earlier prompts and retry text;
   the order-plan batches of 10-14..16 are not stored, and today's batches had only 2 retries (both identical).
   Generality: `one-story` family (widgets, Spring) plus the order plan, n large for widgets, tiny for order.
+  **Comparability warning (added the same day, on the user's correction):** those runs carry far more context noise
+  than the current prompts (long per-step contexts with conventions, designs, scenario text, stereotype and
+  namespace lines; the contradictory read/retry rules). Their rates (43% identical retries, 61% first-attempt pass,
+  22% for a restart, 43% recovery) are history, not evidence about the current Implementer, whose order plan
+  passes first attempt 100 of 101 times. Do not carry the numbers over.
 - **New failure class seen (not acted on):** a retry that resubmits the identical files after feedback that names
   the error. The harness has a `NoChange` stage for "same as what is in the repository", but a restored workspace
   hides this case. Whether to detect it (and what to tell the model) is a separate change, to be proposed first.
@@ -210,4 +215,13 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   case are not independent (the case-level counts above are the cautious view); one model, one run of the batch.
 - **Generality:** `one-story` family (widgets, Spring) with n=40 per variant. No order-plan cases (it almost
   never fails on the current prompts: 100 of 101 step runs passed first attempt today).
-- **Status:** measured; no change adopted. Next decisions are in the conversation (restart from zero, fix loop).
+- **Comparability warning (added on the user's correction):** all 20 cases come from the noisy-context era
+  (long convention-laden step contexts, the read-rule contradiction). R1 is a paired comparison on identical
+  prompts, so the *difference between variants* is internally valid, but its size, and the recovery rates, belong
+  to that noisy context; it may not hold on the current clean prompt, where a failure is rare. The same applies
+  to the leave-one-out analysis (a restart from zero passing at 22% on failing steps): that is a property of
+  noisy-era steps. Nothing from R1 or the prevalence note justifies a change to the current Implementer yet.
+  To replicate, the cases must come from the current prompt (see below).
+- **Status:** measured on noisy-era cases; no change adopted; replication on current-prompt failures is the next
+  step (a source of such failures is needed: the whole order story as one step failed 6 of 10 times on the
+  current prompt in the 2026-10-16 batch SB).
