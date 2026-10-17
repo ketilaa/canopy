@@ -490,3 +490,22 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   of one side per attempt is not an information problem and the next candidate is a restart.
 - **Generality:** `none`; one story, one failure fact.
 - **Status:** queued.
+
+### C10. A Java fact stated up front in the project context (`--context-extra`, measurement)
+- **Where:** `run_step --context-extra "<text>"` appends a line to the Project context of every step (no prompt
+  file changed; the text below is the experiment's variable). Commit: see the git log entry "Add --context-extra".
+- **Text (cell "fact"):** "Java fact: BigDecimal.equals compares the scale, so 0 and 0.00 are not equal. Give a
+  method's BigDecimal result the same scale in every branch, and write expected values in tests with that scale."
+- **Why:** C8/C9: repair at retry rescued order L3 (8 of 13 retries) but almost nothing on loans, where the first
+  attempt is already wrong in 10 of 10 runs; prevention at the first attempt is the other place to act. The project
+  context already states stack facts of this kind for other tasks (namespace, available libraries), so this is the
+  same tier: a fact, not a rule about one bug. (`CLAUDE.md` warns against rules for one observed failure; the
+  evidence here is two stories and one Java fact, which this experiment tests, it does not adopt.)
+- **Prediction (before the runs):** loans L2 (`lean`, baseline: step 1 passed first attempt in 0 of 10 runs): at least
+  4 of 10 runs pass step 1 at the first attempt. Order L3 (`lean`, baseline: 8 of 13 step starts failed the first
+  attempt): at most 3 of 10 step-1 first attempts fail; hidden pass stays at 2 of 10 or fewer (the plan still omits
+  message and boundary). **Falsified** if loans L2 passes step 1 at the first attempt in 1 or fewer runs: a model
+  that ignores the error text and the hint also ignores a fact stated up front, and the way forward is not more
+  words but a different mechanism (a check against the plan's contract, or a restart).
+- **Generality:** `none`; two stories, one library fact, one model.
+- **Status:** queued.

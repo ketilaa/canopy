@@ -446,7 +446,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona] [--retry feedback|restart] [--scale-hint] [--scale-hint-sides]";
+    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona] [--retry feedback|restart] [--scale-hint] [--scale-hint-sides] [--context-extra TEXT]";
 
 struct Config {
     task: String,
@@ -472,6 +472,8 @@ struct Config {
     scale_hint: bool,
     /// The scale hint also names which value the code returned and which the test expected (`--scale-hint-sides`).
     scale_hint_sides: bool,
+    /// A line added to the project context of every step (`--context-extra "<text>"`), for measuring a stated fact.
+    context_extra: String,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -493,6 +495,7 @@ fn parse_args() -> Result<Config, String> {
         retry: Default::default(),
         scale_hint: false,
         scale_hint_sides: false,
+        context_extra: String::new(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -519,6 +522,7 @@ fn parse_args() -> Result<Config, String> {
             "--surfaces" => config.surfaces = true,
             "--scale-hint" => config.scale_hint = true,
             "--scale-hint-sides" => config.scale_hint_sides = true,
+            "--context-extra" => config.context_extra = value("--context-extra")?,
             "--retry" => {
                 let name = value("--retry")?;
                 config.retry = canopy_implementer::implementer::RetryMode::parse(&name)
@@ -1007,7 +1011,11 @@ fn main() {
 
 fn real_main() -> Result<(), String> {
     let config = parse_args()?;
-    let task = task(&config.task)?;
+    let mut task = task(&config.task)?;
+    if !config.context_extra.is_empty() {
+        let text = format!("{}\n{}", task.context, config.context_extra);
+        task.context = Box::leak(text.into_boxed_str());
+    }
     if !config.repo.join(".git").exists() {
         return Err(format!("{} is not a git repository", config.repo.display()));
     }
