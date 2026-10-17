@@ -320,7 +320,33 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   failed answer in 10% or more or recovers no more than `current`.
 - **Generality:** `one-story`, narrow failure mode, one model. Says whether a retry can work on the failures of
   the current prompt that we have; says nothing about other kinds of failure.
-- **Status:** running.
+- **Result (stopped early to free the GPU for G1: 7 of 12 cases complete, 4 samples each, 28 answers per
+  variant; the unfinished cases are not counted):**
+
+  | variant | answers | identical to the failed answer | passed (compile + tests) | cases recovered at least once |
+  |---|---|---|---|---|
+  | `current` (as sent) | 28 | 27 (96%) | 1 (4%) | 1/7 |
+  | `fresh` (error only) | 28 | 0 | 4 (14%) | 1/7 |
+  | `located` (+ failing lines) | 28 | 27 (96%) | 1 (4%) | 1/7 |
+  | `blank` (restart from zero) | 28 | 0 | **10 (36%)** | **4/7** |
+
+  Predictions: `current` repeats at least 70% and recovers at most 10%: held (96%, 4%). `fresh` repeats under 10%:
+  held (0%); `fresh` recovers at least 15 points more than `current`: **not held** (14% vs 4%, +10). `located` no
+  better than `current`: held. `blank` no better than `fresh`: **falsified: 10 passes against 4** (one-sided
+  Fisher about p=0.06 on answers, with 28 answers drawn from 7 cases). By the logged rule this supports the restart
+  idea over the failure-text idea on these cases: with the failed code in the prompt the model copies it, without it
+  the model still fails the same way most of the time, and a clean restart does about as well as the base rate
+  of the step.
+- **Where `blank` wins and loses:** it recovers 4 of 4 on the one case from a step that usually passes (an L2
+  plan, first-attempt pass 8 of 10) and 0 to 1 of 4 on the six cases from the one-line plan (first-attempt pass 2 of
+  11): `blank` recovers at about the step's own first-attempt rate, which is the independence a restart relies on.
+  Restart therefore helps where the plan is adequate and the failure was bad luck, and does not rescue a plan
+  that lacks the details (see C6). Audit refusals occurred in 18 of the 112 conversations and the model fixed them.
+- **Caveats:** 7 cases, 6 of them the same scale mismatch from one plan; one model; 4 samples per case are not
+  independent. Not a basis for changing the Implementer by itself; it is a reason to make a restart a candidate in
+  the next recovery experiment inside the real harness rather than only in a replay.
+- **Generality:** `one-story`, one narrow failure mode, current prompt.
+- **Status:** measured (partial); the real-harness test of a restart-from-zero retry is a candidate, not done.
 
 ### G1. Generalising within Java: three new greenfield stories, detail levels, and lean vs current (user's direction, 2026-10-17)
 - **Direction (from the user):** generalise within the Java ecosystem before raising the bar by modifying existing
