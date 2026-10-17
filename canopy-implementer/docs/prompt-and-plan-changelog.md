@@ -507,5 +507,32 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   message and boundary). **Falsified** if loans L2 passes step 1 at the first attempt in 1 or fewer runs: a model
   that ignores the error text and the hint also ignores a fact stated up front, and the way forward is not more
   words but a different mechanism (a check against the plan's contract, or a restart).
+- **Result, loans L2 (`lean`, n=10, fact in the project context):** hidden 0/10; step 1 passed in **0 of 10 runs
+  at the first attempt** (baseline 0 of 10); retries identical to the failed answer 19 of 20 (baseline 20 of 20);
+  0 recovered. Prediction (at least 4 of 10 pass at the first attempt) **falsified**, and the logged falsifier holds
+  (1 or fewer). The model that ignores the error text, and mostly the hint, also ignores a fact stated up front.
+  The order L3 result follows when it is in.
 - **Generality:** `none`; two stories, one library fact, one model.
-- **Status:** queued.
+- **Status:** `refuted` on loans.
+
+### G1 interim results (2026-10-17, `lean` unless stated; the loans and shipping cells; n=10)
+| Cell | hidden passed | runs that completed all steps | step starts passed | first-attempt step failures | retries identical / recovered |
+|---|---|---|---|---|---|
+| order L2 `current` (E2) | 8/10 | 8 | 16/18 | 2 | 4 of 4 / 0 |
+| order L2 `lean` | **9/10** | 9 | 18/19 | 2 | 2 of 3 / 1 |
+| order L3 `current` (E3) | 0/10 | 1 | 2/11 | 9 | 16 of 18 / 0 |
+| order L3 `lean` | 0/10 | 3 | 6/13 | 8 | 14 of 15 / 1 |
+| loans L2 `lean` | **0/10** | 0 | 0/10 | 10 | 20 of 20 / 0 |
+| loans L3 `lean` | 0/10 | 1 | 2/11 | 10 | 18 of 19 / 1 |
+| shipping L2 `lean` | 5/10 | 5 | 14/19 | 7 | 7 of 12 / 2 |
+- **lean vs current (prediction 1):** order L2: lean 9/10 against current 8/10; order L3: both 0/10 with the same
+  failure mode and the same identical retries. Nothing in four comparisons says the extra rules help; lean is at
+  least as good where it was measured. (Stories other than order have only `lean` so far.)
+- **detail generalises? (prediction 2):** order L2 9/10 and L3 0/10 hold. **Loans L2 is 0/10**: not because the plan
+  lacks detail but because every first attempt fails on one Java fact (BigDecimal scale, see C8-C10) that no stated
+  fact or hint fixed. Shipping L2 is 5/10, one short of my bar (6 of 10); its failures are a mix of that scale fact
+  (`expected <4.00> but was <4>`) and wrong values the model computed (a base price of 2.50, free shipping not
+  applied). So "L2 carries enough" holds for order only; for loans it fails for a reason that is not the plan.
+- **Reading so far:** the model's first attempt is the limiting step, in two of three stories it fails on the same
+  Java fact, and the repair mechanisms (feedback, hint, fact, sides) mostly do not change that. What worked
+  was a retry hint on the one-line order plan (C8). Remaining cells are queued: shipping L3, stock L2 and L3.
