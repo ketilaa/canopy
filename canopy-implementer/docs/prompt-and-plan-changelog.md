@@ -162,3 +162,29 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Status:** `plan-checklist.yaml` kept as the order plan for the next experiments (musts covered, one failure
   in 10 to watch). The harness-tracking arm is **not needed for these musts** (compliance 10/10); it stays an
   option for musts the checklist does not get followed on.
+
+### R1. Retry replay: what should a retry show about the failure? (measurement, no prompt change yet)
+- **Where:** `examples/retry_replay.rs`, `src/replay.rs` (commit `47bf380`). Changes nothing the Implementer says;
+  it replays stored retry prompts against the model in three variants and builds each changed answer.
+- **Why:** 43% of stored retries resubmitted the failed files unchanged and none of those recovered (see C4's
+  prevalence note). Hypothesis (the user's): the previous answer, shown in full in a fresh retry conversation,
+  anchors the model into copying it; a retry should not carry the code that does not work.
+- **Variants** (system rules and the rest of the prompt as recorded; the two "read files" rules are removed from the
+  system prompt in all three, as a retry that shows files has it): `current` = previous answer plus the error as
+  sent; `fresh` = previous answer left out, the error kept; `located` = previous answer kept plus a
+  `## Where it failed` block quoting the source lines the error points at.
+- **Prediction (before the batch):** `current` repeats the failed files in at least 40% of answers (history: 43%);
+  `fresh` repeats in under 10% (it has nothing to copy); `located` repeats less than `current`. Recovery
+  (compile and tests pass) is the real measure: `fresh` at least as good as `current`.
+  **Falsified if** `fresh` recovers at least 10 points fewer than `current` (it rewrites from scratch and
+  reintroduces bugs, or spends its tool budget exploring), in which case the previous answer is helping and the
+  next step is a better feedback text (`located`), not removing the code.
+- **Deviations from the real harness (known):** the import audit and scope refusals are not applied (raw answer);
+  cases come from earlier prompts and stories (mostly the Spring widgets story, 2026-10-08..12) plus 2 from today;
+  n per variant is small.
+- **Smoke run (n=1 per variant, 2 cases, not a result):** a replay with only one model turn per answer counted
+  `glob`/`read_file` openings as "no answer"; fixed by carrying out tool calls against the rebuilt repository.
+  In `fresh` the model goes looking for the files it is to create (glob/read) far more than in `current`: an
+  effect of the variant, counted against the tool budget as in the real harness.
+- **Generality:** `none` yet.
+- **Status:** running.
