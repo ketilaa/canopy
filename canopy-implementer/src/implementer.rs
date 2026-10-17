@@ -152,6 +152,8 @@ pub struct Implementer {
     prompt: prompt::PromptVariant,
     /// What a retry after a failed build shows.
     retry: RetryMode,
+    /// Whether a test failure that is the same number at two scales gets the BigDecimal scale hint.
+    scale_hint: bool,
 }
 
 /// The files a step may create or change (empty when it is unscoped).
@@ -178,6 +180,12 @@ impl Implementer {
         self
     }
 
+    /// Adds the BigDecimal scale hint to a test failure that is the same number at two scales (off by default).
+    pub fn with_scale_hint(mut self, on: bool) -> Self {
+        self.scale_hint = on;
+        self
+    }
+
     /// Chooses what a retry after a failed compile or test shows the model.
     pub fn with_retry(mut self, retry: RetryMode) -> Self {
         self.retry = retry;
@@ -199,6 +207,7 @@ impl Implementer {
             surfaces: None,
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
+            scale_hint: false,
         }
     }
 
@@ -219,6 +228,7 @@ impl Implementer {
             surfaces: None,
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
+            scale_hint: false,
         }
     }
 
@@ -573,10 +583,13 @@ impl Implementer {
         let tested = self.build.test(root);
         if !tested.success {
             // The digest is what the build said; the hint is a fact the harness adds after it.
-            let feedback = match hints::subject_hint(&tested.digest, &files.paths(), &step_scope_paths(step), root) {
+            let mut feedback = match hints::subject_hint(&tested.digest, &files.paths(), &step_scope_paths(step), root) {
                 Some(hint) => format!("{}\n\n{hint}", tested.digest),
-                None => tested.digest,
+                None => tested.digest.clone(),
             };
+            if let Some(hint) = self.scale_hint.then(|| hints::scale_hint(&tested.digest)).flatten() {
+                feedback = format!("{feedback}\n\n{hint}");
+            }
             return Err(failure(Stage::Test, feedback, Some(files)));
         }
         Ok(())
@@ -1794,6 +1807,34 @@ mod tests {
         assert_eq!(requests[2], requests[0], "the retry is the first attempt's prompt, word for word");
         let ChatMessage::User(task) = &requests[2][1] else { panic!() };
         assert!(!task.contains("Your previous answer") && !task.contains("boom") && !task.contains("broken"), "{task}");
+    }
+
+    #[test]
+    fn the_scale_hint_is_added_to_a_scale_mismatch_when_switched_on_and_not_otherwise() {
+        let mismatch = "OrderTest.t:26 expected: <0> but was: <0.00>\nTests run: 4, Failures: 1, Errors: 0, Skipped: 0";
+        let retry_task = |hint: bool| {
+            let mut rig = tool_rig_with_tests(
+                vec![
+                    calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                    calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+                    calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                    calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+                ],
+                vec![],
+                vec![outcome(BuildKind::Test, false, mismatch)],
+                2,
+                ToolLimits::default(),
+            );
+            rig.implementer = rig.implementer.with_scale_hint(hint);
+            assert_eq!(rig.implementer.run_step(rig.dir.path(), &nav_step()), StepOutcome::Passed { attempts: 2 });
+            let requests = rig.requests.lock().unwrap();
+            let ChatMessage::User(task) = &requests[2][1] else { panic!() };
+            task.clone()
+        };
+        let with = retry_task(true);
+        assert!(with.contains(mismatch) && with.contains("compares the scale too"), "{with}");
+        let without = retry_task(false);
+        assert!(without.contains(mismatch) && !without.contains("compares the scale"), "{without}");
     }
 
     #[test]

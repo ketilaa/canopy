@@ -417,3 +417,29 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   claim that L3 loses details a restart cannot recover is wrong for that story.
 - **Generality:** `none`; at best `multi-story` for the retry mechanism (4 stories, current prompt era, one model).
 - **Status:** queued after G1 (run order in the queue: after the six `lean` cells of loans, shipping, stock).
+
+### C8. A BigDecimal scale hint on test failures (flag, off by default)
+- **Where:** `hints::scale_hint` in `src/hints.rs`, `Implementer::with_scale_hint`, `run_step --scale-hint`. Commit:
+  see the git log entry "Add a BigDecimal scale hint".
+- **What:** when a failed test line reads `expected: <A> but was: <B>` with A and B the same number written at
+  different scales, the harness adds one sentence of fact to the feedback: `BigDecimal.equals` compares the scale
+  too; give the value one scale in every branch of the code (an early `BigDecimal.ZERO` has scale 0) and write the
+  expected value with it, or compare with `compareTo`. It is a stated fact in the same family as `subject_hint` and
+  `import_hint`: the harness works it out, the model's files are never touched.
+- **Why (evidence on the current prompt):** the scale mismatch is the dominant first-attempt failure of the plans
+  that fail. Order L3 (`current`): 24 of 27 failure lines `expected <1080.00> but was <1080.000>`; order L3
+  (`lean`): 21 of 22; loans L2 (`lean`): 10 of 10 runs failed step 1 at the first attempt, 9 of them
+  `expected: <0> but was: <0.00>` (code returns `BigDecimal.ZERO` early and `setScale(2)` otherwise; the test expects
+  `BigDecimal.ZERO` for both), 20 of 20 retries identical to the failed answer. Two stories, one failure mode,
+  a Java library fact the model does not apply, and the error text alone does not make it fix it.
+- **Prediction (before the runs):** on loans L2 (`lean`, baseline hidden 0/10, step 1 passed 0 of 10 runs) with the
+  hint, at least 3 of 10 runs pass step 1 within three attempts and retries identical to the failed answer fall
+  from 20 of 20 to 12 of 20 or fewer. On order L3 (`lean`, baseline 0/10, 8 of 13 first attempts failed) with the
+  hint, at least 3 of 10 runs pass step 1 within three attempts; hidden pass stays at 2 of 10 or fewer, because
+  that plan also omits the message and the boundary.
+  **Falsified if** on loans L2 the identical-retry share stays at 18 of 20 or more: the model ignores a stated fact as
+  it ignores the error, the anchoring on its own code is the cause, and only a restart or a different repair path
+  can help.
+- **Generality:** `none` yet. Evidence for the need is two stories on plain Java; the fix targets one Java library
+  fact (BigDecimal scale), and says nothing about other facts a model might lack.
+- **Status:** untested (flag off by default).

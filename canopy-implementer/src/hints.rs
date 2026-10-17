@@ -84,6 +84,62 @@ pub fn import_hint(digest: &str, root: &Path) -> Option<String> {
     }
 }
 
+/// When an assertion failed with the same number written at two scales (`expected: <0> but was: <0.00>`), say what
+/// that is: `BigDecimal.equals` compares the scale as well as the value. A small model returns `BigDecimal.ZERO` in one
+/// branch and `setScale(2)` in another, or writes the expected value with another scale than its code produces, and
+/// repeats it however the failure is shown. The model's files are never touched.
+pub fn scale_hint(digest: &str) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for line in digest.lines() {
+        let Some((expected, actual)) = expected_and_actual(line) else { continue };
+        if expected == actual || !is_decimal(&expected) || !is_decimal(&actual) || !same_number(&expected, &actual) {
+            continue;
+        }
+        let hint = format!(
+            "{expected} and {actual} are the same number at different scales, and BigDecimal.equals compares the scale too, \
+             so assertEquals fails. Give the value one scale: make the code produce it in every branch (an early return of \
+             BigDecimal.ZERO has scale 0) and write the expected value in the test with the same number of decimals, or \
+             compare with compareTo."
+        );
+        if !lines.contains(&hint) {
+            lines.push(hint);
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+/// `...:25 expected: <0> but was: <0.00>` gives `("0", "0.00")`.
+fn expected_and_actual(line: &str) -> Option<(String, String)> {
+    let after = line.split_once("expected: <")?.1;
+    let (expected, rest) = after.split_once("> but was: <")?;
+    let (actual, _) = rest.split_once('>')?;
+    Some((expected.to_string(), actual.to_string()))
+}
+
+fn is_decimal(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let mut parts = digits.splitn(2, '.');
+    let whole = parts.next().unwrap_or("");
+    let fraction = parts.next();
+    !whole.is_empty()
+        && whole.chars().all(|c| c.is_ascii_digit())
+        && fraction.map_or(true, |f| !f.is_empty() && f.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Equal as numbers: the same after dropping trailing zeros of the fraction.
+fn same_number(a: &str, b: &str) -> bool {
+    fn normal(text: &str) -> String {
+        let text = if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.') } else { text };
+        let text = text.strip_prefix("-0").filter(|r| r.is_empty()).map(|_| "0").unwrap_or(text);
+        text.to_string()
+    }
+    normal(a) == normal(b)
+}
+
 /// `NameFormatterTest.trimsTheName:27 expected ...` or `...:17 » NullPointer ...` gives `NameFormatterTest`.
 fn failing_test_class(line: &str) -> Option<String> {
     let token = line.split_whitespace().next()?;
@@ -311,5 +367,21 @@ mod tests {
         let hint = import_hint(&digest, dir.path()).expect("a hint");
         assert_eq!(hint.matches("NameFormatter;").count(), 1, "{hint}");
         assert!(hint.contains("import java.util.List;"), "{hint}");
+    }
+
+    #[test]
+    fn the_same_number_at_two_scales_gets_a_hint_and_nothing_else_does() {
+        let hint = scale_hint("LoanTest.testLateFee:25 expected: <0> but was: <0.00>\nTests run: 2, Failures: 1").unwrap();
+        assert!(hint.contains("0 and 0.00") && hint.contains("compares the scale") && hint.contains("compareTo"), "{hint}");
+        let hint = scale_hint("OrderTest.t:26 expected: <1080.00> but was: <1080.000>").unwrap();
+        assert!(hint.contains("1080.00 and 1080.000"), "{hint}");
+        assert!(scale_hint("T.t:1 expected: <5.00> but was: <5.50>").is_none(), "different numbers");
+        assert!(scale_hint("T.t:1 expected: <5.00> but was: <5.00>").is_none(), "the same text");
+        assert!(scale_hint("T.t:1 expected: <abc> but was: <abc.0>").is_none(), "not numbers");
+        assert!(scale_hint("T.t:1 expected: <true> but was: <false>").is_none());
+        assert!(scale_hint("").is_none());
+        let twice = scale_hint("A.a:1 expected: <0> but was: <0.00>\nB.b:2 expected: <0> but was: <0.00>").unwrap();
+        assert_eq!(twice.lines().count(), 1, "one hint per distinct pair: {twice}");
+        assert!(scale_hint("T.t:1 expected: <-2.50> but was: <-2.5>").is_some());
     }
 }
