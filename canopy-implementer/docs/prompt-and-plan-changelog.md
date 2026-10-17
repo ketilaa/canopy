@@ -668,4 +668,12 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   "MUST contain one test for each item ... check the list" wording adds nothing (C14 fails exactly as prose does: the
   same `expected <0.00> but was <0>`-type scale mismatch in 27 of 30 failure lines) and is not needed (C13 passes without it).
   Generality: `one-story`, one failure mode (scale); order (C4) did not separate the two ingredients.
+- **Result C15 (shipping, `lean`, n=10, checklist plus the rule-coverage item):** hidden **9/10** (checklist 6/10, prose
+  5/10); all 10 runs completed both steps, 20 of 20 steps passed, 0 first-attempt failures (checklist: 1; prose: 7).
+  Prediction (at least 8 of 10): held. The falsifier (6 or fewer) did not occur. The one failure (run-08) is the same
+  defect as before, a 1-gram parcel costing 2.50: a rule-coverage item with values from other zones (999 g, 500 g)
+  fixed the gap in 9 of 10 runs and did not generalise to DOMESTIC 1 g in one. The item is derivable from the prose rule
+  ("up to 1000 grams the cost is the base price"): one more item for the threshold side the examples do not show.
+  Generality: `one-story`; the item names the gap I found in this story's hidden test, so this is evidence that coverage
+  items for unexemplified rules work, not that a Planner would find them unaided.
 - **Status:** queued.
