@@ -654,4 +654,18 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   - C16 passes in at least 9 of 10 runs (L2 10/10, the checklist should not hurt). **Falsified** if 7 or fewer: the
     checklist costs something on a story that already passes.
 - **Generality:** `none` yet; one model, plain Java, four small greenfield stories.
+- **Result C13/C14 (loans, `lean`, n=10 each; reference: checklist = values and wording 10/10, prose without values 0/10):**
+
+  | Plan | Hidden passed | Runs completing both steps | First-attempt step failures | Retries identical / recovered |
+  |---|---|---|---|---|
+  | values and wording (C11) | 10/10 | 10 | 1 of 20 | 0 of 1 / 1 |
+  | **C13 values only** | **10/10** | 10 | 2 of 20 | 0 of 2 / 2 |
+  | **C14 wording only** | **0/10** | 0 | 10 of 11 | 20 of 20 / 0 |
+  | prose, no values (L2) | 0/10 | 0 | 10 of 10 | 20 of 20 / 0 |
+
+  Predictions: C13 at least 7 of 10: held (10). C14 at most 2 of 10: held (0). The falsifiers (C13 four or fewer, C14
+  six or more) did not occur. On loans the active ingredient of the checklist is the concrete values; the
+  "MUST contain one test for each item ... check the list" wording adds nothing (C14 fails exactly as prose does: the
+  same `expected <0.00> but was <0>`-type scale mismatch in 27 of 30 failure lines) and is not needed (C13 passes without it).
+  Generality: `one-story`, one failure mode (scale); order (C4) did not separate the two ingredients.
 - **Status:** queued.
