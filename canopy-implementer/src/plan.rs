@@ -489,13 +489,19 @@ steps:
     }
 
     #[test]
-    fn the_loans_checklist_plan_has_the_shape_of_the_other_loans_plans_and_lists_its_tests() {
-        let checklist = Plan::from_yaml(include_str!("../tasks/loans/plan-checklist.yaml")).unwrap();
-        let signatures = Plan::from_yaml(include_str!("../tasks/loans/plan-signatures.yaml")).unwrap();
+    fn the_checklist_plans_have_the_shape_of_the_other_plans_of_their_story_and_list_their_tests() {
+        let stories = [
+            (include_str!("../tasks/loans/plan-checklist.yaml"), include_str!("../tasks/loans/plan-signatures.yaml")),
+            (include_str!("../tasks/shipping/plan-checklist.yaml"), include_str!("../tasks/shipping/plan-signatures.yaml")),
+        ];
         let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
-        assert_eq!(shape(&checklist), shape(&signatures));
-        for step in &checklist.steps {
-            assert!(step.instruction.contains("MUST") && step.instruction.contains("\n1. "), "{}", step.id);
+        for (checklist, signatures) in stories {
+            let checklist = Plan::from_yaml(checklist).unwrap();
+            let signatures = Plan::from_yaml(signatures).unwrap();
+            assert_eq!(shape(&checklist), shape(&signatures));
+            for step in &checklist.steps {
+                assert!(step.instruction.contains("MUST") && step.instruction.contains("\n1. "), "{}", step.id);
+            }
         }
     }
 

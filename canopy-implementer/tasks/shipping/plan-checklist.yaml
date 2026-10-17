@@ -1,0 +1,40 @@
+id: shipping
+story: |
+  The shipping cost of a parcel depends on its zone, weight and the order value. Each zone has a base price,
+  heavy parcels cost extra, domestic orders of high value ship free, and weights outside the allowed range are
+  rejected.
+feature: tasks/shipping/feature.feature
+steps:
+  - id: shipping-1-zone
+    instruction: |
+      Create the enum Zone in the package no.experis.shipping with the constants DOMESTIC, EUROPE and WORLD. Each has a base price, returned by the method BigDecimal basePrice() (two decimals).
+
+      Add ZoneTest. It MUST contain one test for each item of this checklist, and you must not leave any item out. Before you submit, go through the list and check that every item has its test.
+      1. Zone.DOMESTIC.basePrice() equals new BigDecimal("4.00").
+      2. Zone.EUROPE.basePrice() equals new BigDecimal("9.00").
+      3. Zone.WORLD.basePrice() equals new BigDecimal("15.00").
+    create:
+      - src/main/java/no/experis/shipping/Zone.java
+      - src/test/java/no/experis/shipping/ZoneTest.java
+    covers: [the-base-price-depends-on-the-zone]
+  - id: shipping-2-calculator
+    instruction: |
+      Create ShippingCalculator in the package no.experis.shipping with a no-argument constructor and the method BigDecimal cost(Zone zone, int weightGrams, BigDecimal orderValue). The cost is the zone's base price for a parcel of up to 1000 grams; above 1000 grams each started 500 grams adds 1.50 (1001 to 1500 grams add 1.50, 1501 to 2000 add 3.00, and so on). A weight below 1 or above 30000 grams makes it throw IllegalArgumentException with the message "Weight must be between 1 and 30000 grams". A DOMESTIC order with an orderValue of 100.00 or more ships free: the cost is 0.00. The other zones never ship free. The cost always has two decimals.
+
+      Add ShippingCalculatorTest. It MUST contain one test for each item of this checklist, and you must not leave any item out. Before you submit, go through the list and check that every item has its test. Use new ShippingCalculator(), and the expected costs as new BigDecimal with two decimals, for example new BigDecimal("4.00").
+      1. cost(Zone.DOMESTIC, 1000, new BigDecimal("50.00")) is 4.00.
+      2. cost(Zone.EUROPE, 1000, new BigDecimal("50.00")) is 9.00.
+      3. cost(Zone.WORLD, 1000, new BigDecimal("50.00")) is 15.00.
+      4. cost(Zone.DOMESTIC, 1001, new BigDecimal("50.00")) is 5.50.
+      5. cost(Zone.DOMESTIC, 1500, new BigDecimal("50.00")) is 5.50.
+      6. cost(Zone.DOMESTIC, 1501, new BigDecimal("50.00")) is 7.00.
+      7. cost(Zone.DOMESTIC, 30000, new BigDecimal("50.00")) is 91.00.
+      8. A weight of 0, of -5 and of 30001 each makes cost throw IllegalArgumentException with the message "Weight must be between 1 and 30000 grams".
+      9. cost(Zone.DOMESTIC, 2000, new BigDecimal("100.00")) is 0.00.
+      10. cost(Zone.EUROPE, 1000, new BigDecimal("500.00")) is 9.00.
+    create:
+      - src/main/java/no/experis/shipping/ShippingCalculator.java
+      - src/test/java/no/experis/shipping/ShippingCalculatorTest.java
+    read_only:
+      - src/main/java/no/experis/shipping/Zone.java
+    covers: [each-started-500-grams-above-1000-grams-adds-1-50, a-weight-outside-1-to-30000-grams-is-rejected, domestic-orders-worth-100-00-or-more-ship-free, other-zones-never-ship-free]

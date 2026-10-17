@@ -557,5 +557,27 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   and step 1 passes its first attempt in at least 7 of 10. **Falsified** if hidden pass is 2 or fewer: then even
   the concrete values do not get the model past the scale mistake, and the cure has to be a harness mechanism,
   not plan text.
+- **Result (loans, `lean`, n=10, `plan-checklist.yaml`):** hidden **10/10**; every run completed both steps (20 of 20
+  step starts passed); 1 first-attempt failure (a compile error in `LoanService`, recovered by a changed retry);
+  0 identical retries. Against loans L2 (same prompt, prose plan): hidden 0/10, 10 of 10 first attempts failed,
+  20 of 20 retries identical. Prediction (hidden at least 7 of 10, first attempts at least 7 of 10): **held, by a
+  wide margin** (10/10, 19 of 20 first attempts). The falsifier (2 or fewer) did not occur.
+- **Reading:** concrete test values, listed one per item and copied from the feature's example tables, removed the
+  failure that no hint, fact or restart could touch: the model wrote `new BigDecimal("0.00")` where the checklist
+  said so. A Planner can produce this plan shape mechanically from the Gherkin examples. With order (C4, 9/10) this
+  is two stories in which L1 >> L2 or L1 >= L2. The cost is plan length: the loans checklist plan is about twice
+  as long as its L2 plan; each step still carries 5 to 6 listed tests.
+- **Generality:** `one-story` for the number (n=10), with order as a second story where L1 also passed.
+- **Status:** kept as the loans plan shape that passes.
+
+### C12. Shipping at level L1: the checklist with the feature's example values (`tasks/shipping/plan-checklist.yaml`)
+- **Where:** `tasks/shipping/plan-checklist.yaml`; same steps, files and coverage as the other shipping plans (unit
+  test). Step 1 lists 3 tests, step 2 lists 10, values copied from the feature's example tables.
+- **Why:** C11: concrete values fixed loans (0/10 to 10/10). Shipping L2 is 5/10 and its failures mix the scale fact
+  and wrong computed values; this tests the same plan shape on a third story, of a different kind (tiered
+  computation).
+- **Prediction (before the run, `lean`, n=10):** shipping L1 passes the hidden test in at least 8 of 10 runs (L2 5/10, L3
+  1/10). **Falsified** if it is 5 or fewer: then concrete values are not a general lever, and the loans result
+  was about its particular failure.
 - **Generality:** `none`; one story, one model.
 - **Status:** queued.
