@@ -97,3 +97,20 @@ Planner must carry; if not, drop it and record that.
 - Run directories are scratch (`/private/tmp/...` scratchpad) and not kept; the change log holds the numbers.
 - The story repositories live in `dogfooding/java-<name>` (git-ignored, tag `baseline-<name>-001`); recreate them from the
   `java-orders` pom if missing (a pom with JUnit 5.10.0, compiler plugin 3.11.0, surefire 3.0.0, Java 21).
+
+## Outcome (2026-10-17, evening)
+
+- **A held** (stock with an API block 10/10), **B met its criterion** (3 of 4) but only as a necessary-condition check, and **R3 was
+  falsified** (restart equals feedback on all four L3 plans; the flag stays off). Numbers: change log, entries C17, "Plan audit", R3.
+- **The plan shape for a narrow step, as measured so far (the target the Planner must produce; one model, plain Java, four stories):**
+  1. the task sentence (what to create, where, the rules in prose with exact exception types, messages and scale);
+  2. an `API the tests use:` line listing constructors, accessors and method signatures as calls;
+  3. numbered test items with the feature's concrete values, each written as the call it asserts;
+  4. one item for the unexemplified side of each rule (shipping: up to 1000 g costs the base price);
+  5. the `MUST ... check the list` wording is optional (loans: values alone 10/10).
+  Not yet shown: that a Planner can derive 2 and 4 from a story and a feature without a human reading the hidden test.
+- **Deterministic checks a Planner loop could use as ground truth** (not built): every literal of the feature appears in the plan (the
+  audit); every signature a later step calls is in an earlier step's API line; every rule has an item on each side of its threshold.
+- **Next, in order:** (1) the residual first-attempt failures at L1/L2 (order 9/10, shipping 9/10): read them before choosing; (2) a
+  fifth greenfield story with a different shape (for example an event or state machine) to test the shape above on a story it was not
+  derived from; (3) `current` prompt arms for loans, shipping and stock. Brownfield and the Planner wait.
