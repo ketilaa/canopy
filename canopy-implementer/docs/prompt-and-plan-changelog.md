@@ -144,6 +144,14 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   **byte-identical answers**. One failure in 10 against 0 in 10 is not distinguishable from noise (and D1 has
   twice as many things to do in step 1), but the mechanism is plausible: a harder must produced a more elaborate
   test, which was the part that broke.
+- **Prevalence of the identical retry (measured afterwards, no change made):** over every stored Implementer
+  run with a retry (518 retries, `canopy-implementer/runs/` 2026-10-08..12 plus today's batches), 223 (43%)
+  resubmitted byte-identical files to the failed attempt before them: 146 of 228 after a test failure (64%), 64 of
+  232 after a compile failure (28%), 13 of 43 after a "stuck". **0 of the 223 recovered** (the build is
+  deterministic, so an identical submission fails identically); the 295 retries that changed their files recovered
+  107 (36%). Caveats: all but 2 of the retries are from the widgets stories on earlier prompts and retry text;
+  the order-plan batches of 10-14..16 are not stored, and today's batches had only 2 retries (both identical).
+  Generality: `one-story` family (widgets, Spring) plus the order plan, n large for widgets, tiny for order.
 - **New failure class seen (not acted on):** a retry that resubmits the identical files after feedback that names
   the error. The harness has a `NoChange` stage for "same as what is in the repository", but a restored workspace
   hides this case. Whether to detect it (and what to tell the model) is a separate change, to be proposed first.
