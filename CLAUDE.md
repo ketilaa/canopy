@@ -276,6 +276,9 @@ Tail it: `tail -f <project>/.canopy/logs/llm-debug.log`
 
 ## Tech-Stack Skills
 
+*This section describes the legacy `canopy-llm` pipeline. The rules about what a skill may or must not
+encode follow the retired house style: treat them as recorded knowledge, not as rules for new work.*
+
 `canopy implement` injects a **skill** into each per-service plan prompt based on the service's
 technology. A skill is a concise, authoritative rules block that tells the LLM the exact
 conventions for that tech stack — package layout, file paths, naming, forbidden patterns.
@@ -286,7 +289,7 @@ one of two shapes — legacy `namespace_rules` (shown in full regardless of laye
 layer-partitioned `common_rules` (every layer) + `layer_rules` (keyed by `detect_layer()`'s
 output, e.g. `"model"`, `"route"`, `"infrastructure"` — only the file's own layer's entry is
 injected). New skills should use the partitioned shape; it's what makes per-layer scoping
-(see Prompt House Style below) possible.
+(see the legacy house style) possible.
 
 Each skill has three render modes:
 
@@ -333,72 +336,37 @@ unless the story's acceptance criteria call for them. Architecture emerges story
 **Adding a new skill:** implement a builder function returning `TechStackSkill`, add a match arm
 in both `skill_for_technology` and `plan_skill_for_technology`, and document it in the table above.
 
-**Prefer structural placeholders over example entities.** Default to bracketed placeholders —
-`<entity>`, `<domain object>`, `<aggregate>`, `<event>` — rather than any concrete noun, even the
-project's own established `Widget`/`createWidget` convention. Live-verified reason: the reference
-model treats an example noun as a candidate answer, not just an illustration — a prompt showing
-"register an account" produced literal `account`-vocabulary output for a story about registering
-a manufacturer, and a later fix that swapped in `Widget` repeated three times in one example set
-was flagged for recreating the same anchoring risk with a different noun. Any concrete noun is a
-potential output token; a bracketed placeholder can't be copied literally because it isn't a real
-word. Field names: prefer `<fieldName>` over `name`/`optionalField` for the same reason, unless
-the concrete name is itself demonstrating a naming *convention* (see below).
-Only use a concrete noun (`Widget`/`createWidget`, never a project-specific one like `Product`)
-when the structure being taught genuinely requires an actual word — e.g. demonstrating a
-camelCase-vs-PascalCase transformation, or a multi-field validation shape a bracket alone can't
-convey. When in doubt, remove the noun. The pattern is established in the Models section of
-`node_express_skill()` — that file predates this refinement and is a lower-priority candidate for
-a future pass, not a template to copy into new work.
+*(The "prefer structural placeholders over example entities" guidance that stood here moved to
+`docs/principles/prompt-house-style-legacy.md`, with the rest of the retired house style.)*
 
 ---
 
-## Prompt House Style
+## Prompt Style and Working Course (from 2026-10-17)
 
-Every string sent to the model — skills and prompts alike, across `canopy-llm/src/prompts/*.rs`
-and `canopy-llm/src/skills/*.rs` — follows the same rules:
+**The Prompt House Style is deprecated.** Its content is kept, unchanged, as recorded knowledge in
+`docs/principles/prompt-house-style-legacy.md`: each rule there is a hypothesis with an origin, not a rule
+that new work must follow. `canopy-prompt-reviewer` is advisory, not a gate.
 
-- **ALWAYS/NEVER, not paragraphs.** State a rule as `ALWAYS <imperative>.` / `NEVER <imperative>.`,
-  not a multi-sentence explanation mixing the rule with its rationale. Short example fragments
-  (1-4 lines of code) are encouraged — this is a "no restated rationale" rule, not a
-  "no examples" rule.
-- **No duplicate injection.** The same rule must not reach the model twice in one call, even
-  worded differently — e.g. a rule stated once via a tech-stack skill's layer section and again
-  in a separate IMPORTANT-list bullet in the same prompt. Trace every section a changed string
-  feeds into before assuming it's the only copy.
-- **Proximity.** A rule sits next to the content it governs. An instruction far from the thing
-  it constrains is a known failure mode for the local reference model ("lost in the middle") —
-  even a correct, well-worded rule gets ignored if it's positioned far from its subject.
-- **Layer-scoping correctness.** A `layer_rules` entry must be keyed to the layer that actually
-  needs it. A rule filed under the wrong layer key (e.g. a *route*-file rule accidentally placed
-  under `"app"`) is correctly worded but never reaches the file it's meant to constrain — this
-  bug produces no error, just silent non-compliance, since layer-scoped rendering only sends the
-  matching layer's rules.
-- **Prefer exhaustive enumeration over holistic review.** When a prompt asks the model to review
-  a known, boundable set of items (fields, constraints, scenarios, behaviors, dependencies,
-  clusters) for gaps, ALWAYS have it iterate the set explicitly rather than judge it holistically
-  — a small model reliably misses items under open-ended review that it catches under explicit
-  enumeration. Only fall back to holistic phrasing when no bounded set exists to enumerate.
-  BAD:  "Review the specification and identify missing constraints."
-  GOOD: "For each field: for each constraint: determine whether coverage exists."
-  GOOD: "For each scenario: determine whether at least one behavior was produced."
-  Confirmed live: Stage 0's original constraint audit ("review for gaps") found 4 of 9 real gaps;
-  rewriting it as an explicit field × constraint traversal found all 9. The same shift fixed
-  Stage 1 behavior extraction, dependency review, and clustering review.
-- **Prompts teach; they do not enforce.** The local model cannot be trusted to follow a correct,
-  well-placed instruction reliably (a paragraph break moved one compliance probability from 0.458
-  to 0.058; three escalating prompt fixes for one failure failed identically). Verify with
-  `llm-debug.log` that an instruction reached the prompt before blaming the model, but when
-  something must hold, enforce it with the output type, the filesystem, the compiler or the test
-  runner — see the escalation order under Principles. A prompt change needs a measured delta, not
-  an impression; a longer WRONG/CORRECT example is a last resort. Still forbidden: Rust code that
-  rewrites the *meaning* of model output (path injectors, semantic post-processors). Allowed and
-  encouraged: **deterministic audits** (compare an artifact against an independently-known fact and
-  reject), **restoring state** after a failed step, retrying with specific feedback, and
-  **rendering text from validated fields**. The test: does the Rust code change what the model
-  meant, or only accept, reject, restore or format it?
+Why: the 2026-10 order-story experiments (`docs/reports/order-plain-java.md`) showed prompts and schemas built
+to that style raising plan validity (4/10 to 10/10) without raising the Implementer pass rate (0 to 1 in 10),
+while the largest Implementer bug was two rules contradicting each other, fixed by removing text.
 
-Use the `canopy-prompt-reviewer` subagent (`.claude/agents/canopy-prompt-reviewer.md`) to check
-prompt/skill changes against these rules before installing.
+The course for the standalone Planner and Implementer (`canopy-planner/`, `canopy-implementer/`); the detailed,
+resumable plan is `docs/design/implementer-first-course.md`:
+
+1. **Implementer first.** Get the Implementer to 10/10 on hand-written plans, stripping everything down to
+   the bare bones if that is what it takes.
+2. **Then generalize.** A second story, then vary one factor of the plan at a time (step size, instruction
+   detail, where behaviour sits, test-first or not) to learn what a good plan and a good plan step are.
+3. **Then the Planner.** It is taught to produce the plans that were measured to pass, and it is scored by
+   whether the Implementer passes them. Plan validity is not a success metric.
+
+The solution space is open. Prompt text, response schemas, tools, the interaction protocol (for example
+persistent files plus a `check` tool instead of an atomic submit with rollback), what the context contains,
+the context window, and the harness itself are all candidates. Habits that hold up regardless of style:
+read the prompt for contradictions before adding anything; subtract before adding; judge a change by a
+measured downstream outcome in a paired run (n=10 or more), not by an impression or by plan validity;
+rebuild the example binary after any rename and read the first run's output before calling a batch running.
 
 ---
 
@@ -466,8 +434,8 @@ Gated code that goes beyond restore/retry/audit/render still needs a proposal an
    prompt.** Fix the discovery or skill prompt to make the requirement clearer; do not add Rust
    safety nets (path injectors, output filters, post-generation reordering). The prompt is the
    design; the model should get it right because the context is good, not because Rust patches
-   the output. See Prompt House Style above for how to fix a prompt the model isn't complying
-   with.
+   the output. For how prompts were fixed under the retired house style, see
+   `docs/principles/prompt-house-style-legacy.md`; read the prompt for contradictions first.
 3. **Only once tiers 1 and 2 are genuinely exhausted — a real compliance limitation, not a
    missing-lookup or missing-instruction problem — propose gated code.** Reach for code
    enforcement only when the problem is structurally impossible to express as a tool or a prompt
@@ -671,7 +639,7 @@ note above for a concrete example), not the prompt.
 
 **Compliance gap vs. harness gap.** If the model ignores an instruction that's demonstrably
 present in the actual prompt (confirmed via the log), that's a prompt-wording problem — see
-Prompt House Style. If the harness's own control flow has no branch for an outcome the model
+the legacy house style, and check the prompt for rules that contradict each other first. If the harness's own control flow has no branch for an outcome the model
 legitimately produced (a stub that over-delivers, a test that passes when it "shouldn't"), that's
 a Rust-side classification gap — fixing it in code is correct, not a violation of "fix prompts,
 not code," because the thing being fixed is deterministic control flow, not LLM output.
