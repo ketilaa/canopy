@@ -44,9 +44,13 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   plans for this story (4 to 7 steps) scored 0/20; the single step 4/10.
 - **Evidence:** the widgets hand plan reached 10/10 with this instruction style. For the order plan: run 1 passed
   (one run only, `scored: true`). No batch yet.
-- **Generality:** `single-run`. Plan shape (two steps, no repository interface) is untested on any other story;
+- **Result (batch A, 2026-10-17, `--prompt current`, n=10):** 10/10 scored, every step passed first attempt
+  (2 attempts in total per run, i.e. one per step). Each run had 1 to 2 refused submits, all from the import
+  audit (a missing `BigDecimal`/`UUID` import), none from a gate. 0 of 10 runs assert the message "Quantity must
+  be positive" in any test (no `getMessage` anywhere): the instruction asks for it, nothing checks it.
+- **Generality:** `one-story` (order, plain Java, Qwen3-14B Q4_K_M, one plan). Plan shape (two steps, no repository interface) is untested on any other story;
   the widgets plan's 10/10 is a different story and a different style of stack (Spring).
-- **Status:** untested (n=1).
+- **Status:** kept as the order baseline (10/10 once; the course needs a second batch).
 - **Known gap seen in run 1, not yet changed:** the instruction asked for the message "Quantity must be
   positive" to be asserted; the model's `OrderTest` only used `assertThrows` on the type. No gate checks it.
 
