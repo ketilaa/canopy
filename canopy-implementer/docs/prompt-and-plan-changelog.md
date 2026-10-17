@@ -397,3 +397,23 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   same plans with `feedback` already measured in G1.
 - **Generality:** `none` in the harness; `one-story` in the replay.
 - **Status:** untested in the real harness (flag off by default).
+
+### R3. Restart retry in the real harness, on plans that fail naturally (queued; prediction written first)
+- **Design:** the L3 (`plan-oneline.yaml`) plan of each story, `--prompt lean`, `--retry restart`, n=10, against the
+  same plan, prompt and binary with `--retry feedback` from G1. Order: order, loans, shipping, stock. A
+  restart is the first attempt's prompt again, so a step's attempts are three independent draws instead of one draw
+  and two copies.
+- **Measures:** steps passed within 3 attempts per step started; end-to-end hidden pass; retries identical to the
+  failed answer (expected 0 under restart by construction, but a temperature-0.6 model could still repeat itself);
+  retries recovered.
+- **Prediction:** order L3 has a first-attempt pass rate near 20% (2 of 11 under `current`; `lean` 5 of 13 step
+  starts passed); with three independent draws a step should pass within 3 attempts about 1-(0.8)^3 = 49% of the
+  time against about 25% with feedback. So on order L3 `restart` completes at least 15 points more steps than
+  `feedback` per step started. Where the L3 first-attempt pass rate is 70% or more (to be seen), `restart` and
+  `feedback` are within 1 run of each other. Hidden pass stays at 5 of 10 or fewer on every L3 plan: a restart does
+  not supply details the step lacks.
+  **Falsified** if on order L3 `restart` completes fewer than 10 points more steps than `feedback`: the replay's
+  advantage does not survive the real harness. If it improves hidden pass to 8 or more of 10 on any L3 plan, my
+  claim that L3 loses details a restart cannot recover is wrong for that story.
+- **Generality:** `none`; at best `multi-story` for the retry mechanism (4 stories, current prompt era, one model).
+- **Status:** queued after G1 (run order in the queue: after the six `lean` cells of loans, shipping, stock).
