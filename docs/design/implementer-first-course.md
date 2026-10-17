@@ -105,3 +105,32 @@ inside a step; number of steps (1, 2, 3, 6) for the same story; whether scenario
   Runs). They still read as defaults and could narrow the solution space.
 - Knowledge-capture items due from `CLAUDE.md`'s cadence and not yet done: a principle from the retry bug
   ("a rule that contradicts another injected instruction") and, when step 1 closes, a retrospective.
+
+## Update 2026-10-17 (end of day): where the course stands
+
+Step 1 is met on the order plan (the hand plan passes 10/10 and 9/10 on the current prompt; three prompt variants
+all at the ceiling). Step 2 (generalise) is under way, in Java first, as the maintainer directed, before any
+modify-existing-code story. Everything below is recorded, with predictions and results, in
+`canopy-implementer/docs/prompt-and-plan-changelog.md` (entries C1 to C12, G1, R1 to R3); read that for evidence and
+generality levels.
+
+- **Judge:** every story now has a hidden acceptance test the model never sees, validated against a reference and
+  mutants (order, loans, shipping, stock; `tasks/<story>/*HiddenTest.java`). Own tests passing is not behaviour.
+- **Stories:** order (done), loans (stateful rules, dates), shipping (tiered computation), stock (layered,
+  immutable); each has plans at three detail levels (L1 checklist with example values, L2 prose rules, L3 one line)
+  where measured. `run_step --task story:<name> --plan <plan>` runs any of them.
+- **Findings that carry over** (each measured on a few stories, one model, one stack; see the change log for n):
+  1. Plan detail decides the result: one line per step fails (order 0/10, loans 0/10, shipping 1/10); prose with every rule
+     in it passes order (9/10) and half of shipping (5/10) but not loans (0/10); a checklist of tests with concrete
+     values copied from the feature's example tables passed order (9/10) and loans (10/10).
+  2. The limiting step is the first attempt. The model writes code and its own tests that disagree on a Java fact
+     (BigDecimal scale: `0` against `0.00`). Retries then repeat the failed answer (most of the time) and almost
+     never recover on the current prompt. A stated fact in the context and a retry hint helped only where the model
+     had merely forgotten `setScale`.
+  3. The extra system rules are not shown to matter: `lean` and `persona` equal `current` wherever compared.
+  4. A restart from zero beat the retry as sent in a replay (10 of 28 against 1 of 28); the real-harness test (R3)
+     was queued and, if not reported in the change log, is not done.
+- **Next (suggestion):** carry the L1 shape into the Planner's design (step 3): the Planner copies the example
+  values of each scenario into a numbered list of tests per step. Before that, finish the cells in the change log
+  that are marked queued (stock, restart), and decide what to do about steps whose first attempt is a model blind
+  spot: plan detail works, retries do not.
