@@ -449,7 +449,24 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   hint does break the copy in about half the retries. What the model then does (read from run 2): it fixes the test
   side only (`BigDecimal.ZERO.setScale(2, ...)` in the expected value) and leaves the code's early `BigDecimal.ZERO`,
   so the next failure is the mirror image, `expected: <0.00> but was: <0>`, and the hint repeats. The hint names
-  the fact but not which side produced which value. The order L3 result follows below when it is in.
+  the fact but not which side produced which value. 
+- **Result, order L3 (`lean`, n=10, `--scale-hint`) against order L3 (`lean`, `feedback`, no hint):**
+
+  | | no hint | `--scale-hint` |
+  |---|---|---|
+  | Runs that completed both steps | 3/10 | **8/10** |
+  | Steps passed / step starts | 6 / 13 | **18 / 20** |
+  | First-attempt step failures | 8 of 13 | 10 of 20 |
+  | Retries identical to the failed answer | 14 of 15 | **5 of 13** |
+  | Retries that recovered | 1 of 15 | **8 of 13** |
+  | Hidden acceptance passed | 0/10 | 0/10 |
+
+  Prediction: at least 3 of 10 runs pass step 1 within three attempts: held (8 of 10 completed both steps); hidden
+  stays at 2 of 10 or fewer: held (0). The hidden failures of the 8 completed runs are the details the one-line plan
+  does not carry: the boundary (`100.00 x 5 should total 450.00`) in 8 of 8, the message in 4 of 8. So the hint
+  fixes a Java fact the model lacked and the gates now pass, while the code is still wrong where the plan was
+  silent: gates green, behaviour wrong. That is the gap a plan with the details (C6) or a check against the feature
+  must close; the hint cannot.
 - **Status:** partly confirmed (copy broken, recovery not), sharpened in C9.
 
 ### C9. The scale hint names the sides (flag `--scale-hint-sides`)
