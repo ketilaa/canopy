@@ -118,6 +118,27 @@ enum Mode {
     },
 }
 
+/// What a retry after a failed compile or test shows the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RetryMode {
+    /// The previous answer and the error.
+    #[default]
+    Feedback,
+    /// A restart from zero: the first attempt's prompt again, with nothing about the failure. Measured against
+    /// `Feedback` in docs/prompt-and-plan-changelog.md (R2: a replay; R3: the real harness).
+    Restart,
+}
+
+impl RetryMode {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "feedback" => Some(Self::Feedback),
+            "restart" => Some(Self::Restart),
+            _ => None,
+        }
+    }
+}
+
 pub struct Implementer {
     mode: Mode,
     build: Box<dyn Build>,
@@ -129,6 +150,8 @@ pub struct Implementer {
     surfaces: Option<Arc<dyn crate::surfaces::Surfaces>>,
     /// The system rules of a tool conversation.
     prompt: prompt::PromptVariant,
+    /// What a retry after a failed build shows.
+    retry: RetryMode,
 }
 
 /// The files a step may create or change (empty when it is unscoped).
@@ -155,6 +178,12 @@ impl Implementer {
         self
     }
 
+    /// Chooses what a retry after a failed compile or test shows the model.
+    pub fn with_retry(mut self, retry: RetryMode) -> Self {
+        self.retry = retry;
+        self
+    }
+
     pub fn new(
         generator: Box<dyn Generator>,
         build: Box<dyn Build>,
@@ -169,6 +198,7 @@ impl Implementer {
             classpath: None,
             surfaces: None,
             prompt: prompt::PromptVariant::default(),
+            retry: RetryMode::default(),
         }
     }
 
@@ -188,6 +218,7 @@ impl Implementer {
             classpath: None,
             surfaces: None,
             prompt: prompt::PromptVariant::default(),
+            retry: RetryMode::default(),
         }
     }
 
@@ -322,6 +353,8 @@ impl Implementer {
             .chain(&step.scope.read_only)
             .map(String::as_str)
             .collect();
+        // A restart shows a failed build as no failure at all; process failures (budget, stuck, prose) keep their steer.
+        let previous = previous.filter(|f| !(self.retry == RetryMode::Restart && matches!(f.stage, Stage::Compile | Stage::Test)));
         let (system, task) = prompt::tool_messages_with(self.prompt, step, &shown, previous);
         let mut messages = vec![ChatMessage::System(system), ChatMessage::User(task)];
         let purpose = if attempt == 1 {
@@ -1736,6 +1769,38 @@ mod tests {
             "the read set starts empty again: {}",
             tool_result(&rig, 3)
         );
+    }
+
+    #[test]
+    fn a_restart_retry_sends_the_first_prompt_again_with_nothing_about_the_failure() {
+        let mut rig = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, "broken"), (GREETER_TEST, NEW_TEST)])]),
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![outcome(BuildKind::Compile, false, "Greeter.java:1:1: boom")],
+            2,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_retry(RetryMode::Restart);
+        assert_eq!(
+            rig.implementer.run_step(rig.dir.path(), &nav_step()),
+            StepOutcome::Passed { attempts: 2 }
+        );
+        let requests = rig.requests.lock().unwrap();
+        // Request 0 starts attempt 1 (two read calls, then a submit: requests 0 and 1); request 2 starts attempt 2.
+        assert_eq!(requests[2], requests[0], "the retry is the first attempt's prompt, word for word");
+        let ChatMessage::User(task) = &requests[2][1] else { panic!() };
+        assert!(!task.contains("Your previous answer") && !task.contains("boom") && !task.contains("broken"), "{task}");
+    }
+
+    #[test]
+    fn the_default_retry_still_shows_the_previous_answer_and_the_error() {
+        assert_eq!(RetryMode::default(), RetryMode::Feedback);
+        assert_eq!(RetryMode::parse("restart"), Some(RetryMode::Restart));
+        assert_eq!(RetryMode::parse("nope"), None);
     }
 
     #[test]

@@ -381,3 +381,19 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Generality:** that is the point: `none` until the matrix reports; after it, at best `multi-story` (four stories,
   one stack: plain Java Maven, one model).
 - **Status:** queued.
+
+### C7. Retry mode `restart` (flag, default unchanged)
+- **Where:** `RetryMode` in `src/implementer.rs`, `run_step --retry feedback|restart`. Commit: see the git log entry
+  "Add a restart retry mode".
+- **What:** with `restart`, a retry after a failed compile or test sends the first attempt's prompt again, word for
+  word (no previous answer, no error); the workspace is restored as before. Failures of process (tool budget,
+  repeated call, prose) keep their steering text. `feedback` (default) is the old behaviour. A unit test pins that
+  the restart prompt equals the first one and contains nothing of the failure.
+- **Why:** R2 on current-prompt failures: the retry as sent repeated the failed answer 27 of 28 times and passed
+  1 of 28; a restart from zero passed 10 of 28 (the failure text without the code 4 of 28). The user's reasoning:
+  do not pollute the context with repetitions of what does not work.
+- **Evidence limits:** a replay on 7 distinct failures (6 the same scale mismatch), one model, not the real harness.
+  The real-harness test is R3: L3 plans (which fail often) on the four stories, `--retry restart` against the
+  same plans with `feedback` already measured in G1.
+- **Generality:** `none` in the harness; `one-story` in the replay.
+- **Status:** untested in the real harness (flag off by default).
