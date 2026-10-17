@@ -82,6 +82,11 @@ inside a step; number of steps (1, 2, 3, 6) for the same story; whether scenario
   `canopy-implementer/tasks/order/feature.feature`.
 - Scoring for `order-planned`: every step passes its gates, the whole suite is green, at least 4 tests were
   added, and `pom.xml` is untouched. There is no API-independent hidden test (plans choose their own names).
+- **Every run is shown in full.** The maintainer must see the complete prompt and conversation of every run,
+  not only summaries. Render a run with `target/debug/examples/transcript <run dir>` (events.jsonl as a readable
+  transcript: the full system and user prompt of each attempt, every model turn and tool call, every tool
+  result, every gate verdict, the failure feedback) and print it as runs finish, before interpreting results.
+  Check the first run of a batch before launching the rest.
 - Method: paired runs, n=10 per arm, one change at a time, a written prediction and falsification condition
   before each batch, artifacts read before conclusions. The model is stochastic: single runs prove little (one
   plan scored 6/6 in one batch and 2/6 in another).

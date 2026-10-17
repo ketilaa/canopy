@@ -25,6 +25,7 @@ pub mod snapshot;
 pub mod structure;
 pub mod surfaces;
 pub mod tools;
+pub mod transcript;
 
 #[cfg(test)]
 mod testing;
