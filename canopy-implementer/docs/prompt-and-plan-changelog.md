@@ -511,9 +511,17 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   at the first attempt** (baseline 0 of 10); retries identical to the failed answer 19 of 20 (baseline 20 of 20);
   0 recovered. Prediction (at least 4 of 10 pass at the first attempt) **falsified**, and the logged falsifier holds
   (1 or fewer). The model that ignores the error text, and mostly the hint, also ignores a fact stated up front.
-  The order L3 result follows when it is in.
-- **Generality:** `none`; two stories, one library fact, one model.
-- **Status:** `refuted` on loans.
+- **Result, order L3 (`lean`, n=10, same fact):** step 1 failed its first attempt in **1 of 10 runs** (baseline
+  `lean` 7 of 10; with the retry hint only 6 of 10, as the hint acts after the first attempt); runs that completed both
+  steps 6/10 (baseline 3/10, hint 8/10); steps passed 15 of 19 starts (baseline 6 of 13); retries identical to the
+  failed answer 4 of 8; hidden pass 0/10 (the boundary fails in 6 of 6 completed runs, the message in 3). Prediction
+  (at most 3 of 10 step-1 first attempts fail): held (1); hidden at most 2 of 10: held (0).
+- **Reading, the two stories together:** the same stated fact removes the order failure (forgetting `setScale`: 7 to 1
+  of 10) and does nothing for loans (writing `BigDecimal.ZERO` in the test and in an early return: 10 of 10 either
+  way). It is one fact in the model's reach for one failure and out of reach for the other, so a library fact in the
+  context is not a general cure; whether it is worth its tokens depends on which mistake the model makes.
+- **Generality:** `none`/`one-story` per cell; two stories, one library fact, one model.
+- **Status:** works on order L3, `refuted` on loans L2; not adopted anywhere.
 
 ### G1 interim results (2026-10-17, `lean` unless stated; the loans and shipping cells; n=10)
 | Cell | hidden passed | runs that completed all steps | step starts passed | first-attempt step failures | retries identical / recovered |
