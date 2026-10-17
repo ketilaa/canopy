@@ -6,26 +6,17 @@ story: |
 feature: tasks/order/feature.feature
 steps:
   - id: order-1-order
-    instruction: >
-      Create the class Order in the package no.experis.orders: a Java record with an id (UUID), a
-      customerId (String), a productId (String), a quantity (int) and a total (BigDecimal). Add a static
-      factory method Order.place(String customerId, String productId, BigDecimal unitPrice, int quantity)
-      that generates a random UUID for the id and computes the total: unitPrice times quantity, and when
-      that amount is 500.00 or more, 10 percent less. The total always has two decimals (setScale(2,
-      RoundingMode.HALF_UP)), so new BigDecimal("480.00") equals it. A quantity of zero or less makes
-      place throw IllegalArgumentException with the message "Quantity must be positive".
+    instruction: |
+      Create the class Order in the package no.experis.orders: a Java record with an id (UUID), a customerId (String), a productId (String), a quantity (int) and a total (BigDecimal). Add a static factory method Order.place(String customerId, String productId, BigDecimal unitPrice, int quantity) that generates a random UUID for the id and computes the total: unitPrice times quantity, and when that amount is 500.00 or more, 10 percent less. The total always has two decimals (setScale(2, RoundingMode.HALF_UP)), so new BigDecimal("480.00") equals it. A quantity of zero or less makes place throw IllegalArgumentException with the message "Quantity must be positive".
 
-      Add OrderTest. It MUST contain one test for each item of this checklist, and you must not leave any
-      item out. Before you submit, go through the list and check that every item has its test.
+      Add OrderTest. It MUST contain one test for each item of this checklist, and you must not leave any item out. Before you submit, go through the list and check that every item has its test.
       1. Unit price 100.00, quantity 1: the total is 100.00.
       2. Unit price 60.00, quantity 8: the total is 480.00.
       3. Unit price 60.00, quantity 9: the total is 486.00.
       4. Unit price 60.00, quantity 10: the total is 540.00.
       5. Unit price 100.00, quantity 5: the total is 450.00 (an amount of exactly 500.00 gets the discount).
-      6. Quantity 0: place throws IllegalArgumentException, and the test checks that its message equals
-         "Quantity must be positive".
-      7. Quantity -1: place throws IllegalArgumentException, and the test checks that its message equals
-         "Quantity must be positive".
+      6. Quantity 0: place throws IllegalArgumentException, and the test checks that its message equals "Quantity must be positive".
+      7. Quantity -1: place throws IllegalArgumentException, and the test checks that its message equals "Quantity must be positive".
       8. Two placed orders get different ids.
     create:
       - src/main/java/no/experis/orders/Order.java

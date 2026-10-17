@@ -402,6 +402,7 @@ steps:
         assert_eq!(ids_of(&base), ids_of(&checklist));
         assert_ne!(base.steps[0].instruction, checklist.steps[0].instruction);
         assert_eq!(base.steps[1].instruction, checklist.steps[1].instruction);
+        assert!(checklist.steps[0].instruction.contains("\n1. Unit price 100.00, quantity 1"), "the checklist keeps one item per line");
         assert!(checklist.steps[0].instruction.contains("MUST"));
     }
 

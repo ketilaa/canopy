@@ -120,4 +120,9 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   tag, new scorer. D0 also checks the scorer on the old plan.
 - **Generality:** `none` yet. When measured: one story, one stack, one model, one must per kind (a message, a
   boundary); a different kind of must (an interaction between classes, a state change) is not covered.
+- **Layout bug caught in run 1 of the first D1 attempt (batch aborted, not counted):** the instruction was first
+  written as a YAML folded scalar (`>`), which joined checklist items 1 to 5 into one line and broke items 6 to 8
+  across lines; the prompt the model saw was not the checklist described above (run 1 still passed with the
+  literals). Fixed by writing the instruction as a literal block (`|`); a unit test now checks that the items stay
+  on separate lines. D1 was restarted from run 1. Lesson: read the rendered prompt, not the YAML.
 - **Status:** untested.
