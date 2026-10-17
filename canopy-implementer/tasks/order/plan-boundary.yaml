@@ -1,0 +1,24 @@
+id: order
+story: |
+  A customer can place an order for a product in a quantity. The order total is the product price times
+  the quantity, less 10 percent when that net total is 500.00 or more. A quantity that is zero or
+  negative is rejected. A placed order can be looked up by its id.
+feature: tasks/order/feature.feature
+steps:
+  - id: order-1-order
+    instruction: |
+      Create the record Order in the package no.experis.orders with the components UUID id, String customerId, String productId, int quantity and BigDecimal total. Add the static factory method Order.place(String customerId, String productId, BigDecimal unitPrice, int quantity). It gives the order a random id and computes the total as unitPrice times quantity, less 10 percent when that amount is 500.00 or more; so an order of 500.00 totals 450.00 and an order of 499.99 totals 499.99; the total always has two decimals (setScale(2, RoundingMode.HALF_UP)). A quantity of zero or less makes place throw IllegalArgumentException with the message "Quantity must be positive".
+      Add OrderTest that tests the factory method: the total with and without the discount, the threshold, the rejected quantities and their message, and that orders get different ids.
+    create:
+      - src/main/java/no/experis/orders/Order.java
+      - src/test/java/no/experis/orders/OrderTest.java
+    covers: [place-an-order-for-one-product, a-net-total-of-500-00-or-more-gets-a-10-percent-volume-discount, a-quantity-that-is-not-positive-is-rejected]
+  - id: order-2-service
+    instruction: |
+      Create OrderService in the package no.experis.orders with a no-argument constructor and a HashMap from id to Order. Add Order placeOrder(String customerId, String productId, BigDecimal unitPrice, int quantity), which creates the order with Order.place, stores it by its id and returns it, and Optional<Order> findById(UUID id). Add OrderServiceTest that tests placing an order and finding it, an unknown id, and a rejected quantity.
+    create:
+      - src/main/java/no/experis/orders/OrderService.java
+      - src/test/java/no/experis/orders/OrderServiceTest.java
+    read_only:
+      - src/main/java/no/experis/orders/Order.java
+    covers: [a-placed-order-can-be-looked-up-by-its-id]

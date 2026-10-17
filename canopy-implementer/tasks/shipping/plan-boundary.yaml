@@ -1,0 +1,25 @@
+id: shipping
+story: |
+  The shipping cost of a parcel depends on its zone, weight and the order value. Each zone has a base price,
+  heavy parcels cost extra, domestic orders of high value ship free, and weights outside the allowed range are
+  rejected.
+feature: tasks/shipping/feature.feature
+steps:
+  - id: shipping-1-zone
+    instruction: |
+      Create the enum Zone in the package no.experis.shipping with the constants DOMESTIC, EUROPE and WORLD. Each has a base price, returned by the method BigDecimal basePrice(): DOMESTIC 4.00, EUROPE 9.00, WORLD 15.00 (two decimals).
+      Add ZoneTest that tests the base price of each zone.
+    create:
+      - src/main/java/no/experis/shipping/Zone.java
+      - src/test/java/no/experis/shipping/ZoneTest.java
+    covers: [the-base-price-depends-on-the-zone]
+  - id: shipping-2-calculator
+    instruction: |
+      Create ShippingCalculator in the package no.experis.shipping with a no-argument constructor and the method BigDecimal cost(Zone zone, int weightGrams, BigDecimal orderValue). The cost is the zone's base price for a parcel of up to 1000 grams; above 1000 grams each started 500 grams adds 1.50 (1001 to 1500 grams add 1.50, 1501 to 2000 add 3.00, and so on). So a DOMESTIC parcel of 1001 grams costs 5.50 and one of 1501 grams costs 7.00. A weight below 1 or above 30000 grams makes it throw IllegalArgumentException with the message "Weight must be between 1 and 30000 grams". A DOMESTIC order with an orderValue of 100.00 or more ships free: the cost is 0.00. The other zones never ship free. The cost always has two decimals.
+      Add ShippingCalculatorTest that tests the base prices, the weight steps and their boundaries, the rejected weights and their message, and free shipping at and just below 100.00 and for the other zones.
+    create:
+      - src/main/java/no/experis/shipping/ShippingCalculator.java
+      - src/test/java/no/experis/shipping/ShippingCalculatorTest.java
+    read_only:
+      - src/main/java/no/experis/shipping/Zone.java
+    covers: [each-started-500-grams-above-1000-grams-adds-1-50, a-weight-outside-1-to-30000-grams-is-rejected, domestic-orders-worth-100-00-or-more-ship-free, other-zones-never-ship-free]

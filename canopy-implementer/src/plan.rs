@@ -537,6 +537,21 @@ steps:
     }
 
     #[test]
+    fn the_boundary_plans_are_the_prose_plans_plus_one_sentence_with_the_boundary_values() {
+        let pairs = [
+            (include_str!("../tasks/shipping/plan-signatures.yaml"), include_str!("../tasks/shipping/plan-boundary.yaml"), "1001 grams costs 5.50"),
+            (include_str!("../tasks/order/plan-signatures.yaml"), include_str!("../tasks/order/plan-boundary.yaml"), "499.99 totals 499.99"),
+        ];
+        for (prose, boundary, sentence) in pairs {
+            let (prose, boundary) = (Plan::from_yaml(prose).unwrap(), Plan::from_yaml(boundary).unwrap());
+            assert_eq!(prose.steps.len(), boundary.steps.len());
+            assert!(boundary.steps[0].instruction.contains(sentence) || boundary.steps[1].instruction.contains(sentence));
+            assert!(!boundary.steps.iter().any(|s| s.instruction.contains("MUST")));
+            assert_eq!(prose.steps[0].scope, boundary.steps[0].scope);
+        }
+    }
+
+    #[test]
     fn the_loans_values_only_plan_lists_the_values_without_the_must_wording() {
         let values = Plan::from_yaml(include_str!("../tasks/loans/plan-values-only.yaml")).unwrap();
         let checklist = Plan::from_yaml(include_str!("../tasks/loans/plan-checklist.yaml")).unwrap();

@@ -834,3 +834,115 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   is the ingredient). Generality of this analysis: `two-story` (order, shipping), one model, one batch each; the class mechanism comes
   from reading the code of 10 runs per cell, not from a count alone.
 - **Status:** analysis done; experiment queued.
+
+## 2026-10-17: B1/B2, boundary values only (L2 plus one sentence), shipping and order
+
+- **Plans:** `tasks/shipping/plan-boundary.yaml` is `plan-signatures.yaml` (L2) plus "So a DOMESTIC parcel of 1001 grams costs 5.50
+  and one of 1501 grams costs 7.00."; `tasks/order/plan-boundary.yaml` is L2 plus "so an order of 500.00 totals 450.00 and an
+  order of 499.99 totals 499.99;". No checklist, no MUST wording, no API line, no extra items. `--prompt lean`, n=10 each.
+- **Why:** the analysis above: both residual L2 failure classes are a boundary the plan gives no value for; the checklist adds much more.
+- **Prediction (before the runs):** at least 8 of 10 on both (L2 now: shipping 3/10, order 7/10; L1: 10/10 both). **Falsified** at
+  5 or fewer on either story: then the checklist's structure (numbered items, one per test) and not the boundary values is the
+  ingredient. The shipping values (1001, 1501) are in the hidden test, so a pass shows the values work, not that a Planner finds them.
+- **Generality:** `none` yet; two stories, one model.
+- **Result B1/B2 (`lean`, n=10 each):**
+
+  | Story | L2 | L2 + boundary sentence | L1 checklist |
+  |---|---|---|---|
+  | order | 7/10 | **8/10** (17 of 19 steps first attempt) | 10/10 |
+  | shipping | 3/10 | **3/10** (14 of 20 steps first attempt) | 10/10 (with rule item) |
+
+  Order: prediction (at least 8) held, the falsifier did not occur; the 2 failures are again the model's own test asserting two
+  totals for the same 500.00 input (`expected 500.00 but was 450.00`), despite the sentence saying 500.00 totals 450.00.
+  Shipping: prediction **falsified** (3 of 10, falsifier 5 or fewer). What changed and what did not: the ceiling class is gone in the runs
+  that read it (the 3 passing runs and run-05's compile all use `Math.ceil`), but 5 of the 7 gate failures (runs 03, 06, 07, 08, 09) are
+  `expected 4.00 but was 2.50`, the weight under 1000 g costing a negative surcharge (4.00 minus 1.50), the side of the rule the
+  boundary sentence does not mention; run 01 and run 05 are other defects (free shipping and a rejected weight, 91.00 for a 1000 g
+  expectation). So on shipping the boundary values on one side moved the failure to the other side; this is the C15 gap again, and
+  the L1 plan closed it only because it lists both.
+- **Reading:** a single sentence of values per story is not the checklist's effect. Order's L2 gap is partly closed by it (7 to 8,
+  within noise) and shipping's not at all. The values must cover each side of each rule, which is what a Planner has to derive: for a
+  threshold or step rule, an item on each side and at the boundary. The structure (numbered items, one test per item) is not yet
+  separated from coverage: next B3 below. Generality: `two-story`, one model.
+- **Status:** done.
+
+### B3. Shipping: both sides of the rules in one sentence each, still no checklist (prediction first)
+- **Plan:** `tasks/shipping/plan-boundary-both.yaml` = `plan-boundary.yaml` plus "A parcel of 500 grams or of 1000 grams costs the
+  base price: DOMESTIC 4.00." (the side the L2 failures got wrong). `--prompt lean`, n=10.
+- **Prediction:** at least 8 of 10. **Falsified** at 5 or fewer: then the checklist's structure (one numbered item per test, with the
+  MUST wording) is an ingredient, not only values on every side.
+- **Generality:** `none`; one story. The 500 g value is not the hidden test's (it uses 1 g and 1000 g).
+- **Result B3 (shipping, `lean`, n=10):** hidden **2/10** (B2 3/10, L1 10/10); 2 runs completed both steps, 11 of 19 steps passed at
+  the first attempt. Prediction (at least 8): **falsified**, and the falsifier (5 or fewer) holds. The sub-1000 g defect is gone (no
+  `expected 4.00 but was 2.50` in any run) and a different one took its place: in 8 of the 8 gate-failing runs (01 to 07, 10) the step's
+  own `testFreeShipping` fails with `expected 0.00 but was 4.00`. The code is right in the runs read (`DOMESTIC && orderValue >= 100.00`
+  returns 0.00, round-up steps); the model's test asserts the wrong value for the just-below case the step's own text tells it to test
+  ("free shipping at and just below 100.00"): `cost(DOMESTIC, 500, 99.99)` expected 0.00 in one line and 4.00 in the next (run 02, run
+  03), or 5.50 for a 1001 g parcel. It is the self-contradicting test of order L2: the plan names a test case whose expected value it
+  never gives, and the model invents one.
+- **Reading B1 to B3:** each boundary sentence fixed the side it named and the next unnamed side failed. What the L1 plans do that
+  none of the sentences did is give an input and an expected value for **every** case the step's test sentence mentions. So the
+  ingredient is probably complete input/output pairs for each case the plan asks the step to test, not the numbered structure and not
+  boundary values on one side. A Planner's rule would be: for every case the plan tells the step to test, state its expected value.
+  Not yet separated from the checklist's structure: B4 below.
+
+### B4. Shipping: an expected value for every case the test sentence names (prediction first)
+- **Plan:** `tasks/shipping/plan-boundary-all.yaml` = `plan-boundary-both.yaml` plus "A DOMESTIC order of 99.99 is not free: a 500 gram
+  parcel costs 4.00." The test sentence ("base prices, the weight steps and their boundaries, the rejected weights and their message,
+  and free shipping at and just below 100.00 and for the other zones") is unchanged: now each case has a stated value (base prices
+  given, steps 1001/1501, 500 and 1000 g, rejected weights and message given, 100.00 free, 99.99 4.00, other zones the base price).
+  `--prompt lean`, n=10.
+- **Prediction:** at least 8 of 10. **Falsified** at 5 or fewer: then the numbered checklist structure (one item per test, MUST
+  wording) is an ingredient.
+- **Generality:** `none`; one story; the 99.99 value is the hidden test's own boundary value (it asserts 99.99 and 100.00), so a
+  pass shows values on every named case work, not that a Planner finds them.
+- **Result B4 (shipping, `lean`, n=10):** hidden **5/10** (B3 2/10, L1 10/10); all 5 runs that completed both steps passed; 11 of 16
+  steps first attempt. Prediction (at least 8): **falsified**, and the falsifier (5 or fewer) holds, though 2 to 5 is a real
+  improvement. Of the 5 gate failures, 4 are again `testFreeShipping expected 0.00 but was 4.00`, with the plan now saying
+  "a DOMESTIC order of 99.99 is not free: a 500 gram parcel costs 4.00": the model's test still asserts `cost(DOMESTIC, 500, 99.99)`
+  is 0.00 (runs 01, 08), or leaves a placeholder test (run 06). One is a weight step (run 04, 1001 g expected 5.50, got 4.00).
+- **Reading:** the plan's test sentence, "free shipping at and just below 100.00", reads as "free at 100.00 and free just below 100.00";
+  the model follows it over the rule sentence and over the added value. That is a contradiction inside the plan that I wrote (the same
+  sentence is in the L2 plan, where it has been there for every shipping L2 run), not a missing value. By the project's own habit
+  (read the prompt for contradictions before adding anything) the next step is to fix the sentence, not add more values: B5.
+
+### B5. Shipping: the test sentence reworded so that it cannot be read as "just below is free" (prediction first)
+- **Plan:** `tasks/shipping/plan-boundary-all-reworded.yaml` = `plan-boundary-all.yaml` with the test sentence's "free shipping at
+  and just below 100.00 and for the other zones" replaced by "free shipping for DOMESTIC at an order value of 100.00, the normal
+  cost just below it (99.99), and the other zones at 100.00". Nothing else changes. `--prompt lean`, n=10.
+- **Prediction:** at least 8 of 10. **Falsified** at 5 or fewer: then the wording is not the cause and the checklist structure
+  remains a candidate.
+- **Generality:** `none`; one story; the sentence has the same shape in the order plan ("the threshold").
+- **Result B5 (shipping, `lean`, n=10):** hidden **10/10**; all 10 runs completed both steps, 20 of 20 steps at the first attempt, no
+  retry. Prediction (at least 8): held; the falsifier did not occur. So a plan with values for every case the test sentence names
+  and a test sentence that cannot be read against the rule reaches the L1 checklist's result (10/10) on shipping, without numbered
+  items, MUST wording or an API line. B5 stacks four changes on L2 (1001/1501 values, the base-price side, 99.99 costs 4.00, the
+  reworded sentence), so which of them is needed is not known: B6.
+
+### B6. Shipping: the original L2 plan with only the test sentence reworded (prediction first)
+- **Plan:** `tasks/shipping/plan-signatures-reworded.yaml` = `plan-signatures.yaml` (L2: 3/10 in the fresh run, 5/10 before) with
+  only the same sentence replaced. `--prompt lean`, n=10.
+- **Prediction:** at most 5 of 10: the floor-division class (7 of 10 L2 runs) is not touched by the wording, so the wording alone should
+  not reach the L1 result. **Falsified** at 8 or more: then the sentence was the main defect of every shipping L2 plan.
+- **Generality:** `none`; one story.
+- **Result B6 (shipping, `lean`, n=10, L2 with only the test sentence reworded):** hidden **5/10** (L2 as written: 3/10 fresh, 5/10
+  before); 6 runs completed both steps, 15 of 19 steps first attempt. Prediction (at most 5): held; the falsifier (8 or more) did not
+  occur. The wording removed the free-shipping failure (no `testFreeShipping` failure in any run), and the weight failures
+  remained: the model's own weight-boundary tests assert wrong expected values (`expected 4.00 but was 91.00`, `expected 15.00 but
+  was 102.00`: a 30000 g case with an invented value; run 09 also 8.50 for 10.00), and run 01 used the floor formula (hidden: 1501 g
+  7.00, got 5.50).
+- **Summary B1 to B6 (shipping, hidden pass of 10):** L2 3 to 5; L2 + 1001/1501 sentence 3; + base-price side 2; + 99.99 value 5;
+  + reworded test sentence (all four) **10**; L2 + reworded sentence only 5; L1 checklist 10. Order: L2 7, + boundary sentence 8, L1 10.
+  - Two separate defects sit in the L2 plans. (1) A test sentence that contradicts the rule ("free shipping at and just below 100.00"),
+    which the model follows against both the rule and a stated value: removing it removes that failure class. (2) Test cases whose
+    expected values the plan does not give (30000 g, the weight steps): the model invents them, and the gate catches the wrong
+    ones. Each is fixed by its own change, and only both together reach 10/10 without a checklist.
+  - The checklist's structure (numbered items, MUST wording) was not needed on shipping: values for each case named in the test
+    sentence plus a test sentence free of contradictions gave 10/10 (B5). Not shown on any other story.
+  - A Planner rule that follows: every case the step is told to test has an input and an expected value in the plan, and the test
+    sentence is derived from those cases, not written as free prose beside the rule. A deterministic check is possible: list the
+    cases a test sentence names and the values the plan states.
+- **Generality:** `one-story` for B3 to B6 (shipping), `two-story` for the first-order claim (order's boundary sentence 7 to 8, within
+  noise); one model; plans written by hand; the 99.99 and 1001/1501 values are values the hidden test uses.
+- **Status:** done. Not done: the same rewording on order (its sentence says "the threshold") and a test that the combined change
+  also holds on a story with a different shape (tickets already passes at L2).
