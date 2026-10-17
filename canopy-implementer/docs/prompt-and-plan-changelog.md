@@ -125,4 +125,32 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   across lines; the prompt the model saw was not the checklist described above (run 1 still passed with the
   literals). Fixed by writing the instruction as a literal block (`|`); a unit test now checks that the items stay
   on separate lines. D1 was restarted from run 1. Lesson: read the rendered prompt, not the YAML.
-- **Status:** untested.
+- **Result (2026-10-17, `--prompt current`, n=10 each, new scorer):**
+
+  | | D0 `plan.yaml` | D1 `plan-checklist.yaml` |
+  |---|---|---|
+  | Scored (gates + both musts) | 0/10 | 9/10 |
+  | `OrderTest` contains "Quantity must be positive" | 2/10 | 10/10 |
+  | ... and asserts it with `assertEquals("Quantity must be positive", ...)` | 1/10 | 10/10 |
+  | `OrderTest` contains "450.00" (the boundary) | 0/10 | 10/10 |
+  | Steps passed | 20/20 | 19/20 (run 3 failed step 1) |
+
+  D0 passed every gate in all 10 runs and fails the scorer only on the musts (as A, B, C would have: 3 of 40
+  old-plan runs had the message literal in all four batches, 0 of 40 the boundary). Prediction held for the
+  musts (10/10 against the 8/10 bar). "Every step still passes first attempt" did not hold: run 3 failed step 1
+  after three attempts. Cause, read from its transcript: the model wrote a message check through a shared field
+  and a helper (`getExceptionMessage()` reading a `thrownException` field no test had set), which threw a
+  NullPointerException in two tests; the retry feedback named the exact NullPointer and attempts 1, 2 and 3 were
+  **byte-identical answers**. One failure in 10 against 0 in 10 is not distinguishable from noise (and D1 has
+  twice as many things to do in step 1), but the mechanism is plausible: a harder must produced a more elaborate
+  test, which was the part that broke.
+- **New failure class seen (not acted on):** a retry that resubmits the identical files after feedback that names
+  the error. The harness has a `NoChange` stage for "same as what is in the repository", but a restored workspace
+  hides this case. Whether to detect it (and what to tell the model) is a separate change, to be proposed first.
+- **Generality:** `one-story`: order story, plain Java, Qwen3-14B Q4_K_M, n=10 per arm, two musts (a message, a
+  boundary), both literal. The checklist form made the model cover every listed item; a different kind of must
+  (an interaction between classes, a state change) is not covered, and the literal check proves presence, not
+  correctness (`assertEquals` with the message was counted separately and agrees: 10/10).
+- **Status:** `plan-checklist.yaml` kept as the order plan for the next experiments (musts covered, one failure
+  in 10 to watch). The harness-tracking arm is **not needed for these musts** (compliance 10/10); it stays an
+  option for musts the checklist does not get followed on.
