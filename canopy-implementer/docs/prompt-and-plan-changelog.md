@@ -264,4 +264,39 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   **Falsified if** L3 passes the hidden test in 9 or 10 of 10: instruction detail is then not a lever on this
   story and the next factor or a second story is the way to find where plans fail.
 - **Generality:** `none` yet. One story, one model; the hidden test encodes this story only.
-- **Status:** untested (batches E2 = signatures, E3 = oneline; L1 reuses D1).
+- **Result (2026-10-17, `--prompt current`, n=10 per arm; L1 = D1 rescored with the hidden test):**
+
+  | | L1 `checklist` | L2 `signatures` | L3 `oneline` |
+  |---|---|---|---|
+  | Instruction text (both steps) | 3,200 chars file | 2,169 | 1,649 |
+  | Runs that completed both steps | 9/10 | 8/10 | 1/10 |
+  | **Hidden acceptance passed** | **9/10** | **8/10** | **0/10** |
+  | Step first-attempt failures | 1 of 19 step starts | 2 of 18 | **9 of 11** |
+  | Retries after a compile/test failure | 2 | 4 | 18 |
+  | ...identical to the failed answer | 2 | 4 | 16 |
+  | ...recovered | 0 | 0 | 0 |
+  | Own tests contain "450.00" / the message literal | n/a (asked) | 8/8, 0/8 | 0/1, 0/1 |
+
+  Predictions: L1 9 or 10 of 10: held (9). L2 at least 8: held (8, exactly at the bar). L3 at most 7: held, far
+  past it (0). First-attempt pass at L3 80% or less: held (2 of 11 step starts passed, 18%). The falsifier (L3 at
+  9 or 10) did not occur.
+- **What failed at L3 (read from the transcripts):** 9 of 10 runs failed step 1 with the same mode: the model's own
+  test expects `1080.00` and its code returns `1080.000`, because the one-line step never says the total has two
+  decimals (24 failure lines of this kind, 3 more `expected <N.N> but was <N.N>`). The one run that passed its gates
+  failed the hidden test on two defects the gates cannot see: the message `"Quantity must be positive."` (a
+  full stop added) and `>` instead of `>=` at the 500.00 threshold (100.00 x 5 gave 500.00). Details the Planner
+  must carry from the feature into a step: the exact message, the two-decimal scale, and the boundary's
+  inclusive/exclusive wording. At L2 (all of these in prose, tests named by topic) 8 of 10 completed and all 8 passed
+  the hidden test; the two L2 failures were a discount-threshold test the model wrote wrongly for its own code.
+- **Retries on the current prompt, new evidence:** over the three batches there were 24 retries after a compile
+  or test failure; **22 were byte-identical to the failed answer and none of the 24 recovered.** Of the first-attempt
+  failures at L3, all but 2 then repeated their answer, up to the attempt limit. This replicates the identical-retry
+  finding from the noisy-era history (C4) on the current prompt, in 7+ failing runs of one story; the failure mode
+  is narrow (mostly one scale mismatch), so how often it happens elsewhere is unmeasured. These 24 retry prompts
+  are a current-prompt test bed for R1.
+- **Generality:** `one-story` (order, plain Java, Qwen3-14B Q4_K_M, n=10 per arm, one plan shape of 2 steps). The
+  ranking L1 >= L2 >> L3 is clear here; where between L2 and L3 the threshold lies, and whether other stories
+  need other details, is not measured. The hidden test encodes this story only.
+- **Status:** measured; C6 is a finding about plan detail, not a change to the Implementer. `plan-checklist.yaml`
+  and `plan-signatures.yaml` stay as the passing plan shapes for the order story, `plan-oneline.yaml` as the
+  failing one.
