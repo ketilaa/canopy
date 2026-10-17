@@ -1,0 +1,38 @@
+id: tickets
+story: |
+  A single-journey ticket is issued, can be validated within 90 minutes of being issued, and can be cancelled until it
+  is validated. A validated or cancelled ticket cannot be validated again, an expired ticket cannot be validated, and
+  an unknown ticket is rejected.
+feature: tasks/tickets/feature.feature
+steps:
+  - id: tickets-1-ticket
+    instruction: |
+      Create the enum TicketStatus (ISSUED, VALIDATED, CANCELLED) and the immutable record Ticket in the package no.experis.tickets with the components String id, LocalDateTime issuedAt and TicketStatus status, and Ticket validate(LocalDateTime at) and Ticket cancel() that return a new ticket and reject what the rules do not allow. Add TicketTest.
+    create:
+      - src/main/java/no/experis/tickets/TicketStatus.java
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/test/java/no/experis/tickets/TicketTest.java
+    covers: [a-ticket-is-valid-for-90-minutes-from-when-it-was-issued, a-validated-ticket-cannot-be-validated-again, a-ticket-that-is-not-validated-can-be-cancelled, a-cancelled-ticket-cannot-be-validated, a-validated-ticket-cannot-be-cancelled]
+  - id: tickets-2-repository
+    instruction: |
+      In the package no.experis.tickets create the interface TicketRepository (Optional<Ticket> findById(String id), void save(Ticket ticket)) and its in-memory implementation InMemoryTicketRepository. Add InMemoryTicketRepositoryTest.
+    create:
+      - src/main/java/no/experis/tickets/TicketRepository.java
+      - src/main/java/no/experis/tickets/InMemoryTicketRepository.java
+      - src/test/java/no/experis/tickets/InMemoryTicketRepositoryTest.java
+    read_only:
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/main/java/no/experis/tickets/TicketStatus.java
+    covers: [an-issued-ticket-is-issued]
+  - id: tickets-3-service
+    instruction: |
+      Create TicketService in the package no.experis.tickets with a constructor taking a TicketRepository, Ticket issue(String id, LocalDateTime at), Ticket validate(String id, LocalDateTime at) and Ticket cancel(String id) that reject an unknown ticket. Add TicketServiceTest.
+    create:
+      - src/main/java/no/experis/tickets/TicketService.java
+      - src/test/java/no/experis/tickets/TicketServiceTest.java
+    read_only:
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/main/java/no/experis/tickets/TicketStatus.java
+      - src/main/java/no/experis/tickets/TicketRepository.java
+      - src/main/java/no/experis/tickets/InMemoryTicketRepository.java
+    covers: [an-issued-ticket-is-issued, an-unknown-ticket-cannot-be-validated-or-cancelled]

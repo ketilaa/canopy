@@ -1,0 +1,61 @@
+id: tickets
+story: |
+  A single-journey ticket is issued, can be validated within 90 minutes of being issued, and can be cancelled until it
+  is validated. A validated or cancelled ticket cannot be validated again, an expired ticket cannot be validated, and
+  an unknown ticket is rejected.
+feature: tasks/tickets/feature.feature
+steps:
+  - id: tickets-1-ticket
+    instruction: |
+      Create the enum TicketStatus with the values ISSUED, VALIDATED and CANCELLED, and the record Ticket, both in the package no.experis.tickets. Ticket has the components String id, LocalDateTime issuedAt and TicketStatus status. It is immutable: the method Ticket validate(LocalDateTime at) returns a new ticket with the status VALIDATED, and Ticket cancel() returns a new ticket with the status CANCELLED; the original is never changed. validate throws IllegalStateException with the message "Ticket is cancelled" when the ticket is cancelled, with the message "Ticket is already validated" when it is validated, and with the message "Ticket has expired" when at is more than 90 minutes after issuedAt (checked in that order). cancel throws IllegalStateException with the message "A validated ticket cannot be cancelled" when the ticket is validated.
+      API the tests use: new Ticket(String id, LocalDateTime issuedAt, TicketStatus status); ticket.id(); ticket.issuedAt(); ticket.status(); ticket.validate(LocalDateTime) returns Ticket; ticket.cancel() returns Ticket; TicketStatus.ISSUED, TicketStatus.VALIDATED, TicketStatus.CANCELLED.
+      Add TicketTest. It MUST contain one test for each item of this checklist, and you must not leave any item out. Before you submit, go through the list and check that every item has its test.
+      Let t be new Ticket("T-1", LocalDateTime.of(2026, 3, 1, 10, 0), TicketStatus.ISSUED).
+      1. t.validate(LocalDateTime.of(2026, 3, 1, 10, 30)).status() is VALIDATED, and t.status() is still ISSUED.
+      2. t.validate(LocalDateTime.of(2026, 3, 1, 11, 31)) throws IllegalStateException with the message "Ticket has expired".
+      3. t.validate(LocalDateTime.of(2026, 3, 1, 10, 10)).validate(LocalDateTime.of(2026, 3, 1, 10, 20)) throws IllegalStateException with the message "Ticket is already validated".
+      4. t.cancel().status() is CANCELLED, and t.status() is still ISSUED.
+      5. t.cancel().validate(LocalDateTime.of(2026, 3, 1, 10, 10)) throws IllegalStateException with the message "Ticket is cancelled".
+      6. t.validate(LocalDateTime.of(2026, 3, 1, 10, 10)).cancel() throws IllegalStateException with the message "A validated ticket cannot be cancelled".
+      7. new Ticket("T-2", LocalDateTime.of(2026, 3, 1, 14, 0), TicketStatus.ISSUED).validate(LocalDateTime.of(2026, 3, 1, 15, 30)).status() is VALIDATED (exactly 90 minutes after issuedAt is still valid).
+    create:
+      - src/main/java/no/experis/tickets/TicketStatus.java
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/test/java/no/experis/tickets/TicketTest.java
+    covers: [a-ticket-is-valid-for-90-minutes-from-when-it-was-issued, a-validated-ticket-cannot-be-validated-again, a-ticket-that-is-not-validated-can-be-cancelled, a-cancelled-ticket-cannot-be-validated, a-validated-ticket-cannot-be-cancelled]
+  - id: tickets-2-repository
+    instruction: |
+      In the package no.experis.tickets create the interface TicketRepository with Optional<Ticket> findById(String id) and void save(Ticket ticket), and InMemoryTicketRepository, which implements it with a HashMap keyed by id and has a no-argument constructor; save replaces a ticket with the same id.
+      API the tests use: new InMemoryTicketRepository(); repository.save(Ticket); repository.findById(String) returns Optional<Ticket>; ticket.status().
+      Add InMemoryTicketRepositoryTest. It MUST contain one test for each item of this checklist, and you must not leave any item out. Before you submit, go through the list and check that every item has its test.
+      1. After save(new Ticket("T-1", LocalDateTime.of(2026, 3, 1, 10, 0), TicketStatus.ISSUED)), findById("T-1").get().status() is ISSUED.
+      2. findById("T-9") on a repository where nothing was saved is an empty Optional.
+      3. After save of that ticket with status ISSUED and then save of a ticket with the same id "T-1" and status CANCELLED, findById("T-1").get().status() is CANCELLED.
+    create:
+      - src/main/java/no/experis/tickets/TicketRepository.java
+      - src/main/java/no/experis/tickets/InMemoryTicketRepository.java
+      - src/test/java/no/experis/tickets/InMemoryTicketRepositoryTest.java
+    read_only:
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/main/java/no/experis/tickets/TicketStatus.java
+    covers: [an-issued-ticket-is-issued]
+  - id: tickets-3-service
+    instruction: |
+      Create TicketService in the package no.experis.tickets with a constructor that takes a TicketRepository. Add Ticket issue(String id, LocalDateTime at), which saves and returns a new ticket with the status ISSUED; Ticket validate(String id, LocalDateTime at) and Ticket cancel(String id), which load the ticket, call validate or cancel on it, save the result and return it, and throw IllegalArgumentException with the message "Unknown ticket" when there is no ticket with that id. Use Ticket for the rules; the service only loads, calls and saves.
+      API the tests use: new TicketService(TicketRepository); service.issue(String, LocalDateTime) returns Ticket; service.validate(String, LocalDateTime) returns Ticket; service.cancel(String) returns Ticket; ticket.status().
+      Add TicketServiceTest. It MUST contain one test for each item of this checklist, and you must not leave any item out. Before you submit, go through the list and check that every item has its test. Use new TicketService(new InMemoryTicketRepository()).
+      Let the issue time be LocalDateTime.of(2026, 3, 1, 10, 0).
+      1. issue("T-1", issue time).status() is ISSUED.
+      2. After issue("T-1", issue time), validate("T-1", LocalDateTime.of(2026, 3, 1, 10, 30)).status() is VALIDATED.
+      3. After issue("T-1", issue time) and validate("T-1", LocalDateTime.of(2026, 3, 1, 10, 10)), validate("T-1", LocalDateTime.of(2026, 3, 1, 10, 20)) throws IllegalStateException with the message "Ticket is already validated".
+      4. After issue("T-1", issue time), cancel("T-1").status() is CANCELLED.
+      5. validate("T-9", LocalDateTime.of(2026, 3, 1, 10, 0)) and cancel("T-9") each throw IllegalArgumentException with the message "Unknown ticket".
+    create:
+      - src/main/java/no/experis/tickets/TicketService.java
+      - src/test/java/no/experis/tickets/TicketServiceTest.java
+    read_only:
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/main/java/no/experis/tickets/TicketStatus.java
+      - src/main/java/no/experis/tickets/TicketRepository.java
+      - src/main/java/no/experis/tickets/InMemoryTicketRepository.java
+    covers: [an-issued-ticket-is-issued, an-unknown-ticket-cannot-be-validated-or-cancelled]

@@ -753,3 +753,45 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   with checks for API shape and rule coverage.
 - **Generality:** `none`; four stories, twelve cells, one model, a coarse criterion.
 - **Status:** done.
+
+## 2026-10-17: T1-T3, a fifth greenfield story with a different shape (tickets: a state machine with a time window)
+
+- **Story:** `tasks/tickets/` (feature, task, hidden test, baseline repo `dogfooding/java-tickets` tag `baseline-tickets-001`): a
+  single-journey ticket with an enum status (ISSUED, VALIDATED, CANCELLED), a 90-minute validity window, four guarded transitions
+  with exact messages, a repository and a service (3 steps like stock). Different from the four earlier stories: states and
+  time instead of arithmetic or counting. The hidden test was checked against a reference implementation (6 of 6 pass) before any
+  run. The boundary (exactly 90 minutes is valid) is not exemplified in the feature, like shipping's 1000 g.
+- **Plans (all `--prompt lean`, n=10; a unit test pins that they share steps, files and coverage):** T1 `plan-oneline.yaml` (L3),
+  T2 `plan-signatures.yaml` (L2, prose rules with exact messages and the check order), T3 `plan-checklist-api.yaml` (L1+, the shape
+  written down in `docs/design/implementer-next-plan-2026-10-17.md`: prose rules, an `API the tests use:` line, numbered items with
+  concrete values written as calls, a coverage item for the boundary with values different from the hidden test's: 14:00 to 15:30).
+- **Why:** to test the plan shape on a story it was not derived from. Caveat: I wrote the plans and the hidden test; the plans were
+  written from the feature and the shape, not from the hidden test's code, but the API names are the ones both sides share.
+- **Audit (missing literals of 15; the audit reads `LocalDateTime.of(...)` as missing the date and `00`):** T1 15, T2 9, T3 2.
+- **Predictions (before any run):** T1 passes the hidden test in at most 3 of 10 runs (**falsified** if 6 or more); T3 in at least 8
+  of 10 (**falsified** if 5 or fewer: the shape does not generalise); T2 strictly between, and not above T3. A failure of T3 should
+  be a message, a boundary or the API, which is what the shape targets; if it is something else (the enum, the time arithmetic), the
+  shape misses a category.
+- **Generality:** `none` yet; one model, plain Java; the first story the shape was not fitted to.
+- **Result T1-T3 (tickets, `lean`, n=10 each; hidden passed / runs completing all 3 steps / steps passed at the first attempt):**
+
+  | Plan | Hidden | Completed | First-attempt steps | Audit (missing of 15) |
+  |---|---|---|---|---|
+  | T1 L3 one line | 0/10 | 3 | 8 of 16 started (9 passed in all) | 15 |
+  | T2 L2 prose | **10/10** | 10 | 30 of 30 | 9 |
+  | T3 L1+ (API, values, boundary item) | **10/10** | 10 | 30 of 30 | 2 |
+
+  Predictions: T1 at most 3 of 10: held (0). T3 at least 8 of 10: held (10); the falsifier (5 or fewer) did not occur, so the plan
+  shape works on a story it was not fitted to. T2 strictly between and not above T3: **falsified** (10 = 10; the prose plan already
+  carries this story, as on order and stock). T3 failures: none to read.
+  T1 failures: 7 of 10 runs never got past step 1 (a test or the code throwing `IllegalArgumentException` where the rule is
+  `IllegalStateException`, the exception type a one-line step drops, in 5 attempts of 5 per run seen); 3 runs completed and failed
+  the hidden test. The failure class is the one the shape names (a dropped exception type and message), not a new one.
+- **Reading:** on tickets the detail that matters is the exception types and messages in the prose; the API line, the numbered values
+  and the boundary item added nothing measurable on top of L2 (the 90-minute boundary was met by "more than 90 minutes after" in the
+  prose, unlike shipping's "up to 1000 grams" whose other side the model got wrong). So the shape is sufficient here but not shown
+  necessary; the stories where L2 is not enough are loans (scale), shipping (threshold side) and, with the checklist, stock (API).
+  The audit again orders L3 worst and does not separate L2 from L1+.
+- **Generality:** `multi-story` for "L3 fails, a detailed plan passes" (five stories now); `one-story` for the tickets numbers; I wrote
+  the story, the plans and the hidden test, one model.
+- **Status:** done.

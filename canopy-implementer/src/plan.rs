@@ -521,6 +521,22 @@ steps:
     }
 
     #[test]
+    fn the_three_tickets_plans_have_the_same_steps_files_and_coverage_and_differ_in_detail() {
+        let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+        let length = |p: &Plan| p.steps.iter().map(|s| s.instruction.len()).sum::<usize>();
+        let one = Plan::from_yaml(include_str!("../tasks/tickets/plan-oneline.yaml")).unwrap();
+        let prose = Plan::from_yaml(include_str!("../tasks/tickets/plan-signatures.yaml")).unwrap();
+        let list = Plan::from_yaml(include_str!("../tasks/tickets/plan-checklist-api.yaml")).unwrap();
+        assert_eq!(shape(&one), shape(&prose));
+        assert_eq!(shape(&prose), shape(&list));
+        assert!(length(&one) < length(&prose) && length(&prose) < length(&list));
+        for step in &list.steps {
+            assert!(step.instruction.contains("API the tests use:") && step.instruction.contains("MUST") && step.instruction.contains("\n1. "), "{}", step.id);
+        }
+        assert!(list.steps[0].instruction.contains("\n7. ") && list.steps[0].instruction.contains("exactly 90 minutes"));
+    }
+
+    #[test]
     fn the_loans_values_only_plan_lists_the_values_without_the_must_wording() {
         let values = Plan::from_yaml(include_str!("../tasks/loans/plan-values-only.yaml")).unwrap();
         let checklist = Plan::from_yaml(include_str!("../tasks/loans/plan-checklist.yaml")).unwrap();

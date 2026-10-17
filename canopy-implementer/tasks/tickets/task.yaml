@@ -1,0 +1,9 @@
+name: tickets-planned
+instruction: "A single-journey ticket is issued, can be validated within 90 minutes of being issued, and can be cancelled until it is validated. A validated or cancelled ticket cannot be validated again, an expired ticket cannot be validated, and an unknown ticket is rejected."
+context: "Root package: no.experis.tickets.\nBuild: Maven, Java 21, JUnit 5; no framework. Do not change pom.xml."
+repo: java-tickets
+tag: baseline-tickets-001
+hidden_test: TicketsHiddenTest.java
+hidden_test_path: src/test/java/no/experis/tickets/TicketsHiddenTest.java
+min_tests_added: 5
+untouched: [pom.xml]
