@@ -165,3 +165,21 @@ most recent instance suggests these computations are not trivial to get right on
 a systematic count of how many mechanical-fact functions across the project needed post-hoc
 correctness fixes (versus how many prompt-only fixes needed the same) would sharpen how much net
 reliability gain this pattern produces once the cost of getting the computation right is included.
+
+# Update 2026-10-17: a counter-example on "let the model act on facts"
+
+The harness can compute a true fact mechanically and the model can still fail to act on it. Evidence from the
+Implementer on plain Java (`canopy-implementer/docs/prompt-and-plan-changelog.md`, C8 to C10, one model, n=10 per cell):
+
+- A computed retry hint ("`0` and `0.00` are the same number at different scales and `BigDecimal.equals` compares the
+  scale") rescued the one-line order plan: 8 of 13 retries recovered, against 1 of 15 without it, and the share of
+  retries identical to the failed answer fell from 14 of 15 to 5 of 13.
+- The same hint on loans rescued 1 of 19 retries (identical share 9 of 19, against 20 of 20 without it); a variant naming
+  which value the code returned and which the test expected rescued 0 of 20; the same fact stated up front in the
+  project context left loans at 0 of 10 first attempts, while for order it cut the step's first-attempt failures from
+  7 of 10 to 1 of 10.
+- So the principle holds in its first half (computing the fact is cheap and correct) and is conditional in its second:
+  whether the model acts on it depends on the mistake. The order failure was a forgotten `setScale`; the loans failure was
+  a test and an early return that both used `BigDecimal.ZERO`, and no sentence about scale moved it. What did move it
+  was a plan that listed the tests with their concrete values (loans 0 of 10 to 10 of 10). Evidence level: two stories,
+  one library fact, one model; the confidence of the principle is unchanged.
