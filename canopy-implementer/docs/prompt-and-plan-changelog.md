@@ -946,3 +946,72 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   noise); one model; plans written by hand; the 99.99 and 1001/1501 values are values the hidden test uses.
 - **Status:** done. Not done: the same rewording on order (its sentence says "the threshold") and a test that the combined change
   also holds on a story with a different shape (tickets already passes at L2).
+
+## 2026-10-17: B7/B8, order's test sentence reworded (counterparts of B6 and B5)
+
+- **Change:** order's step-1 test sentence "the total with and without the discount, the threshold, ..." names a case (the threshold)
+  without a value; the model's own test then asserts two totals for the same 500.00 input (3 of 10 L2 runs, 2 of 10 in B2).
+  Reworded to "the total with the discount (an order of 500.00 totals 450.00), the total without it (an order of 499.99 totals
+  499.99), ...". B7 `tasks/order/plan-signatures-reworded.yaml` = L2 plus only that sentence; B8 `tasks/order/plan-boundary-reworded.yaml`
+  = the boundary plan (which already states 500.00 and 499.99 in the rule sentence) plus the reworded test sentence. `--prompt lean`, n=10.
+- **Prediction (before the runs):** B7 at least 8 of 10 (L2 7/10 and B2 8/10, whose failures are this contradiction); B8 at least
+  9 of 10. **Falsified** if B7 is 6 or fewer (the sentence is not the cause on order; shipping needed values too) or B8 is 7 or fewer.
+  Order's L2 has no second defect that I know of (shipping's weight cases have no counterpart), so I expect the wording alone to
+  suffice here; if it does, the two stories differ in what the plan must supply.
+- **Generality:** `none`; order only; the test sentence is the factor changed.
+- **Result B7/B8 (order, `lean`, n=10):**
+
+  | Plan | Hidden | Completed | First-attempt steps |
+  |---|---|---|---|
+  | L2 (earlier, fresh) | 7/10 | | 14 of 17 started |
+  | B7 L2 + reworded test sentence | **4/10** | 4 | 8 of 14 started |
+  | B2 L2 + boundary sentence (earlier) | 8/10 | | 17 of 19 |
+  | B8 boundary sentence + reworded test sentence | **9/10** | 9 | 19 of 20 |
+  | L1 checklist | 10/10 | | 20 of 20 |
+
+  Predictions: B8 at least 9 of 10: held. B7 at least 8 of 10: **falsified** (4, falsifier 6 or fewer). B7 failed in all 6 non-passing runs with
+  `testPlaceOrderWithDiscount expected 450.00 but was 4500.00`: the test calls `Order.place(.., new BigDecimal("500.00"), 10)`, so the
+  model read "an order of 500.00 totals 450.00" as a unit price of 500.00 (and chose a quantity of 10, giving 4500.00). The
+  sentence states an outcome, not a call; in B8 the rule sentence ("so an order of 500.00 totals 450.00...") precedes the same
+  words and 9 of 10 read it correctly, so this is a fragile reading, not a stable one (B7 4/10 against 7/10 for plain L2 is
+  also within what n=10 can do, but the 6 failures share one mechanism and it is new).
+- **Reading:** rewording a test sentence is not sufficient or safe by itself: the case needs its call arguments, not an
+  outcome described in domain words. Shipping's values were call arguments (`1001 grams`, `DOMESTIC`, `99.99` as the order
+  value); order's "an order of 500.00" was ambiguous between a unit price and a total. Refines the Planner rule: every case the step
+  is told to test is stated as the call's arguments and the expected result.
+
+### B9. Order: the cases stated as calls (prediction first)
+- **Plan:** `tasks/order/plan-signatures-calls.yaml` = L2 with the test sentence "the total with the discount (unit price 125.00,
+  quantity 4: total 450.00), the total without it (unit price 124.99, quantity 4: total 499.96), ..." and no other change. `--prompt lean`, n=10.
+- **Prediction:** at least 8 of 10 (against B7 4/10 with the outcome-only wording, L2 7/10). **Falsified** at 6 or fewer: then calls
+  as arguments are not enough either and order's remaining defect is elsewhere.
+- **Generality:** `none`; order only.
+- **Result B9 (order, `lean`, n=10):** hidden **6/10** (B7 4/10, L2 7/10, B8 9/10); 6 runs completed both steps, 16 of 20 steps first
+  attempt. Prediction (at least 8): **falsified** (falsifier 6 or fewer). Step 1 now passes its own gate in every run (no
+  `4500.00` and no 500.00 contradiction); all 4 gate failures are in step 2, `OrderServiceTest.testPlaceOrderAndFindById expected
+  500.00 (or 475.00) but was 450.00`: the step's test sentence ("placing an order and finding it") gives no values, so the model
+  reuses step 1's threshold input (unit price 125.00, quantity 4 from the plan text) and expects the undiscounted total. The class
+  is the same, one step later: a case the plan tells the step to test, with no values, filled by an invented and wrong one.
+- **Reading:** the Planner rule holds per step, and every step of the plan needs it, not the step with the rule. Shipping's B5 had
+  one such sentence per step covered (step 1 had no weight rule). B10 gives step 2 a value too.
+
+### B10. Order: the cases of both steps stated as calls (prediction first)
+- **Plan:** `tasks/order/plan-signatures-calls-both.yaml` = B9 plus in step 2 "placing an order (unit price 100.00, quantity 1: total
+  100.00) and finding it by its id" in place of "placing an order and finding it". `--prompt lean`, n=10.
+- **Prediction:** at least 9 of 10. **Falsified** at 7 or fewer: then a remaining defect is not a missing value.
+- **Generality:** `none`; order only.
+- **Result B10 (order, `lean`, n=10):** hidden **10/10**; all 10 runs completed both steps, 20 of 20 steps first attempt, no retry.
+  Prediction (at least 9): held. So on order too, the L1 result is reached without a checklist: L2 prose, every case a step is told
+  to test stated as call arguments and the expected result, in every step.
+- **Summary B7 to B10 (order, hidden pass of 10):** L2 7; + reworded sentence 4; + calls in step 1 6; + calls in both steps **10**;
+  boundary sentence + reworded 9; L1 checklist 10. Failure mechanisms along the way, each one a case with no usable value: the
+  threshold test with two totals (L2), an outcome read as a unit price (B7), and step 2's untested-by-the-plan case reusing step 1's
+  numbers (B9).
+- **The rule, now on two stories (order, shipping; one model; plans by hand):** for every step, every case its test sentence names
+  is stated as the call's arguments and the expected result, and the sentence does not contradict the rule. With that, L2 prose
+  reached L1's result on both (shipping B5 10/10, order B10 10/10), so numbered items, MUST wording and an API line were not what
+  the checklist needed. Still untested: loans (scale, where values alone already gave 10/10, C13) and stock with its API
+  failure (C17 needed the API line; accessor names are not cases). The values here are ones I took from the feature and the hidden
+  test's boundaries; whether a Planner finds them is course step 3. A deterministic check is the natural first Planner gate:
+  every case named in a test sentence has a stated call and result.
+- **Status:** done.
