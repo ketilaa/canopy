@@ -373,6 +373,28 @@ steps:
     }
 
     #[test]
+    fn the_order_plan_covers_the_scenarios_of_its_feature() {
+        let plan = Plan::from_yaml(include_str!("../tasks/order/plan.yaml")).unwrap();
+        let feature = include_str!("../tasks/order/feature.feature");
+        assert_eq!(plan.feature.as_deref(), Some("tasks/order/feature.feature"));
+        for title in [
+            "Place an order for one product",
+            "A net total of 500.00 or more gets a 10 percent volume discount",
+            "A quantity that is not positive is rejected",
+            "A placed order can be looked up by its id",
+        ] {
+            assert!(feature.contains(title), "{title}");
+        }
+        let scenarios = ids(&[
+            "place-an-order-for-one-product",
+            "a-net-total-of-500-00-or-more-gets-a-10-percent-volume-discount",
+            "a-quantity-that-is-not-positive-is-rejected",
+            "a-placed-order-can-be-looked-up-by-its-id",
+        ]);
+        assert_eq!(plan.verify_coverage(&scenarios), Vec::<String>::new());
+    }
+
+    #[test]
     fn a_plan_written_as_yaml_reads_back_as_the_same_plan() {
         for text in [PLAN, COVERED, SCOPED, include_str!("../tasks/widgets/plan.yaml")] {
             let plan = Plan::from_yaml(text).unwrap();
