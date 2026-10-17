@@ -795,3 +795,42 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Generality:** `multi-story` for "L3 fails, a detailed plan passes" (five stories now); `one-story` for the tickets numbers; I wrote
   the story, the plans and the hidden test, one model.
 - **Status:** done.
+
+## 2026-10-17: Analysis of the residual first-attempt failures on order and shipping (fresh runs, no change)
+
+- **Runs (all `--prompt lean`, n=10, same binary; the transcripts were read, the run directories are scratch):**
+
+  | Cell | Hidden | Steps passed at first attempt | Earlier number |
+  |---|---|---|---|
+  | shipping L1 (checklist + rule item) | 10/10 | 20 of 20 | 9/10 (C15) |
+  | shipping L2 (prose) | 3/10 | 16 of 20 started | 5/10 |
+  | order L1 (checklist) | 10/10 | 20 of 20 | 9/10 on `current` (D1) |
+  | order L2 (prose) | 7/10 | 14 of 17 started | 9/10 |
+
+  The same cell moves by two or three runs between batches (shipping L2 5 to 3, order L2 9 to 7), so a difference of 2 in n=10 is
+  noise; the L1 cells now read 10/10 twice.
+- **Class 1, shipping L2: `each started 500 grams` computed with floor division.** 7 of 10 runs wrote `(weightGrams - 1000) / 500` (or
+  the same without a `> 1000` guard), 3 wrote `Math.ceil`; the ceiling runs passed 3 of 3, the floor runs 0 of 7. The model's own
+  tests use 1500, 2000, 2500, 3000 only, values where floor and ceiling agree, so the gate passes and the hidden test (1001 g
+  should cost 5.50, got 4.00; 1501 g should cost 7.00, got 5.50) fails (runs 05, 07, 08). Where the model wrote a test with the
+  prose's own example the gate caught it (expected 7.00 but 5.50, run 03). Without the `> 1000` guard a weight under 1000 gives a
+  negative step and a cost of 2.50 (expected 4.00; runs 06 and 09, the defect C15 saw). One gate failure (run 04, a rejected-weight
+  test) is a different defect, not diagnosed. All 10 L1 runs used a round-up form (`+ 499`, `ceil`, remainder check). Cause: the
+  prose gives the ranges (1001 to 1500 adds 1.50) and the model still chose the common truncating idiom; the L1 items 1001 and 1501
+  with their costs pin the intended result.
+- **Class 2, order L2: the model's own test contradicts itself at the threshold.** In all 3 failing runs (05, 06, 07) the step's
+  own test file asserts two different totals for the same input: `place(.., 500.00, 1)` expects 500.00 in the "no discount" test and
+  450.00 in the "discount" test (the code is right, the test is wrong), or a 10 times larger expected value (4500 for 450.00). The
+  retry shows the failing assertion and the model resubmits the same contradiction in all three attempts (0 of 3 runs recovered). L1
+  gives the values, so the model has nothing to invent at the threshold: 20 of 20 steps first attempt.
+- **Attribution:** planner/plan detail in both cases. The implementation is correct or incorrect in the way the plan's missing
+  values allow; the harness recovery is not the bottleneck (a retry that sees "expected 500.00 but was 450.00" does not change the
+  test). Both classes are the same as before (a boundary the plan does not give a value for), now with a mechanism for each.
+- **What this does not show:** whether the whole checklist is needed or only the boundary values. L1 adds many more values than the
+  failures need.
+- **Next experiment (not run; prediction first):** L2 plus one sentence each, not a checklist: shipping "1001 grams costs 5.50 and
+  1501 grams costs 7.00"; order "500.00 gets the discount and 499.99 does not, an order of 500.00 totals 450.00". n=10 per story.
+  Predict at least 8 of 10 on both; falsified at 5 or fewer on either (then the checklist's structure, not the boundary values,
+  is the ingredient). Generality of this analysis: `two-story` (order, shipping), one model, one batch each; the class mechanism comes
+  from reading the code of 10 runs per cell, not from a count alone.
+- **Status:** analysis done; experiment queued.
