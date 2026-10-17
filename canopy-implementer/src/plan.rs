@@ -489,6 +489,17 @@ steps:
     }
 
     #[test]
+    fn the_loans_checklist_plan_has_the_shape_of_the_other_loans_plans_and_lists_its_tests() {
+        let checklist = Plan::from_yaml(include_str!("../tasks/loans/plan-checklist.yaml")).unwrap();
+        let signatures = Plan::from_yaml(include_str!("../tasks/loans/plan-signatures.yaml")).unwrap();
+        let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+        assert_eq!(shape(&checklist), shape(&signatures));
+        for step in &checklist.steps {
+            assert!(step.instruction.contains("MUST") && step.instruction.contains("\n1. "), "{}", step.id);
+        }
+    }
+
+    #[test]
     fn a_plan_written_as_yaml_reads_back_as_the_same_plan() {
         for text in [PLAN, COVERED, SCOPED, include_str!("../tasks/widgets/plan.yaml")] {
             let plan = Plan::from_yaml(text).unwrap();

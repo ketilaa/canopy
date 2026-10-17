@@ -544,3 +544,18 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Reading so far:** the model's first attempt is the limiting step, in two of three stories it fails on the same
   Java fact, and the repair mechanisms (feedback, hint, fact, sides) mostly do not change that. What worked
   was a retry hint on the one-line order plan (C8). Remaining cells are queued: shipping L3, stock L2 and L3.
+
+### C11. Loans at level L1: the checklist with the feature's own example values (`tasks/loans/plan-checklist.yaml`)
+- **Where:** `tasks/loans/plan-checklist.yaml`; same steps, files and covered scenarios as the other loans plans
+  (a unit test pins this). Step 1 lists 5 tests and step 2 lists 6, with the values taken from the feature's
+  example tables and scenarios (`new BigDecimal("0.00")`, `"0.50"`, `"5.00"`, the dates, the messages), introduced
+  with "MUST ... one test for each item ... do not leave any out", as in the order checklist (C4).
+- **Why:** loans L2 is 0/10 because every first attempt writes `BigDecimal.ZERO` where the example says 0.00, and no
+  hint or fact moved it (C8-C10). A Planner reads the scenarios, whose example tables carry exactly these values,
+  so a checklist with concrete values is a plan shape it can produce mechanically. Order L1 (D1) passed 9/10.
+- **Prediction (before the run, `--prompt lean`, n=10):** loans L1 passes the hidden test in at least 7 of 10 runs,
+  and step 1 passes its first attempt in at least 7 of 10. **Falsified** if hidden pass is 2 or fewer: then even
+  the concrete values do not get the model past the scale mistake, and the cure has to be a harness mechanism,
+  not plan text.
+- **Generality:** `none`; one story, one model.
+- **Status:** queued.
