@@ -18,6 +18,9 @@ pub enum Check {
     Mentions(&'static str, &'static str),
     /// The named file does not mention this identifier.
     Lacks(&'static str, &'static str),
+    /// The named test file, found by name under `src/test/java`, contains this text exactly (a string literal or a
+    /// number, which `Mentions` cannot match). It measures what a test covers; it is never fed back to the model.
+    TestContains(&'static str, &'static str),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +43,16 @@ pub fn run(root: &Path, checks: &[Check]) -> Vec<CheckResult> {
                     Some(text) => CheckResult {
                         description,
                         passed: mentions_word(&text, word),
+                    },
+                    None => not_found(description),
+                }
+            }
+            Check::TestContains(file, text) => {
+                let description = format!("{file} contains {text}");
+                match find_test(root, file).and_then(|path| std::fs::read_to_string(root.join(path)).ok()) {
+                    Some(content) => CheckResult {
+                        description,
+                        passed: content.contains(text),
                     },
                     None => not_found(description),
                 }
@@ -67,6 +80,30 @@ fn not_found(description: String) -> CheckResult {
 
 fn find(root: &Path, file: &str) -> Option<String> {
     hints::find_production_file(root, file.strip_suffix(".java")?)
+}
+
+fn find_test(root: &Path, file: &str) -> Option<String> {
+    fn walk(dir: &Path, relative: &str, file: &str) -> Option<String> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let kind = entry.file_type().ok()?;
+            if kind.is_symlink() {
+                continue;
+            }
+            let path = format!("{relative}/{name}");
+            if kind.is_dir() {
+                if let Some(found) = walk(&entry.path(), &path, file) {
+                    return Some(found);
+                }
+            } else if name == file {
+                return Some(path);
+            }
+        }
+        None
+    }
+    walk(&root.join("src/test/java"), "src/test/java", file)
 }
 
 fn read(root: &Path, file: &str) -> Option<String> {
@@ -172,5 +209,24 @@ mod tests {
     #[test]
     fn no_checks_means_no_results() {
         assert!(run(repo().path(), &[]).is_empty());
+    }
+
+    #[test]
+    fn test_contains_finds_a_test_file_by_name_and_looks_for_the_exact_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("src/test/java/app/OrderTest.java");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "assertEquals(\"Quantity must be positive\", e.getMessage()); // 450.00").unwrap();
+        let r = run(
+            dir.path(),
+            &[
+                Check::TestContains("OrderTest.java", "Quantity must be positive"),
+                Check::TestContains("OrderTest.java", "499.99"),
+                Check::TestContains("MissingTest.java", "x"),
+            ],
+        );
+        assert_eq!(passed(&r), [true, false, false]);
+        assert_eq!(r[0].description, "OrderTest.java contains Quantity must be positive");
+        assert!(r[2].description.ends_with("(file not found)"));
     }
 }

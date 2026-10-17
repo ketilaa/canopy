@@ -349,9 +349,18 @@ const WIDGETS_STRUCTURE: &[Check] = &[
     Check::Lacks("Widget.java", "WidgetService"),
 ];
 
+/// What the hand-written order plan's checklist requires of `OrderTest`: the exception message is asserted, and the
+/// discount threshold is tested exactly at 500.00 (100.00 x 5 gives 450.00). These measure the musts; the model is
+/// told them in the plan's instruction, not by these checks.
+const ORDER_MUSTS: &[Check] = &[
+    Check::TestContains("OrderTest.java", "Quantity must be positive"),
+    Check::TestContains("OrderTest.java", "450.00"),
+];
+
 fn structure_for(task_name: &str) -> &'static [Check] {
     match task_name {
         "widgets-planned" => WIDGETS_STRUCTURE,
+        "order-planned" => ORDER_MUSTS,
         _ => &[],
     }
 }

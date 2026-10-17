@@ -395,6 +395,17 @@ steps:
     }
 
     #[test]
+    fn the_checklist_order_plan_has_the_same_steps_and_coverage_as_the_order_plan() {
+        let base = Plan::from_yaml(include_str!("../tasks/order/plan.yaml")).unwrap();
+        let checklist = Plan::from_yaml(include_str!("../tasks/order/plan-checklist.yaml")).unwrap();
+        let ids_of = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+        assert_eq!(ids_of(&base), ids_of(&checklist));
+        assert_ne!(base.steps[0].instruction, checklist.steps[0].instruction);
+        assert_eq!(base.steps[1].instruction, checklist.steps[1].instruction);
+        assert!(checklist.steps[0].instruction.contains("MUST"));
+    }
+
+    #[test]
     fn a_plan_written_as_yaml_reads_back_as_the_same_plan() {
         for text in [PLAN, COVERED, SCOPED, include_str!("../tasks/widgets/plan.yaml")] {
             let plan = Plan::from_yaml(text).unwrap();

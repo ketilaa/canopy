@@ -96,3 +96,28 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Status:** `lean`: kept as a setting for the order plan (10/10, equal to `current`); `persona`: no harm on the order plan (10/10), no measured benefit. Batches: A (`current`, done), B (`lean`, done), C (`persona`, done), n=10 each, same
   binary, same plan, same repository tag.
 - **Result:** see below once the batches finish.
+
+### C4. Order plan step 1 as a checklist of musts (plan variant `plan-checklist.yaml`)
+- **Where:** `tasks/order/plan-checklist.yaml` (step 1's instruction only; step 2, files and coverage are the same
+  as `plan.yaml`, checked by a unit test). Scorer: `Check::TestContains` in `src/structure.rs`, `ORDER_MUSTS` in
+  `examples/run_step.rs`. Commit: see the git log entry "Add a checklist variant of the order plan".
+- **What:** the prose list of test examples becomes a numbered checklist of 8 tests, introduced with "It MUST
+  contain one test for each item… you must not leave any item out. Before you submit, go through the list…".
+  Two items are new musts: items 6 and 7 say the test checks the exception message equals "Quantity must be
+  positive"; item 5 is a new case, 100.00 x 5 = 450.00 (exactly 500.00 gets the discount).
+- **Why:** batches A, B, C (30 runs, three prompt variants) all passed the gates while 29 of 30 `OrderTest`s did
+  not assert the message the instruction asked for (1 of 30 contained the literal) and none tested the 500.00
+  boundary (0 of 30 contain 450.00; this one was not asked for). The gates cannot see either gap.
+- **Scorer change:** `scored` for `order-planned` now also requires `OrderTest` to contain the literal "Quantity
+  must be positive" and "450.00". Stricter than A–C: re-scored retrospectively, A, B and C would be 0/10, 0/10 and
+  at most 0/10 on the 450.00 must. Compare only runs scored with the same scorer; the per-check results are in each
+  run's summary. The literal check proves presence, not that the message is asserted; it is a floor.
+- **Prediction (before the batch):** with the checklist, at least 8 of 10 runs contain each literal and every
+  step still passes first attempt (no loss against 20/20). **Falsified if** either literal is in fewer than 6 of
+  10 runs: instruction detail then does not reliably reach the tests, and the next arm is the harness tracking the
+  musts and sending a retry that names the missing one (needs a proposal and approval first, per `CLAUDE.md`).
+- **Arms:** D0 = `plan.yaml`, D1 = `plan-checklist.yaml`; both `--prompt current`, n=10, same binary and repository
+  tag, new scorer. D0 also checks the scorer on the old plan.
+- **Generality:** `none` yet. When measured: one story, one stack, one model, one must per kind (a message, a
+  boundary); a different kind of must (an interaction between classes, a state change) is not covered.
+- **Status:** untested.
