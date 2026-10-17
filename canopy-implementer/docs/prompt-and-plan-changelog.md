@@ -72,8 +72,18 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Prediction (before the batches):** `lean` scores at least as well as `current`; if `lean` is 2 or more
   passes below `current` at n=10, one removed rule was doing work and gets bisected. `persona` is judged against
   `lean`, not `current`.
-- **Generality:** `none`. When measured it will be one story (order), one plan, one stack (plain Java Maven,
+- **Result, batch B (`--prompt lean`, n=10, same binary/plan/tag as A):** 10/10 scored, every step passed first
+  attempt. Refused submits (import audit): 15 over 10 runs against 12 in A, same cause (missing `BigDecimal` or
+  `UUID` import); 3.2k to 4.9k prompt tokens per run in both arms. The first run's system prompt was read and
+  shows five lines (the lean rules); the user prompt is identical to A's. Prediction (B at least as good as A)
+  held; it is not distinguishable from A in this story: both arms are at the ceiling, so B cannot be shown
+  better, only not worse. 0 of 10 B runs assert the exception message either (as in A).
+- **Batch C (`persona`):** not run yet.
+- **Generality:** `one-story` for `lean` (n=10, order story, plain Java, Qwen3-14B Q4_K_M, one plan): the six
+  removed rules were not needed here. A second story is required before they are treated as removable in general
+  (the Spring widgets plan has modify steps and a framework, where "keep the existing code" and the JUnit/package
+  rules may matter more). Original line, kept for the still-open `persona` arm: When measured it will be one story (order), one plan, one stack (plain Java Maven,
   JUnit 5), one model; a second story (course step 2) is needed before `lean` is a rule rather than a setting.
-- **Status:** untested. Batches: A (`current`) running, then B (`lean`), then C (`persona`), n=10 each, same
+- **Status:** `lean`: kept as a setting for the order plan (10/10, equal to `current`); `persona`: untested. Batches: A (`current`, done), B (`lean`, done), C (`persona`), n=10 each, same
   binary, same plan, same repository tag.
 - **Result:** see below once the batches finish.
