@@ -154,6 +154,8 @@ pub struct Implementer {
     retry: RetryMode,
     /// Whether a test failure that is the same number at two scales gets the BigDecimal scale hint.
     scale_hint: bool,
+    /// With the scale hint: also say which value the code returned and which the test expected.
+    scale_hint_sides: bool,
 }
 
 /// The files a step may create or change (empty when it is unscoped).
@@ -186,6 +188,13 @@ impl Implementer {
         self
     }
 
+    /// The scale hint also names the sides (what the code returned, what the test expected). Implies the hint.
+    pub fn with_scale_hint_sides(mut self, on: bool) -> Self {
+        self.scale_hint_sides = on;
+        self.scale_hint = self.scale_hint || on;
+        self
+    }
+
     /// Chooses what a retry after a failed compile or test shows the model.
     pub fn with_retry(mut self, retry: RetryMode) -> Self {
         self.retry = retry;
@@ -208,6 +217,7 @@ impl Implementer {
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
             scale_hint: false,
+            scale_hint_sides: false,
         }
     }
 
@@ -229,6 +239,7 @@ impl Implementer {
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
             scale_hint: false,
+            scale_hint_sides: false,
         }
     }
 
@@ -587,7 +598,7 @@ impl Implementer {
                 Some(hint) => format!("{}\n\n{hint}", tested.digest),
                 None => tested.digest.clone(),
             };
-            if let Some(hint) = self.scale_hint.then(|| hints::scale_hint(&tested.digest)).flatten() {
+            if let Some(hint) = self.scale_hint.then(|| hints::scale_hint_with(&tested.digest, self.scale_hint_sides)).flatten() {
                 feedback = format!("{feedback}\n\n{hint}");
             }
             return Err(failure(Stage::Test, feedback, Some(files)));

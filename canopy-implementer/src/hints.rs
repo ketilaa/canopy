@@ -89,15 +89,25 @@ pub fn import_hint(digest: &str, root: &Path) -> Option<String> {
 /// branch and `setScale(2)` in another, or writes the expected value with another scale than its code produces, and
 /// repeats it however the failure is shown. The model's files are never touched.
 pub fn scale_hint(digest: &str) -> Option<String> {
+    scale_hint_with(digest, false)
+}
+
+/// `scale_hint`, and with `sides` also says which value came from where: in `assertEquals(expected, actual)` the
+/// actual value is what the production code returned, the expected one what the test wrote.
+pub fn scale_hint_with(digest: &str, sides: bool) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for line in digest.lines() {
         let Some((expected, actual)) = expected_and_actual(line) else { continue };
         if expected == actual || !is_decimal(&expected) || !is_decimal(&actual) || !same_number(&expected, &actual) {
             continue;
         }
+        let who = match sides {
+            true => format!(" The code returned {actual}; the test expected {expected}."),
+            false => String::new(),
+        };
         let hint = format!(
             "{expected} and {actual} are the same number at different scales, and BigDecimal.equals compares the scale too, \
-             so assertEquals fails. Give the value one scale: make the code produce it in every branch (an early return of \
+             so assertEquals fails.{who} Give the value one scale: make the code produce it in every branch (an early return of \
              BigDecimal.ZERO has scale 0) and write the expected value in the test with the same number of decimals, or \
              compare with compareTo."
         );
@@ -383,5 +393,15 @@ mod tests {
         let twice = scale_hint("A.a:1 expected: <0> but was: <0.00>\nB.b:2 expected: <0> but was: <0.00>").unwrap();
         assert_eq!(twice.lines().count(), 1, "one hint per distinct pair: {twice}");
         assert!(scale_hint("T.t:1 expected: <-2.50> but was: <-2.5>").is_some());
+    }
+
+    #[test]
+    fn the_sides_variant_says_what_the_code_returned_and_what_the_test_expected() {
+        let line = "LoanTest.t:22 expected: <0.00> but was: <0>";
+        let plain = scale_hint_with(line, false).unwrap();
+        assert!(!plain.contains("The code returned"), "{plain}");
+        assert_eq!(plain, scale_hint(line).unwrap());
+        let sides = scale_hint_with(line, true).unwrap();
+        assert!(sides.contains("The code returned 0; the test expected 0.00."), "{sides}");
     }
 }

@@ -446,7 +446,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona] [--retry feedback|restart] [--scale-hint]";
+    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona] [--retry feedback|restart] [--scale-hint] [--scale-hint-sides]";
 
 struct Config {
     task: String,
@@ -470,6 +470,8 @@ struct Config {
     retry: canopy_implementer::implementer::RetryMode,
     /// Add the BigDecimal scale hint to a test failure that is the same number at two scales (`--scale-hint`).
     scale_hint: bool,
+    /// The scale hint also names which value the code returned and which the test expected (`--scale-hint-sides`).
+    scale_hint_sides: bool,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -490,6 +492,7 @@ fn parse_args() -> Result<Config, String> {
         prompt: Default::default(),
         retry: Default::default(),
         scale_hint: false,
+        scale_hint_sides: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -515,6 +518,7 @@ fn parse_args() -> Result<Config, String> {
             "--no-classpath" => config.classpath = false,
             "--surfaces" => config.surfaces = true,
             "--scale-hint" => config.scale_hint = true,
+            "--scale-hint-sides" => config.scale_hint_sides = true,
             "--retry" => {
                 let name = value("--retry")?;
                 config.retry = canopy_implementer::implementer::RetryMode::parse(&name)
@@ -794,7 +798,8 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         Some(index) => implementer.with_classpath(index.clone()),
         None => implementer,
     };
-    let implementer = implementer.with_prompt(config.prompt).with_retry(config.retry).with_scale_hint(config.scale_hint);
+    let implementer = implementer.with_prompt(config.prompt).with_retry(config.retry).with_scale_hint(config.scale_hint)
+    .with_scale_hint_sides(config.scale_hint_sides);
     let implementer = if config.surfaces {
         implementer.with_surfaces(Arc::new(canopy_implementer::surfaces::RootsSurfaces::new("roots")))
     } else {

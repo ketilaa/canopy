@@ -90,3 +90,4 @@
 {"failed_step":null,"implementer_batch":"2026-10-17T09-37-32","plan_content_id":"78dd8157f890b585","refusals":null,"run":8,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
 {"failed_step":null,"implementer_batch":"2026-10-17T09-37-32","plan_content_id":"78dd8157f890b585","refusals":null,"run":9,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
 {"failed_step":null,"implementer_batch":"2026-10-17T09-37-32","plan_content_id":"78dd8157f890b585","refusals":null,"run":10,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T10-11-25","plan_content_id":"d59eabeefd2ec103","refusals":null,"run":1,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}

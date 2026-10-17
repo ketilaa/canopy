@@ -442,4 +442,24 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   can help.
 - **Generality:** `none` yet. Evidence for the need is two stories on plain Java; the fix targets one Java library
   fact (BigDecimal scale), and says nothing about other facts a model might lack.
-- **Status:** untested (flag off by default).
+- **Result, loans L2 (`lean`, n=10, `--scale-hint`, same binary otherwise):** hidden 1/10 (baseline 0/10); step 1
+  passed in 1 run (baseline 0); retries identical to the failed answer **9 of 19** (baseline 20 of 20); 1 of 19
+  retries recovered (baseline 0 of 20). Prediction: at least 3 of 10 runs pass step 1: **not held** (1). Identical
+  retries at most 12 of 20: held (9 of 19). The falsifier (identical at 18 of 20 or more) did not occur: the
+  hint does break the copy in about half the retries. What the model then does (read from run 2): it fixes the test
+  side only (`BigDecimal.ZERO.setScale(2, ...)` in the expected value) and leaves the code's early `BigDecimal.ZERO`,
+  so the next failure is the mirror image, `expected: <0.00> but was: <0>`, and the hint repeats. The hint names
+  the fact but not which side produced which value. The order L3 result follows below when it is in.
+- **Status:** partly confirmed (copy broken, recovery not), sharpened in C9.
+
+### C9. The scale hint names the sides (flag `--scale-hint-sides`)
+- **Where:** `hints::scale_hint_with(digest, sides)`, `Implementer::with_scale_hint_sides`, `run_step
+  --scale-hint-sides` (implies the hint). Commit: see the git log entry "Name the sides in the scale hint".
+- **What:** adds one sentence to the C8 hint: "The code returned B; the test expected A." (In `assertEquals(expected,
+  actual)` the actual value is what the production code returned.)
+- **Why:** C8 on loans L2: the model repaired the test and left the code, then failed the other way round.
+- **Prediction:** on loans L2 (`lean`) the sides variant passes step 1 in at least 3 of 10 runs (C8: 1 of 10) and
+  has identical retries at 8 of 20 or fewer. **Falsified** if it passes step 1 in 2 or fewer runs: the model's fix
+  of one side per attempt is not an information problem and the next candidate is a restart.
+- **Generality:** `none`; one story, one failure fact.
+- **Status:** queued.
