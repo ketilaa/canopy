@@ -579,5 +579,20 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Prediction (before the run, `lean`, n=10):** shipping L1 passes the hidden test in at least 8 of 10 runs (L2 5/10, L3
   1/10). **Falsified** if it is 5 or fewer: then concrete values are not a general lever, and the loans result
   was about its particular failure.
-- **Generality:** `none`; one story, one model.
-- **Status:** queued.
+- **Result (shipping, `lean`, n=10, `plan-checklist.yaml`):** hidden **6/10** (L2 5/10, L3 1/10); 9 of 10 runs completed
+  both steps (L2: 5 of 10); steps passed 19 of 20 starts (L2: 14 of 19); first-attempt failures 1 (L2: 7).
+  Prediction (at least 8 of 10): **not held** (6); the falsifier (5 or fewer) did not occur either.
+- **What the three hidden failures are (read from the code):** all three, in `run-02`, `run-06` and `run-07`: a parcel
+  of 1 gram cost 2.50 instead of 4.00. The model computed the surcharge as `ceil((weight - 1000) / 500.0)`, which is
+  -1 below 1000 g, and never applied the rule it had been told in prose ("up to 1000 grams the cost is the base
+  price"). Its own tests, which were exactly the checklist's values, never tried a weight below 1000 g, so
+  nothing failed. The checklist copies the values of the feature's example tables, and the feature never shows a
+  weight under 1000 g: the examples did not cover the whole rule, the model implemented what the examples showed.
+- **Reading:** concrete values make the gates pass (shipping 9/10 completed, loans 10/10) and fix the model's own
+  tests; they do not make the code right where the examples are silent. Together with C6 (order L3: gates green,
+  behaviour wrong): the unresolved gap is behaviour the plan and the examples do not mention but the feature's rule
+  states.
+- **Generality:** `one-story` for the number; three stories now show the same ordering of the detail levels for the gates
+  (L1 completes at least as often as L2, both far above L3), and the hidden-test result is not uniform (order 9/10 and
+  loans 10/10 at L1, shipping 6/10).
+- **Status:** kept as the shipping plan shape with the best completion; its hidden-test gap is the finding.
