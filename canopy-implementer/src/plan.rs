@@ -493,6 +493,9 @@ steps:
         let stories = [
             (include_str!("../tasks/loans/plan-checklist.yaml"), include_str!("../tasks/loans/plan-signatures.yaml")),
             (include_str!("../tasks/shipping/plan-checklist.yaml"), include_str!("../tasks/shipping/plan-signatures.yaml")),
+            (include_str!("../tasks/shipping/plan-checklist-rules.yaml"), include_str!("../tasks/shipping/plan-signatures.yaml")),
+            (include_str!("../tasks/stock/plan-checklist.yaml"), include_str!("../tasks/stock/plan-signatures.yaml")),
+            (include_str!("../tasks/loans/plan-wording-only.yaml"), include_str!("../tasks/loans/plan-signatures.yaml")),
         ];
         let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
         for (checklist, signatures) in stories {
@@ -503,6 +506,21 @@ steps:
                 assert!(step.instruction.contains("MUST") && step.instruction.contains("\n1. "), "{}", step.id);
             }
         }
+    }
+
+    #[test]
+    fn the_loans_values_only_plan_lists_the_values_without_the_must_wording() {
+        let values = Plan::from_yaml(include_str!("../tasks/loans/plan-values-only.yaml")).unwrap();
+        let checklist = Plan::from_yaml(include_str!("../tasks/loans/plan-checklist.yaml")).unwrap();
+        let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+        assert_eq!(shape(&values), shape(&checklist));
+        for step in &values.steps {
+            assert!(!step.instruction.contains("MUST") && !step.instruction.contains("go through the list"), "{}", step.id);
+            assert!(step.instruction.contains("\n1. ") && step.instruction.contains("BigDecimal(\"") || step.id.contains("service"), "{}", step.id);
+        }
+        assert!(values.steps[0].instruction.contains("new BigDecimal(\"0.00\")"));
+        let wording = Plan::from_yaml(include_str!("../tasks/loans/plan-wording-only.yaml")).unwrap();
+        assert!(!wording.steps[0].instruction.contains("new BigDecimal(\"0.00\")"), "no concrete values in the wording-only plan");
     }
 
     #[test]

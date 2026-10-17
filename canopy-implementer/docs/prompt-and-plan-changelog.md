@@ -628,3 +628,30 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Not run (cut for time):** R3 (restart retry in the real harness), `current` arms of the new stories, stock at L1.
 - **Generality:** `multi-story` for the level ordering of the gates (4 stories, one stack, one model); `one-story`
   per number.
+
+### C13-C16. What in the checklist matters: values or wording; a rule-coverage item; stock at L1 (four batches, queued on the maintainer's request)
+- **Plans (all `--prompt lean`, n=10, same binary and tags; a unit test pins that each keeps its story's steps, files and
+  coverage):**
+  - C13 `tasks/loans/plan-values-only.yaml`: the loans checklist's numbered items with their concrete values, without
+    the "MUST contain one test for each item ... check the list before you submit" wording.
+  - C14 `tasks/loans/plan-wording-only.yaml`: the "MUST ... check the list" wording and numbered items, with the items
+    described in words and no concrete values or dates.
+  - C15 `tasks/shipping/plan-checklist-rules.yaml`: the shipping checklist (6/10, three failures all a weight under
+    1000 g costing a negative surcharge) plus one item for the rule the examples never exercised: a weight of up to
+    1000 grams costs the base price, with values (EUROPE 999 g, WORLD 500 g) different from the hidden test's (DOMESTIC
+    1 g). The item is derivable from the prose rule mechanically ("one item for each rule, including the side of the
+    threshold the examples do not show").
+  - C16 `tasks/stock/plan-checklist.yaml`: the stock plan at L1 (5, 3 and 7 listed tests with the feature's values), to
+    see whether the checklist helps or hurts a story that passes at prose level (L2 10/10).
+- **Why:** the checklist bundles two ingredients (values, wording) and I never separated them, so a Planner cannot yet be
+  told which to produce; shipping's remaining failures suggest the checklist should also cover rules whose examples are
+  missing; and the checklist may cost something on a story that does not need it.
+- **Predictions (before any of the four runs):**
+  - C13 values only passes the hidden test in at least 7 of 10 runs; C14 wording only in at most 2 of 10 (loans L2, prose
+    without values, is 0/10). **Falsified** (that values are the active ingredient) if C13 is 4 or fewer or C14 is 6 or more.
+  - C15 passes in at least 8 of 10 runs (checklist 6/10, all its failures the sub-1000 g case). **Falsified** if 6 or fewer:
+    a rule-coverage item does not close the gap.
+  - C16 passes in at least 9 of 10 runs (L2 10/10, the checklist should not hurt). **Falsified** if 7 or fewer: the
+    checklist costs something on a story that already passes.
+- **Generality:** `none` yet; one model, plain Java, four small greenfield stories.
+- **Status:** queued.
