@@ -186,5 +186,28 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   `glob`/`read_file` openings as "no answer"; fixed by carrying out tool calls against the rebuilt repository.
   In `fresh` the model goes looking for the files it is to create (glob/read) far more than in `current`: an
   effect of the variant, counted against the tool budget as in the real harness.
-- **Generality:** `none` yet.
-- **Status:** running.
+- **Result (20 stored retry cases, 10 test-stage and 10 compile-stage, x 2 samples each; seed 7; 2026-10-17):**
+
+  | variant | answers | identical to the failed files | changed | **passed** | no answer (tool budget / prose) |
+  |---|---|---|---|---|---|
+  | `current` | 40 | 16 (40%) | 21 | 8 (20%) | 3 |
+  | `fresh` | 40 | 0 | 38 | **15 (37.5%)** | 2 |
+  | `located` | 40 | 14 (35%) | 19 | 7 (17.5%) | 7 |
+
+  Cases recovered by at least one of two samples: `current` 5/20, `fresh` 11/20, `located` 4/20 (fresh-only 7
+  cases, current-only 1). One-sided Fisher: `fresh` vs `current` p=0.07, `fresh` vs `located` p=0.04. Build
+  outcomes of the changed answers: `current` 8 pass / 8 test fail / 5 compile fail; `fresh` 15 / 6 / 17;
+  `located` 7 / 9 / 3. Predictions: `current` repeats >= 40%: held (40%, at the bar); `fresh` repeats < 10%:
+  held (0%); `fresh` recovers at least as well as `current`: held (+17.5 points; the falsifier was -10).
+  `located` repeating less than `current`: not distinguishable (35% vs 40%), and it recovered no better.
+- **Reading:** the repeat disappears when the failed code is not shown (0 of 40), which is consistent with
+  anchoring, and recovery roughly doubles. Showing the lines the error points at did nothing for recovery and
+  made the model spend its tool budget more (6 of 40 answers) than the other variants. Caveat that matters:
+  the replay applies no import audit, and 17 of the 38 changed `fresh` answers fail to compile (the model rewrites
+  every file and forgets imports); in the real harness that audit refuses those within the attempt, so `fresh`'s
+  real recovery is probably higher, and `current`'s (5 compile fails) less affected. Not measured.
+- **Other caveats:** 20 cases drawn from 551; mostly the Spring widgets story on earlier prompts; 2 samples per
+  case are not independent (the case-level counts above are the cautious view); one model, one run of the batch.
+- **Generality:** `one-story` family (widgets, Spring) with n=40 per variant. No order-plan cases (it almost
+  never fails on the current prompts: 100 of 101 step runs passed first attempt today).
+- **Status:** measured; no change adopted. Next decisions are in the conversation (restart from zero, fix loop).
