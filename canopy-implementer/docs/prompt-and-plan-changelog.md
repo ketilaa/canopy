@@ -300,3 +300,24 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Status:** measured; C6 is a finding about plan detail, not a change to the Implementer. `plan-checklist.yaml`
   and `plan-signatures.yaml` stay as the passing plan shapes for the order story, `plan-oneline.yaml` as the
   failing one.
+
+### R2. Retry replay on current-prompt failures, with a restart-from-zero variant (measurement)
+- **Where:** `examples/retry_replay.rs` (new variant `blank`; the import, scope and classpath audit are now applied
+  to replayed submissions, and a refusal goes back to the model as in a real attempt; identical prompts are
+  de-duplicated). Commit: see the git log entry "Replay retries on current-prompt failures".
+- **Cases:** the 24 retry prompts from batches D1, E2, E3 of 2026-10-17 (current prompt, order story, coarse plans),
+  which are 12 distinct prompts, all test-stage failures: 9 variants of one scale mismatch (`expected <N.NN> but was
+  <N.NNN>`), 2 discount-threshold tests, 1 message-helper NullPointer. Narrow by construction; n per variant
+  = 12 cases x 4 samples = 48. Replaces R1's noisy-era cases as the basis for any decision.
+- **Variants:** `current` (previous answer + error, as sent), `fresh` (error only), `located` (previous answer + the
+  failing source lines), `blank` (the attempt-1 prompt again: a restart from zero with no trace of the failure).
+- **Prediction (before the batch):** `current` repeats the failed answer in at least 70% of answers (history of
+  the three batches: 22 of 24) and recovers at most 10%. `fresh` repeats under 10% and recovers at least 15
+  points more than `current`. `blank` recovers about the first-attempt pass rate of these steps (low, they were
+  selected for failing) and no more than `fresh`. `located` is no better than `current`.
+  **Falsified, for the restart idea, if** `blank` recovers at least as many as `fresh` (then the failure text adds
+  nothing and the simplest recovery is a restart). **Falsified, for the anchoring idea, if** `fresh` repeats the
+  failed answer in 10% or more or recovers no more than `current`.
+- **Generality:** `one-story`, narrow failure mode, one model. Says whether a retry can work on the failures of
+  the current prompt that we have; says nothing about other kinds of failure.
+- **Status:** running.

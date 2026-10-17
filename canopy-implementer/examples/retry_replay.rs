@@ -5,15 +5,16 @@
 //!   current  the retry prompt exactly as it was sent: the previous answer, then the error
 //!   fresh    the previous answer left out; the model is told only what failed
 //!   located  the previous answer kept, plus the source lines the error points at (`## Where it failed`)
+//!   blank    a restart from zero: the first attempt's prompt again, with no trace of the failure
 //!
 //! Each answer is classified (no submission, identical to the failed answer, changed) and, when changed, built:
 //! the repository at the run's tag plus the files of the steps that had already passed plus the new answer, then
-//! `mvn test-compile` and `mvn test`. The import audit and the other submit refusals are NOT applied, so this is
-//! the model's raw answer to the retry prompt. glob and read_file are carried out against the rebuilt repository
+//! `mvn test-compile` and `mvn test`. The harness's submit refusals (scope, import and classpath audit) are applied,
+//! and a refused submission goes back to the model as in a real attempt. glob and read_file are carried out against the rebuilt repository
 //! (the Implementer's limits: 16 turns, 12 tool calls); the two system rules about reading are left out, as a retry that shows files has them.
 //!
 //! Usage: retry_replay --runs <dir> [--runs <dir> ...] [--cases N] [--samples K] [--stage test|compile|both]
-//!        [--variants current,fresh,located] [--seed S] [--url URL] [--model ID] --out <dir> [--no-build] [--show]
+//!        [--variants current,fresh,located,blank] [--seed S] [--url URL] [--model ID] --out <dir> [--no-build] [--show]
 //! `<dir>` holds batches (`<batch>/run-NN/events.jsonl` and `<batch>/batch.json`).
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use canopy_implementer::build::{Build, CommandBuild};
+use canopy_implementer::classpath::ClassIndex;
+use canopy_implementer::files::Submission;
+use canopy_implementer::gates;
+use canopy_implementer::implementer::{Scope, StepKind};
 use canopy_implementer::llm::{ChatMessage, LlmClient, ModelEndpoint, Sampling, ToolRequest};
 use canopy_implementer::observe::NoopObserver;
 use canopy_implementer::replay::{same_files, with_failure_locations, without_previous_answer, Files};
@@ -34,6 +39,9 @@ struct Case {
     feedback: String,
     system: String,
     user: String,
+    /// The first attempt's prompt for the same step: what a restart from zero would send.
+    first_system: String,
+    first_user: String,
     previous: Files,
     prior: Files,
     repo: String,
@@ -60,7 +68,7 @@ fn parse_args() -> Result<Config, String> {
         cases: 12,
         samples: 2,
         stage: "both".into(),
-        variants: vec!["current".into(), "fresh".into(), "located".into()],
+        variants: vec!["current".into(), "fresh".into(), "located".into(), "blank".into()],
         seed: 1,
         url: "http://localhost:8080".into(),
         model: "Qwen/Qwen3-14B-GGUF:Q4_K_M".into(),
@@ -87,7 +95,7 @@ fn parse_args() -> Result<Config, String> {
         }
     }
     if c.runs.is_empty() || c.out.as_os_str().is_empty() {
-        return Err("usage: retry_replay --runs <dir> [--runs <dir>] --out <dir> [--cases N] [--samples K] [--stage test|compile|both] [--variants current,fresh,located] [--seed S] [--url URL] [--model ID] [--no-build] [--show]".into());
+        return Err("usage: retry_replay --runs <dir> [--runs <dir>] --out <dir> [--cases N] [--samples K] [--stage test|compile|both] [--variants current,fresh,located,blank] [--seed S] [--url URL] [--model ID] [--no-build] [--show]".into());
     }
     Ok(c)
 }
@@ -122,6 +130,7 @@ fn load_cases(dirs: &[PathBuf]) -> Vec<Case> {
                 let mut submits: HashMap<(String, u64), Files> = HashMap::new();
                 let mut failures: HashMap<(String, u64), (String, String)> = HashMap::new();
                 let mut passed: Vec<Files> = Vec::new();
+                let mut firsts: HashMap<String, (String, String)> = HashMap::new();
                 for line in text.lines() {
                     let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
                     let ev = &v["event"];
@@ -144,6 +153,18 @@ fn load_cases(dirs: &[PathBuf]) -> Vec<Case> {
                                 passed.push(f.1.clone());
                             }
                         }
+                        Some("llm_request_sent") if ev["purpose"].as_str() == Some("navigate") => {
+                            let messages = ev["messages"].as_array().cloned().unwrap_or_default();
+                            if messages.len() == 2 {
+                                firsts.insert(
+                                    step.clone(),
+                                    (
+                                        messages[0]["content"].as_str().unwrap_or("").to_string(),
+                                        messages[1]["content"].as_str().unwrap_or("").to_string(),
+                                    ),
+                                );
+                            }
+                        }
                         Some("llm_request_sent") if ev["purpose"].as_str().is_some_and(|p| p.contains("retry")) => {
                             let messages = ev["messages"].as_array().cloned().unwrap_or_default();
                             if messages.len() != 2 || attempt < 2 {
@@ -158,12 +179,15 @@ fn load_cases(dirs: &[PathBuf]) -> Vec<Case> {
                             if without_previous_answer(&user).is_none() || !user.contains(&feedback) {
                                 continue;
                             }
+                            let Some((first_system, first_user)) = firsts.get(&step).cloned() else { continue };
                             cases.push(Case {
                                 id: format!("{label}/{step}#{attempt}"),
                                 stage,
                                 feedback,
                                 system: messages[0]["content"].as_str().unwrap_or("").to_string(),
                                 user,
+                                first_system,
+                                first_user,
                                 previous,
                                 prior: passed.iter().flatten().cloned().collect(),
                                 repo: repo.to_string(),
@@ -207,13 +231,39 @@ fn system_for_replay(system: &str) -> String {
         .join("\n")
 }
 
-fn variant_user(variant: &str, case: &Case) -> Option<String> {
+/// The system and user message a variant sends. `blank` is the first attempt's prompt again, system rules included.
+fn variant_messages(variant: &str, case: &Case) -> Option<(String, String)> {
+    let retry_system = system_for_replay(&case.system);
     match variant {
-        "current" => Some(case.user.clone()),
-        "fresh" => without_previous_answer(&case.user),
-        "located" => with_failure_locations(&case.user, &case.feedback, &case.previous),
+        "current" => Some((retry_system, case.user.clone())),
+        "fresh" => Some((retry_system, without_previous_answer(&case.user)?)),
+        "located" => Some((retry_system, with_failure_locations(&case.user, &case.feedback, &case.previous)?)),
+        "blank" => Some((case.first_system.clone(), case.first_user.clone())),
         _ => None,
     }
+}
+
+/// The paths under the `### path` lines of the sections a step shows (files to change, files for reference).
+fn shown_sections(user: &str) -> (Vec<String>, Vec<String>) {
+    let (mut modify, mut read_only, mut section) = (vec![], vec![], 0);
+    for line in user.lines() {
+        if line.starts_with("## ") {
+            section = if line.starts_with("## Files to change") {
+                1
+            } else if line.starts_with("## Files for reference") || line.starts_with("## Declarations of files") {
+                2
+            } else {
+                0
+            };
+        } else if let Some(path) = line.strip_prefix("### ") {
+            match section {
+                1 => modify.push(path.trim().to_string()),
+                2 => read_only.push(path.trim().to_string()),
+                _ => {}
+            }
+        }
+    }
+    (modify, read_only)
 }
 
 fn workspace(case: &Case, answer: &Files) -> Result<tempfile::TempDir, String> {
@@ -239,6 +289,14 @@ fn workspace(case: &Case, answer: &Files) -> Result<tempfile::TempDir, String> {
     Ok(dir)
 }
 
+/// The classes the project can load, resolved once per repository and tag.
+fn class_index(cache: &mut HashMap<(String, String), Arc<ClassIndex>>, case: &Case, root: &Path) -> Arc<ClassIndex> {
+    cache
+        .entry((case.repo.clone(), case.tag.clone()))
+        .or_insert_with(|| Arc::new(ClassIndex::for_repository(root)))
+        .clone()
+}
+
 fn main() {
     let config = match parse_args() {
         Ok(c) => c,
@@ -250,11 +308,15 @@ fn main() {
     let mut cases = load_cases(&config.runs);
     println!("{} retry prompts after a compile or test failure found", cases.len());
     cases.retain(|c| config.stage == "both" || c.stage == config.stage);
+    // Retry prompts that are word for word the same (a model that repeats itself makes many) are one case.
+    let mut seen_prompts = std::collections::HashSet::new();
+    cases.retain(|c| seen_prompts.insert((c.system.clone(), c.user.clone())));
+    println!("{} distinct retry prompts of the stage chosen", cases.len());
     shuffle(&mut cases, config.seed);
     let mut chosen: Vec<Case> = Vec::new();
     for stage in ["test", "compile"] {
         let want = if config.stage == "both" { config.cases / 2 + config.cases % 2 * (stage == "test") as usize } else { config.cases };
-        chosen.extend(cases.iter().filter(|c| c.stage == stage).take(want).map(|c| Case { id: c.id.clone(), stage: c.stage.clone(), feedback: c.feedback.clone(), system: c.system.clone(), user: c.user.clone(), previous: c.previous.clone(), prior: c.prior.clone(), repo: c.repo.clone(), tag: c.tag.clone() }));
+        chosen.extend(cases.iter().filter(|c| c.stage == stage).take(want).map(|c| Case { id: c.id.clone(), stage: c.stage.clone(), feedback: c.feedback.clone(), system: c.system.clone(), user: c.user.clone(), first_system: c.first_system.clone(), first_user: c.first_user.clone(), previous: c.previous.clone(), prior: c.prior.clone(), repo: c.repo.clone(), tag: c.tag.clone() }));
     }
     println!(
         "replaying {} cases ({} test, {} compile) x {} variants x {} samples",
@@ -273,11 +335,11 @@ fn main() {
     let build = CommandBuild::maven(Duration::from_secs(240), Arc::new(NoopObserver));
     let mut results = std::fs::File::create(config.out.join("results.jsonl")).expect("results file");
     let mut first = true;
+    let mut indexes: HashMap<(String, String), Arc<ClassIndex>> = HashMap::new();
     for (index, case) in chosen.iter().enumerate() {
         for variant in &config.variants {
-            let Some(user) = variant_user(variant, case) else { continue };
+            let Some((system, user)) = variant_messages(variant, case) else { continue };
             for sample in 0..config.samples {
-                let system = system_for_replay(&case.system);
                 let mut transcript = format!("# {} [{}] variant {variant}, sample {sample}\n\n## SYSTEM\n```\n{system}\n```\n\n## USER\n```\n{user}\n```\n\n", case.id, case.stage);
                 let ws = match workspace(case, &vec![]) {
                     Ok(ws) => ws,
@@ -287,11 +349,15 @@ fn main() {
                     }
                 };
                 let toolbox = ToolBox::new(ws.path());
+                let (modify, read_only) = shown_sections(&case.user);
+                let shown: Vec<String> = modify.iter().chain(&read_only).cloned().collect();
+                let scope = Scope { modify, create: files_to_create(&case.user), read_only };
+                let mut audit_refusals = 0usize;
                 let mut messages = vec![ChatMessage::System(system.clone()), ChatMessage::User(user.clone())];
                 let mut answer: Option<Files> = None;
                 let mut outcome = String::from("no_submit (turn budget)");
                 let mut tool_uses: Vec<String> = Vec::new();
-                let create = files_to_create(&user);
+                let create = files_to_create(&case.user);
                 let mut budget_spent = false;
                 for turn_no in 1..=MAX_TURNS {
                     let request = ToolRequest {
@@ -321,15 +387,39 @@ fn main() {
                     for call in &turn.tool_calls {
                         if call.name == "submit_files" {
                             transcript.push_str(&format!("```json\n{}\n```\n", call.arguments));
-                            match files_of(&call.arguments) {
-                                Some(files) => {
-                                    answer = Some(files);
-                                    outcome = "submitted".into();
+                            let refusal = match Submission::parse(&call.arguments) {
+                                Err(e) => Some(format!("The arguments of submit_files are not valid: {e}. Send {{\"files\": [{{\"path\": \"...\", \"content\": \"...\"}}]}}.")),
+                                Ok(submission) => {
+                                    let has_read = |p: &str| toolbox.has_read(p) || shown.contains(&p.to_string());
+                                    let scope_ok = gates::check_scope(&submission.files, &scope, ws.path());
+                                    let index = class_index(&mut indexes, case, ws.path());
+                                    match scope_ok.and_then(|_| gates::check_submission(&submission.files, ws.path(), &has_read, StepKind::BehaviorChange, Some(index.as_ref()))) {
+                                        Err(rejection) => Some(rejection.message()),
+                                        Ok(()) => {
+                                            answer = files_of(&call.arguments);
+                                            None
+                                        }
+                                    }
                                 }
-                                None => outcome = "unparseable".into(),
+                            };
+                            match refusal {
+                                None => {
+                                    outcome = "submitted".into();
+                                    submitted = true;
+                                    break;
+                                }
+                                Some(text) => {
+                                    audit_refusals += 1;
+                                    tool_uses.push("submit_files(refused)".into());
+                                    if tool_uses.len() > MAX_TOOL_CALLS {
+                                        budget_spent = true;
+                                        break;
+                                    }
+                                    transcript.push_str(&format!("refused: {text}\n"));
+                                    messages.push(ChatMessage::Tool { call_id: call.id.clone(), content: text });
+                                    continue;
+                                }
                             }
-                            submitted = true;
-                            break;
                         }
                         let target = serde_json::from_str::<Value>(&call.arguments).ok().and_then(|a| {
                             a.get(if call.name == "glob" { "pattern" } else { "path" }).and_then(Value::as_str).map(str::to_string)
@@ -380,13 +470,13 @@ fn main() {
                     }
                     Some(_) => ("changed".into(), "not built".into()),
                 };
-                transcript.push_str(&format!("\n## RESULT\nclass: {class}\nbuild: {built}\n"));
+                transcript.push_str(&format!("\n## RESULT\nclass: {class}\nbuild: {built}\naudit refusals: {audit_refusals}\n"));
                 let name = format!("{index:02}-{variant}-{sample}.md");
                 std::fs::write(config.out.join(&name), &transcript).ok();
                 writeln!(
                     results,
                     "{}",
-                    json!({"case": case.id, "stage": case.stage, "variant": variant, "sample": sample, "class": class, "build": built, "file": name})
+                    json!({"case": case.id, "stage": case.stage, "variant": variant, "sample": sample, "class": class, "build": built, "audit_refusals": audit_refusals, "file": name})
                 )
                 .ok();
                 println!("  case {index:02} {} {variant} #{sample}: {class}, build {built}", case.stage);
