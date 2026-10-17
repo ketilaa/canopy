@@ -19,6 +19,7 @@ pub mod observe;
 pub mod orchestrator;
 pub mod plan;
 pub mod prompt;
+pub mod replay;
 pub mod report;
 pub mod sandbox;
 pub mod snapshot;
