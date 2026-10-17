@@ -380,17 +380,7 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
      (details a feature states and a one-line step drops), not an algorithmic mistake, in at least 60% of cases.
 - **Generality:** that is the point: `none` until the matrix reports; after it, at best `multi-story` (four stories,
   one stack: plain Java Maven, one model).
-- **Result (loans L2, `lean`, n=10, `--scale-hint-sides`):** hidden 0/10; step 1 passed in 0 runs; retries identical
-  to the failed answer **18 of 20**; 0 recovered. Prediction (at least 3 of 10 pass step 1): **falsified**, and the
-  logged falsifier (2 or fewer runs pass step 1) holds. Read together with C8 (plain hint: 1 run recovered, 9 of
-  19 identical): on loans the hint arms recovered 1 of 39 retries against 0 of 20 without a hint, and identical
-  retries were 27 of 39 against 20 of 20; the difference between the two hint wordings is within what n=10 can
-  resolve, and naming the sides did not help.
-- **Reading:** a stated fact at retry time rescued order L3 (8 of 13 retries) and almost nothing on loans (1 of
-  39). In order the repair is one-sided (add `setScale` in the code); in loans the first attempt is the problem
-  (10 of 10 runs write `BigDecimal.ZERO` in the code and expect it in the test), and the retry mostly repeats it.
-  Prevention at the first attempt, not repair, is where loans needs help.
-- **Status:** `refuted` for the sides wording (the plain hint stays as C8); the flag stays for reproducibility.
+- **Status:** done, see "G1 interim results" and "G1 final results" below.
 
 ### C7. Retry mode `restart` (flag, default unchanged)
 - **Where:** `RetryMode` in `src/implementer.rs`, `run_step --retry feedback|restart`. Commit: see the git log entry
@@ -426,7 +416,8 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   advantage does not survive the real harness. If it improves hidden pass to 8 or more of 10 on any L3 plan, my
   claim that L3 loses details a restart cannot recover is wrong for that story.
 - **Generality:** `none`; at best `multi-story` for the retry mechanism (4 stories, current prompt era, one model).
-- **Status:** queued after G1 (run order in the queue: after the six `lean` cells of loans, shipping, stock).
+- **Status:** not run (cut for time; the flag `--retry restart` and the prediction stay). The scale hint (C8) turned out to be
+  the larger lever on the one-line order plan, and the checklist (C11) on loans, so the restart's turn is later.
 
 ### C8. A BigDecimal scale hint on test failures (flag, off by default)
 - **Where:** `hints::scale_hint` in `src/hints.rs`, `Implementer::with_scale_hint`, `run_step --scale-hint`. Commit:
@@ -489,7 +480,17 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   has identical retries at 8 of 20 or fewer. **Falsified** if it passes step 1 in 2 or fewer runs: the model's fix
   of one side per attempt is not an information problem and the next candidate is a restart.
 - **Generality:** `none`; one story, one failure fact.
-- **Status:** queued.
+- **Result (loans L2, `lean`, n=10, `--scale-hint-sides`):** hidden 0/10; step 1 passed in 0 runs; retries identical
+  to the failed answer **18 of 20**; 0 recovered. Prediction (at least 3 of 10 pass step 1): **falsified**, and the
+  logged falsifier (2 or fewer runs pass step 1) holds. Read together with C8 (plain hint: 1 run recovered, 9 of
+  19 identical): on loans the hint arms recovered 1 of 39 retries against 0 of 20 without a hint, and identical
+  retries were 27 of 39 against 20 of 20; the difference between the two hint wordings is within what n=10 can
+  resolve, and naming the sides did not help.
+- **Reading:** a stated fact at retry time rescued order L3 (8 of 13 retries) and almost nothing on loans (1 of
+  39). In order the repair is one-sided (add `setScale` in the code); in loans the first attempt is the problem
+  (10 of 10 runs write `BigDecimal.ZERO` in the code and expect it in the test), and the retry mostly repeats it.
+  Prevention at the first attempt, not repair, is where loans needs help.
+- **Status:** `refuted` for the sides wording (the plain hint stays as C8); the flag stays for reproducibility.
 
 ### C10. A Java fact stated up front in the project context (`--context-extra`, measurement)
 - **Where:** `run_step --context-extra "<text>"` appends a line to the Project context of every step (no prompt
@@ -596,3 +597,34 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   (L1 completes at least as often as L2, both far above L3), and the hidden-test result is not uniform (order 9/10 and
   loans 10/10 at L1, shipping 6/10).
 - **Status:** kept as the shipping plan shape with the best completion; its hidden-test gap is the finding.
+
+### G1 final results (2026-10-17; n=10 per cell; Qwen3-14B Q4_K_M; plain Java Maven, JUnit 5; one stack, one model)
+Hidden acceptance passed / runs that completed all steps (step starts passed of started). L1 = checklist with the
+feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--prompt current`, `lean` = `--prompt lean`.
+
+| Story | L3 | L2 | L1 |
+|---|---|---|---|
+| order (2 steps) | 0/10 cur (2/11 steps), 0/10 lean (6/13) | 8/10 cur, **9/10** lean | 9/10 cur (D1) |
+| loans (2 steps) | 0/10 lean (2/11) | **0/10** lean (0/10) | **10/10** lean (20/20) |
+| shipping (2 steps) | 1/10 lean (12/20) | 5/10 lean (14/19) | 6/10 lean (19/20) |
+| stock (3 steps) | 0/10 lean (21/30) | **10/10** lean (30/30) | not run |
+
+- **Prediction 1 (lean vs current):** compared only on order (9 vs 8 at L2; 0 vs 0 at L3): not falsified. The `current`
+  arms for loans, shipping and stock were not run (queued, cut for time), so for those stories it is untested.
+- **Prediction 2 (detail generalises):** L3 at most 5 of 10 on each story: held (0, 1, 0). L2 at least 6 of 10 on each
+  story: held for stock only (10); loans 0, shipping 5. The falsifier (L3 at 8 or more on two stories) did not
+  occur; the other (L2 at 4 or fewer on two stories) did not either (only loans), but my claim that "L2 carries
+  enough" is not general: it held for order and stock and failed for loans and, by one run, for shipping.
+- **Prediction 3 (what L3 loses):** of the hidden-test failures of L3 runs that completed (order 8 of 8 on the
+  boundary and 4 on the message; loans 3 on messages or exception types; shipping 1 on the message; stock 3 on messages,
+  types or immutability), almost all name a message, an exception type or a boundary a one-line step drops: held. The
+  gate failures of L3 are another matter: scale (`0` vs `0.00`) in order and loans, a test using Mockito (not on the
+  classpath) and wrong computed values in stock and shipping.
+- **What did generalise:** (a) L3 fails on all four stories; (b) the first attempt is the limiting step, and on the
+  stories that fail, retries repeat the failed answer most of the time (order L3 14 of 15, loans L2 20 of 20, loans L3
+  18 of 19, shipping L3 12 of 16, stock L3 10 of 20); (c) a layered, immutable design (stock L2) was no problem.
+- **What did not generalise:** L2's sufficiency; and the checklist's hidden-test result (loans 10/10, order 9/10,
+  shipping 6/10).
+- **Not run (cut for time):** R3 (restart retry in the real harness), `current` arms of the new stories, stock at L1.
+- **Generality:** `multi-story` for the level ordering of the gates (4 stories, one stack, one model); `one-story`
+  per number.
