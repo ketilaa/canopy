@@ -416,8 +416,25 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   advantage does not survive the real harness. If it improves hidden pass to 8 or more of 10 on any L3 plan, my
   claim that L3 loses details a restart cannot recover is wrong for that story.
 - **Generality:** `none`; at best `multi-story` for the retry mechanism (4 stories, current prompt era, one model).
-- **Status:** not run (cut for time; the flag `--retry restart` and the prediction stay). The scale hint (C8) turned out to be
-  the larger lever on the one-line order plan, and the checklist (C11) on loans, so the restart's turn is later.
+- **Status:** run 2026-10-17, see the result below. (Earlier note: the scale hint (C8) and the checklist (C11) were the larger levers.)
+- **Result R3 (L3 plans, `lean`, `--retry restart`, n=10 each; reference `feedback` from G1, step starts passed of started):**
+
+  | Story | `restart` hidden | `restart` steps passed | `feedback` hidden | `feedback` steps passed |
+  |---|---|---|---|---|
+  | order | 0/10 | 6/13 | 0/10 | 6/13 |
+  | loans | 0/10 | 0/10 | 0/10 | 2/11 |
+  | shipping | 0/10 | 11/20 | 1/10 | 12/20 |
+  | stock | 0/10 | 21/30 | 0/10 | 21/30 |
+
+  Prediction: order `restart` at least 15 points above `feedback` per step started: **falsified** (0 points: 6 of 13 both).
+  The falsifier (fewer than 10 points more) holds, and the replay's advantage (restart beating the retry as sent) does not survive
+  the real harness on any of the four stories: restart is equal on order and stock and one or two steps lower on loans and
+  shipping. The other predictions held: hidden pass 5 of 10 or fewer everywhere (0, 0, 0, 0), and none reached 8. Retries
+  identical to the failed answer were not counted in this run.
+  Reading: the L3 failures are systematic (a dropped message, boundary or scale), not draws that a fresh try fixes: three
+  independent draws are not independent in outcome. Restart is not worth adopting; the flag stays off. Generality: `multi-story`
+  (4 stories, one model, current prompt era); the replay was 7 cases and misled.
+- **Status:** done.
 
 ### C8. A BigDecimal scale hint on test failures (flag, off by default)
 - **Where:** `hints::scale_hint` in `src/hints.rs`, `Implementer::with_scale_hint`, `run_step --scale-hint`. Commit:
