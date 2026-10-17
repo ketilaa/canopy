@@ -1015,3 +1015,23 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   test's boundaries; whether a Planner finds them is course step 3. A deterministic check is the natural first Planner gate:
   every case named in a test sentence has a stated call and result.
 - **Status:** done.
+
+## 2026-10-18: Counter-evidence to the B-series rule, from T2 (no run)
+
+- **Observation:** the tickets L2 plan (T2, 10/10, 30 of 30 steps first attempt) names its cases without any values: "tests validating
+  inside the window, validating too late, validating twice, cancelling, validating a cancelled ticket, cancelling a validated
+  ticket", "tests issuing, validating, cancelling ... an unknown ticket for both validate and cancel". By the rule written after B10
+  ("every case a test sentence names has a stated call and expected result") T2 should have failed. It did not.
+- **What differs:** in tickets the expected result of each named case is already stated in the rule sentence as a status or an exact
+  message, and the case's inputs are free (any time inside or after the window works); nothing has to be computed from the inputs. In
+  shipping and order the expected value is a number computed from the inputs (a step count, a discounted total), and the inputs are
+  not free (the boundary matters). The failures of B1 to B9 were all a computed expected value that the model got wrong (floor
+  vs ceiling, 450.00 vs 500.00, 4500.00, 4.00 vs 0.00) or a case whose input the model had to guess.
+- **Refined rule (a hypothesis from five stories, not tested):** a case needs a stated call and result when its expected result is a
+  value computed from its inputs (arithmetic, thresholds, steps), or when its input is constrained by a boundary; a case whose result is a
+  status or message the rule already states does not. Loans (scale) and stock (API shape) fit neither side cleanly: loans' dates were
+  computed values and values-only gave 10/10; stock's cost was accessor names, fixed by an API line.
+- **To test it, and what would falsify it:** take tickets L2 and make one case computed and boundary-bound without a value (for
+  example a different window length and a 'more than N minutes' rule with no example time); predict a failure class of the B-series
+  kind in at least 4 of 10 runs; falsified if 2 or fewer fail. Not run.
+- **Generality:** `multi-story`, the observation (five stories, one model); the explanation is untested.
