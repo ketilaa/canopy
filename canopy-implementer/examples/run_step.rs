@@ -388,7 +388,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces]";
+    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona]";
 
 struct Config {
     task: String,
@@ -406,6 +406,8 @@ struct Config {
     classpath: bool,
     /// Show read-only Java files as their declarations, from `roots surface` (off unless `--surfaces`).
     surfaces: bool,
+    /// The system rules of a tool conversation (the current ones unless `--prompt`).
+    prompt: canopy_implementer::prompt::PromptVariant,
 }
 
 fn parse_args() -> Result<Config, String> {
@@ -423,6 +425,7 @@ fn parse_args() -> Result<Config, String> {
         plan: None,
         classpath: true,
         surfaces: false,
+        prompt: Default::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -447,6 +450,11 @@ fn parse_args() -> Result<Config, String> {
             "--plan" => config.plan = Some(value("--plan")?.into()),
             "--no-classpath" => config.classpath = false,
             "--surfaces" => config.surfaces = true,
+            "--prompt" => {
+                let name = value("--prompt")?;
+                config.prompt = canopy_implementer::prompt::PromptVariant::parse(&name)
+                    .ok_or_else(|| format!("--prompt: unknown variant {name}; known: current, lean, persona"))?;
+            }
             "--url" => config.url = value("--url")?,
             "--model" => config.model = value("--model")?,
             "--out" => config.out = value("--out")?.into(),
@@ -716,6 +724,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         Some(index) => implementer.with_classpath(index.clone()),
         None => implementer,
     };
+    let implementer = implementer.with_prompt(config.prompt);
     let implementer = if config.surfaces {
         implementer.with_surfaces(Arc::new(canopy_implementer::surfaces::RootsSurfaces::new("roots")))
     } else {

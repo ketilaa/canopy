@@ -63,7 +63,47 @@ pub struct ShownFiles {
     pub declared: Vec<GeneratedFile>,
 }
 
+/// Which system rules a tool conversation starts with. `Current` is the full set that grew over earlier runs; the
+/// others are measured against it (docs/design/implementer-first-course.md, step 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PromptVariant {
+    #[default]
+    Current,
+    /// Only what the harness cannot do for itself: how to finish, what to keep, which files to submit. The
+    /// rest is stated by the task and project context, or enforced by the gates.
+    Lean,
+    /// `Lean`, opening with a role.
+    Persona,
+}
+
+impl PromptVariant {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "current" => Some(Self::Current),
+            "lean" => Some(Self::Lean),
+            "persona" => Some(Self::Persona),
+            _ => None,
+        }
+    }
+}
+
+const PERSONA: &str = "You are a senior Java developer who writes small, clean, tested code. You do exactly what the \
+task says, no more.";
+
+const LEAN_RULES: &str = "\
+ALWAYS finish by calling submit_files with the complete content of every file you create or change.
+ALWAYS keep the existing code and tests of a file you change, except what the task asks you to change.";
+
 pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&Failure>) -> (String, String) {
+    tool_messages_with(PromptVariant::Current, step, shown, previous)
+}
+
+pub fn tool_messages_with(
+    variant: PromptVariant,
+    step: &StepRequest,
+    shown: &ShownFiles,
+    previous: Option<&Failure>,
+) -> (String, String) {
     let mut user = format!("## Task\n{}\n\n## Project\n{}\n", step.instruction, step.context);
     if !step.scope.is_empty() {
         let section = |heading: &str, files: &[GeneratedFile]| {
@@ -118,9 +158,11 @@ pub fn tool_messages(step: &StepRequest, shown: &ShownFiles, previous: Option<&F
         });
     }
     let previous_files_shown = previous.is_some_and(|failure| failure.files.is_some());
-    let mut rules = match previous_files_shown {
-        true => format!("{TOOL_RULES_HEAD}\n{TOOL_RULES}"),
-        false => format!("{TOOL_RULES_HEAD}\n{TOOL_READ_RULES}\n{TOOL_RULES}"),
+    let mut rules = match (variant, previous_files_shown) {
+        (PromptVariant::Lean, _) => format!("{TOOL_RULES_HEAD}\n{LEAN_RULES}"),
+        (PromptVariant::Persona, _) => format!("{PERSONA} {TOOL_RULES_HEAD}\n{LEAN_RULES}"),
+        (PromptVariant::Current, true) => format!("{TOOL_RULES_HEAD}\n{TOOL_RULES}"),
+        (PromptVariant::Current, false) => format!("{TOOL_RULES_HEAD}\n{TOOL_READ_RULES}\n{TOOL_RULES}"),
     };
     if !step.scope.is_empty() {
         rules.push_str(
@@ -427,5 +469,25 @@ mod tests {
         let (plain_rules, plain_user) = tool_messages(&step(), &ShownFiles::default(), None);
         assert!(!plain_rules.contains("listed under"));
         assert!(!plain_user.contains("Files to change") && !plain_user.contains("Files for reference"));
+    }
+
+    #[test]
+    fn the_lean_variant_keeps_only_the_rules_the_harness_cannot_enforce_and_the_persona_adds_a_role() {
+        let (lean, lean_user) = tool_messages_with(PromptVariant::Lean, &scoped_step(), &shown(), None);
+        let (current, current_user) = tool_messages_with(PromptVariant::Current, &scoped_step(), &shown(), None);
+        for rule in ["ALWAYS finish by calling submit_files", "ALWAYS keep the existing code", "listed under"] {
+            assert!(lean.contains(rule), "{rule}\n{lean}");
+        }
+        for gone in ["glob", "read_file", "JUnit", "pom.xml", "one public type", "test for every behaviour"] {
+            assert!(!lean.contains(gone), "{gone}\n{lean}");
+        }
+        assert_eq!(lean_user, current_user, "only the system rules differ");
+        assert!(current.len() > lean.len());
+        let (persona, _) = tool_messages_with(PromptVariant::Persona, &scoped_step(), &shown(), None);
+        assert!(persona.starts_with("You are a senior Java developer"), "{persona}");
+        assert_eq!(persona.replace(&format!("{PERSONA} "), ""), lean);
+        assert_eq!(PromptVariant::parse("lean"), Some(PromptVariant::Lean));
+        assert_eq!(PromptVariant::parse("nope"), None);
+        let _ = current_user;
     }
 }

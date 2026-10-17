@@ -127,6 +127,8 @@ pub struct Implementer {
     classpath: Option<Arc<crate::classpath::ClassIndex>>,
     /// Where the declarations of read-only Java files come from, when known.
     surfaces: Option<Arc<dyn crate::surfaces::Surfaces>>,
+    /// The system rules of a tool conversation.
+    prompt: prompt::PromptVariant,
 }
 
 /// The files a step may create or change (empty when it is unscoped).
@@ -147,6 +149,12 @@ impl Implementer {
         self
     }
 
+    /// Starts a tool conversation with `variant`'s system rules instead of the current ones.
+    pub fn with_prompt(mut self, variant: prompt::PromptVariant) -> Self {
+        self.prompt = variant;
+        self
+    }
+
     pub fn new(
         generator: Box<dyn Generator>,
         build: Box<dyn Build>,
@@ -160,6 +168,7 @@ impl Implementer {
             max_attempts,
             classpath: None,
             surfaces: None,
+            prompt: prompt::PromptVariant::default(),
         }
     }
 
@@ -178,6 +187,7 @@ impl Implementer {
             max_attempts,
             classpath: None,
             surfaces: None,
+            prompt: prompt::PromptVariant::default(),
         }
     }
 
@@ -312,7 +322,7 @@ impl Implementer {
             .chain(&step.scope.read_only)
             .map(String::as_str)
             .collect();
-        let (system, task) = prompt::tool_messages(step, &shown, previous);
+        let (system, task) = prompt::tool_messages_with(self.prompt, step, &shown, previous);
         let mut messages = vec![ChatMessage::System(system), ChatMessage::User(task)];
         let purpose = if attempt == 1 {
             "navigate".to_string()
