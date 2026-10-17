@@ -407,6 +407,32 @@ steps:
     }
 
     #[test]
+    fn the_order_plans_differ_in_instruction_detail_only() {
+        let plans = [
+            include_str!("../tasks/order/plan-checklist.yaml"),
+            include_str!("../tasks/order/plan-signatures.yaml"),
+            include_str!("../tasks/order/plan-oneline.yaml"),
+        ]
+        .map(|text| Plan::from_yaml(text).unwrap());
+        let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+        let scenarios = ids(&[
+            "place-an-order-for-one-product",
+            "a-net-total-of-500-00-or-more-gets-a-10-percent-volume-discount",
+            "a-quantity-that-is-not-positive-is-rejected",
+            "a-placed-order-can-be-looked-up-by-its-id",
+        ]);
+        for plan in &plans {
+            assert_eq!(shape(plan), shape(&plans[0]));
+            assert_eq!(plan.verify_coverage(&scenarios), Vec::<String>::new());
+            for step in &plan.steps {
+                assert!(step.instruction.contains("no.experis.orders"), "{}", step.id);
+            }
+        }
+        let length = |p: &Plan| p.steps.iter().map(|s| s.instruction.len()).sum::<usize>();
+        assert!(length(&plans[0]) > length(&plans[1]) && length(&plans[1]) > length(&plans[2]));
+    }
+
+    #[test]
     fn a_plan_written_as_yaml_reads_back_as_the_same_plan() {
         for text in [PLAN, COVERED, SCOPED, include_str!("../tasks/widgets/plan.yaml")] {
             let plan = Plan::from_yaml(text).unwrap();

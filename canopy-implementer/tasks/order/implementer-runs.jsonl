@@ -30,3 +30,23 @@
 {"failed_step":null,"implementer_batch":"2026-10-17T06-38-59","plan_content_id":"5b43f15bade93e64","refusals":null,"run":9,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
 {"failed_step":null,"implementer_batch":"2026-10-17T06-38-59","plan_content_id":"5b43f15bade93e64","refusals":null,"run":10,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
 {"failed_step":null,"implementer_batch":"2026-10-17T06-53-24","plan_content_id":"e94ef9e8a6accd2f","refusals":null,"run":1,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":1,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":2,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":"order-1-order","implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":{},"run":3,"scored":false,"steps_passed":0,"steps_total":2,"stop_reason":{"attempt":3,"feedback":"OrderTest.testQuantity0:46->getExceptionMessage:65 NullPointer Cannot invoke \"java.lang.IllegalArgumentException.getMessage()\" because \"this.thrownException\" is null | OrderTest.testQuantityMinus1:54->getExceptionMessage:65 NullPointer Cannot invoke \"java.lang.IllegalArgumentException.getMessage()\" …","stage":"test"}}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":4,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":5,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":6,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":7,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":8,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":9,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T06-54-46","plan_content_id":"6176c114a884c14f","refusals":null,"run":10,"scored":true,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":1,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":2,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":3,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":4,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":5,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":6,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":7,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":8,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":9,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}
+{"failed_step":null,"implementer_batch":"2026-10-17T07-03-55","plan_content_id":"5b43f15bade93e64","refusals":null,"run":10,"scored":false,"steps_passed":2,"steps_total":2,"stop_reason":null}

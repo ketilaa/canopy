@@ -323,11 +323,11 @@ times the quantity, less 10 percent when that net total is 500.00 or more. A qua
 rejected. A placed order can be looked up by its id.",
     context: "Root package: no.experis.orders.\nBuild: Maven, Java 21, JUnit 5; no framework. Do not change pom.xml.",
     files: &[],
-    hidden_test: "package no.experis.orders;\n\nimport org.junit.jupiter.api.Test;\n\nclass OrderSuiteHiddenTest {\n    @Test\n    void theWholeSuiteRuns() {}\n}\n",
+    hidden_test: include_str!("../tasks/order/OrderHiddenTest.java"),
     preserved_tests: &[],
     tools: true,
     repo: "java-orders",
-    hidden_test_path: "src/test/java/no/experis/orders/OrderSuiteHiddenTest.java",
+    hidden_test_path: "src/test/java/no/experis/orders/OrderHiddenTest.java",
     min_tests_added: 4,
     untouched: &["pom.xml"],
 };
@@ -349,10 +349,10 @@ const WIDGETS_STRUCTURE: &[Check] = &[
     Check::Lacks("Widget.java", "WidgetService"),
 ];
 
-/// What the hand-written order plan's checklist requires of `OrderTest`: the exception message is asserted, and the
-/// discount threshold is tested exactly at 500.00 (100.00 x 5 gives 450.00). These measure the musts; the model is
-/// told them in the plan's instruction, not by these checks.
-const ORDER_MUSTS: &[Check] = &[
+/// What the model's own `OrderTest` covers: the exception message is asserted, and the discount threshold is tested
+/// exactly at 500.00 (100.00 x 5 gives 450.00). Reported with each run, not part of `scored`: the production code is
+/// judged by the hidden `OrderHiddenTest`, and a plan with less detail is not asked for these.
+const ORDER_OWN_TESTS: &[Check] = &[
     Check::TestContains("OrderTest.java", "Quantity must be positive"),
     Check::TestContains("OrderTest.java", "450.00"),
 ];
@@ -360,7 +360,14 @@ const ORDER_MUSTS: &[Check] = &[
 fn structure_for(task_name: &str) -> &'static [Check] {
     match task_name {
         "widgets-planned" => WIDGETS_STRUCTURE,
-        "order-planned" => ORDER_MUSTS,
+        _ => &[],
+    }
+}
+
+/// Checks that are reported with a run but do not decide whether it is scored.
+fn info_for(task_name: &str) -> &'static [Check] {
+    match task_name {
+        "order-planned" => ORDER_OWN_TESTS,
         _ => &[],
     }
 }
@@ -836,6 +843,17 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
     for failed in structure_results.iter().filter(|r| !r.passed) {
         println!("  structure check failed: {}", failed.description);
     }
+    let own_tests_cover = structure::run(&config.repo, info_for(task.name));
+    if !own_tests_cover.is_empty() {
+        println!(
+            "  own tests cover: {}",
+            own_tests_cover
+                .iter()
+                .map(|r| format!("{} {}", if r.passed { "yes:" } else { "NO:" }, r.description))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
     let scored =
         acceptance == "passed" && kept_original && untouched_ok && structure_ok && tests_added >= task.min_tests_added;
     println!(
@@ -859,6 +877,7 @@ tests added: {tests_added} (need {}); scored: {scored}",
         "original_tests_kept": kept_original,
         "untouched_files_kept": untouched_ok,
         "scored_pass": scored,
+        "own_tests_cover": own_tests_cover.iter().map(|r| json!({"check": r.description, "passed": r.passed})).collect::<Vec<_>>(),
         "structure_ok": structure_ok,
         "structure": structure_results.iter().map(|r| json!({"check": r.description, "passed": r.passed})).collect::<Vec<_>>(),
         "files_changed": files_changed,

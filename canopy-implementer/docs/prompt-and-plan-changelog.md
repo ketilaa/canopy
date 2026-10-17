@@ -225,3 +225,43 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Status:** measured on noisy-era cases; no change adopted; replication on current-prompt failures is the next
   step (a source of such failures is needed: the whole order story as one step failed 6 of 10 times on the
   current prompt in the 2026-10-16 batch SB).
+
+### C5. A hidden acceptance test for the order story (scorer; the model never sees it)
+- **Where:** `tasks/order/OrderHiddenTest.java`, wired into `ORDER_PLANNED` in `examples/run_step.rs`; the two
+  literal musts of C4 are now reported as `own_tests_cover` with each run and no longer decide `scored`.
+- **What it checks:** the feature against the plans' fixed API: price times quantity, no discount below 500.00
+  (also 499.95), 10 percent off from 500.00 (also exactly 450.00), zero and -1 rejected with the message "Quantity
+  must be positive", orders get own ids and keep customer, product and quantity, lookup by id, unknown id empty.
+  Totals are compared by value, not scale.
+- **Why:** until now `scored` meant "the model's own tests pass"; nothing checked that the production code is
+  right, so a plan with less detail could pass every gate with wrong behaviour.
+- **Validation of the test itself:** passes against a reference implementation; fails on four mutants (`>`
+  instead of `>=`: 2 red; another message: 2 red; zero allowed: 4 red; 5 percent: 2 red).
+- **Retrospective result:** applied to the final files of all runs that completed both steps in batches A, B, C,
+  D0 and D1: **49 of 49 pass** (D1 run 3 never completed). The production code was correct in every run, also in
+  the 29-of-30 runs whose own tests ignored the exception message; the weakness was in the model's tests, not its
+  code, at this level of instruction detail.
+- **Generality:** `one-story`, one stack, one model.
+- **Status:** kept (scorer).
+
+### C6. Factor 1 of course step 2: instruction detail on the coarse order plan (new evidence on the current prompt)
+- **Where:** `tasks/order/plan-signatures.yaml` and `plan-oneline.yaml` next to `plan-checklist.yaml`. Same two
+  steps, files and covered scenarios (a unit test pins this); only the instruction text differs. All three keep
+  the class and method signatures (the contract the hidden test needs).
+  - L1 `checklist` (existing, D1): rules in prose plus a checklist of 8 tests with values.
+  - L2 `signatures`: signatures and every rule in prose (discount, rounding, scale, the message), tests named by
+    topic without values.
+  - L3 `oneline`: one sentence per step, as a Planner might write it: signatures, "10 percent from 500.00",
+    "rejects a quantity that is not positive"; no scale, no message, no test content.
+- **Why:** the course asks what a good plan step is, and the current plan never fails, so it teaches nothing. The
+  user ruled out whole-story-in-one-step plans and old noisy-context runs as sources of failures; this builds new
+  evidence on the current prompt at realistic step size. Failed attempts from these batches are kept as the
+  cases for the retry replay (R1) on the current prompt.
+- **Prediction (before the batches), `--prompt current`, n=10 per arm, same binary and tag:** hidden acceptance
+  passes L1 9 or 10 of 10 (D1 rescored: 9 with 1 incomplete), L2 at least 8 of 10, L3 **at most 7 of 10**; the
+  likely misses at L3 are the message (it is only in the feature file, which a step does not see) and
+  rounding/scale. First-attempt pass of a step falls from about 95% at L1 to 80% or less at L3.
+  **Falsified if** L3 passes the hidden test in 9 or 10 of 10: instruction detail is then not a lever on this
+  story and the next factor or a second story is the way to find where plans fail.
+- **Generality:** `none` yet. One story, one model; the hidden test encodes this story only.
+- **Status:** untested (batches E2 = signatures, E3 = oneline; L1 reuses D1).
