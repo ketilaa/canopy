@@ -42,7 +42,8 @@ Baseline to beat: single step 4/10 scored with the retry fix; plan runs 0/20.
    coarse (2 to 3 steps), put each behaviour in the step that implements it, and write each instruction the
    way the widgets plan does. Run it with
    `run_step --task order-planned --plan canopy-implementer/tasks/order/plan.yaml --runs 10 --url <model server> --model Qwen/Qwen3-14B-GGUF:Q4_K_M --out <dir>`.
-2. **Classify every failure from the traces** (`events.jsonl` in each run directory: `attempt_failed` events
+2. **Log every prompt/plan change** in `canopy-implementer/docs/prompt-and-plan-changelog.md` (what, why, evidence, status).
+   **Classify every failure from the traces** (`events.jsonl` in each run directory: `attempt_failed` events
    carry the stage and feedback). Fix by subtraction first: read the system prompt, the step prompt and the
    retry prompt together for rules that contradict each other or tell the model to do something pointless in
    that situation. Change one thing, re-run n=10, keep it only if the pass rate moves.
