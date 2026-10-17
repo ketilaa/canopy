@@ -1,0 +1,23 @@
+id: loans
+story: |
+  A member can borrow a book for 14 days. A member can have at most 3 active loans, and a book that is on
+  loan cannot be borrowed. Returning a book after its due date costs 0.50 per day late. A returned book can
+  be borrowed again.
+feature: tasks/loans/feature.feature
+steps:
+  - id: loans-1-loan
+    instruction: |
+      Create the record Loan in the package no.experis.loans with the components String memberId, String isbn, LocalDate borrowedOn and LocalDate dueOn, a static factory method Loan.start(String memberId, String isbn, LocalDate borrowedOn) that sets the due date 14 days later, and BigDecimal lateFee(LocalDate returnedOn) that costs 0.50 per day after the due date. Add LoanTest.
+    create:
+      - src/main/java/no/experis/loans/Loan.java
+      - src/test/java/no/experis/loans/LoanTest.java
+    covers: [a-book-is-lent-for-14-days, a-late-return-costs-0-50-per-day-after-the-due-date]
+  - id: loans-2-service
+    instruction: |
+      Create LoanService in the package no.experis.loans with a no-argument constructor, Loan borrow(String memberId, String isbn, LocalDate today) that rejects a book that is on loan and a member with 3 active loans, BigDecimal returnBook(String isbn, LocalDate today) that returns the late fee, and int activeLoans(String memberId). Add LoanServiceTest.
+    create:
+      - src/main/java/no/experis/loans/LoanService.java
+      - src/test/java/no/experis/loans/LoanServiceTest.java
+    read_only:
+      - src/main/java/no/experis/loans/Loan.java
+    covers: [a-member-can-have-at-most-3-active-loans, a-book-that-is-on-loan-cannot-be-borrowed, a-returned-book-can-be-borrowed-again-and-frees-the-member-s-loan-slot, returning-a-book-that-is-not-on-loan-is-rejected]

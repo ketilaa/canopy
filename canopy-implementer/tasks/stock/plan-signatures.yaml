@@ -1,0 +1,37 @@
+id: stock
+story: |
+  Stock can be received and reserved per SKU. Reserving takes units out of what is available, more than is
+  available cannot be reserved, an unknown SKU cannot be reserved, and a quantity must be positive.
+feature: tasks/stock/feature.feature
+steps:
+  - id: stock-1-item
+    instruction: |
+      Create the record StockItem in the package no.experis.stock with the components String sku and int onHand. It is immutable: the method StockItem receive(int quantity) returns a new item with the quantity added, and StockItem reserve(int quantity) returns a new item with the quantity taken out; the original is never changed. Both throw IllegalArgumentException with the message "Quantity must be positive" when the quantity is zero or less, and reserve throws IllegalStateException with the message "Insufficient stock" when the quantity is more than onHand.
+      Add StockItemTest that tests receiving, reserving, that the original item is unchanged, reserving exactly what is on hand, and the two rejections with their messages.
+    create:
+      - src/main/java/no/experis/stock/StockItem.java
+      - src/test/java/no/experis/stock/StockItemTest.java
+    covers: [receiving-more-stock-adds-to-what-is-there, reserving-takes-units-out-of-what-is-available, reserving-more-than-is-available-is-rejected, a-quantity-that-is-not-positive-is-rejected]
+  - id: stock-2-repository
+    instruction: |
+      In the package no.experis.stock create the interface StockRepository with Optional<StockItem> findBySku(String sku) and void save(StockItem item), and InMemoryStockRepository, which implements it with a HashMap keyed by sku and has a no-argument constructor; save replaces an item with the same sku.
+      Add InMemoryStockRepositoryTest that tests finding a saved item, an unknown sku giving an empty result, and saving again replacing the item.
+    create:
+      - src/main/java/no/experis/stock/StockRepository.java
+      - src/main/java/no/experis/stock/InMemoryStockRepository.java
+      - src/test/java/no/experis/stock/InMemoryStockRepositoryTest.java
+    read_only:
+      - src/main/java/no/experis/stock/StockItem.java
+    covers: [received-stock-is-available]
+  - id: stock-3-service
+    instruction: |
+      Create StockService in the package no.experis.stock with a constructor that takes a StockRepository. Add void receive(String sku, int quantity), which adds the quantity to the item of that sku, creating the item when the sku is new; void reserve(String sku, int quantity), which takes the quantity out of the item and throws IllegalArgumentException with the message "Unknown SKU" when there is no item for the sku; and int available(String sku), which is the units on hand, 0 for an unknown sku. Use StockItem for the rules; the service only loads, calls and saves.
+      Add StockServiceTest that creates the service with new StockService(new InMemoryStockRepository()) and tests receiving, adding to existing stock, reserving, reserving too much, an unknown sku, and a quantity that is not positive.
+    create:
+      - src/main/java/no/experis/stock/StockService.java
+      - src/test/java/no/experis/stock/StockServiceTest.java
+    read_only:
+      - src/main/java/no/experis/stock/StockItem.java
+      - src/main/java/no/experis/stock/StockRepository.java
+      - src/main/java/no/experis/stock/InMemoryStockRepository.java
+    covers: [received-stock-is-available, reserving-an-unknown-sku-is-rejected]

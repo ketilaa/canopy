@@ -1,0 +1,9 @@
+name: stock-planned
+instruction: "Stock can be received and reserved per SKU. Reserving takes units out of what is available, more than is available cannot be reserved, an unknown SKU cannot be reserved, and a quantity must be positive."
+context: "Root package: no.experis.stock.\nBuild: Maven, Java 21, JUnit 5; no framework. Do not change pom.xml."
+repo: java-stock
+tag: baseline-stock-001
+hidden_test: StockHiddenTest.java
+hidden_test_path: src/test/java/no/experis/stock/StockHiddenTest.java
+min_tests_added: 5
+untouched: [pom.xml]

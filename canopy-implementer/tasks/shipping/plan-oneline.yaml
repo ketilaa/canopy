@@ -1,0 +1,23 @@
+id: shipping
+story: |
+  The shipping cost of a parcel depends on its zone, weight and the order value. Each zone has a base price,
+  heavy parcels cost extra, domestic orders of high value ship free, and weights outside the allowed range are
+  rejected.
+feature: tasks/shipping/feature.feature
+steps:
+  - id: shipping-1-zone
+    instruction: |
+      Create the enum Zone in the package no.experis.shipping with the constants DOMESTIC, EUROPE and WORLD, each with a BigDecimal basePrice() of 4.00, 9.00 and 15.00. Add ZoneTest.
+    create:
+      - src/main/java/no/experis/shipping/Zone.java
+      - src/test/java/no/experis/shipping/ZoneTest.java
+    covers: [the-base-price-depends-on-the-zone]
+  - id: shipping-2-calculator
+    instruction: |
+      Create ShippingCalculator in the package no.experis.shipping with a no-argument constructor and BigDecimal cost(Zone zone, int weightGrams, BigDecimal orderValue): the base price of the zone, plus 1.50 for each started 500 grams above 1000 grams, free for DOMESTIC orders of 100.00 or more, and rejecting a weight outside 1 to 30000 grams. Add ShippingCalculatorTest.
+    create:
+      - src/main/java/no/experis/shipping/ShippingCalculator.java
+      - src/test/java/no/experis/shipping/ShippingCalculatorTest.java
+    read_only:
+      - src/main/java/no/experis/shipping/Zone.java
+    covers: [each-started-500-grams-above-1000-grams-adds-1-50, a-weight-outside-1-to-30000-grams-is-rejected, domestic-orders-worth-100-00-or-more-ship-free, other-zones-never-ship-free]

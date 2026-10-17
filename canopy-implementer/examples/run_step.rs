@@ -382,7 +382,49 @@ fn plan_for(task_name: &str) -> Option<&'static str> {
     }
 }
 
+/// A story task defined by `tasks/<name>/task.yaml` (run with `--task story:<name> --plan <plan>`): no recompiling
+/// per story. The hidden test file named in the definition is read from the same directory.
+fn story_task(story: &str) -> Result<Task, String> {
+    #[derive(serde::Deserialize)]
+    struct Definition {
+        name: String,
+        instruction: String,
+        context: String,
+        repo: String,
+        tag: String,
+        hidden_test: String,
+        hidden_test_path: String,
+        min_tests_added: usize,
+        #[serde(default)]
+        untouched: Vec<String>,
+    }
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tasks").join(story);
+    let text = std::fs::read_to_string(dir.join("task.yaml")).map_err(|e| format!("{}: {e}", dir.join("task.yaml").display()))?;
+    let def: Definition = serde_yaml::from_str(&text).map_err(|e| format!("task.yaml of {story}: {e}"))?;
+    let hidden = std::fs::read_to_string(dir.join(&def.hidden_test)).map_err(|e| format!("{}: {e}", def.hidden_test))?;
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let untouched: &'static [&'static str] =
+        Box::leak(def.untouched.into_iter().map(leak).collect::<Vec<_>>().into_boxed_slice());
+    Ok(Task {
+        name: leak(def.name),
+        default_tag: leak(def.tag),
+        instruction: leak(def.instruction),
+        context: leak(def.context),
+        files: &[],
+        hidden_test: leak(hidden),
+        preserved_tests: &[],
+        tools: true,
+        repo: leak(def.repo),
+        hidden_test_path: leak(def.hidden_test_path),
+        min_tests_added: def.min_tests_added,
+        untouched,
+    })
+}
+
 fn task(name: &str) -> Result<Task, String> {
+    if let Some(story) = name.strip_prefix("story:") {
+        return story_task(story);
+    }
     match name {
         "create" => Ok(CREATE),
         "trim" => Ok(TRIM),
@@ -404,7 +446,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona]";
+    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona]";
 
 struct Config {
     task: String,
@@ -480,7 +522,7 @@ fn parse_args() -> Result<Config, String> {
     let chosen = task(&config.task)?;
     // The widgets stories have no hand-written plan: they are run with a plan the Planner made (--plan).
     let takes_a_plan =
-        plan_for(chosen.name).is_some() || chosen.name == "widgets-create" || chosen.name == "widgets-invalid" || chosen.name == "order-planned";
+        plan_for(chosen.name).is_some() || chosen.name == "widgets-create" || chosen.name == "widgets-invalid" || chosen.name == "order-planned" || config.task.starts_with("story:");
     if config.plan.is_some() && !takes_a_plan {
         return Err(format!("--plan needs a planned task, and {} has no plan", chosen.name));
     }

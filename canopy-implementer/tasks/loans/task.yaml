@@ -1,0 +1,9 @@
+name: loans-planned
+instruction: "A member can borrow a book for 14 days. A member can have at most 3 active loans, and a book that is on loan cannot be borrowed. Returning a book after its due date costs 0.50 per day late. A returned book can be borrowed again."
+context: "Root package: no.experis.loans.\nBuild: Maven, Java 21, JUnit 5; no framework. Do not change pom.xml."
+repo: java-loans
+tag: baseline-loans-001
+hidden_test: LoansHiddenTest.java
+hidden_test_path: src/test/java/no/experis/loans/LoansHiddenTest.java
+min_tests_added: 4
+untouched: [pom.xml]

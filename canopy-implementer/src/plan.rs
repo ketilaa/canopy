@@ -432,6 +432,62 @@ steps:
         assert!(length(&plans[0]) > length(&plans[1]) && length(&plans[1]) > length(&plans[2]));
     }
 
+    /// Lowercase, every run of non-alphanumerics one `-`, none at either end (the planner's scenario id).
+    fn slug(title: &str) -> String {
+        let mut out = String::new();
+        for c in title.chars() {
+            if c.is_alphanumeric() {
+                out.extend(c.to_lowercase());
+            } else if !out.is_empty() && !out.ends_with('-') {
+                out.push('-');
+            }
+        }
+        out.trim_end_matches('-').to_string()
+    }
+
+    fn scenario_ids(feature: &str) -> Vec<String> {
+        feature
+            .lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                t.strip_prefix("Scenario Outline:").or_else(|| t.strip_prefix("Scenario:")).map(|r| slug(r.trim()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_story_plans_cover_the_scenarios_of_their_features_and_differ_in_detail_only() {
+        let stories: [(&str, &str, [&str; 2]); 3] = [
+            (
+                include_str!("../tasks/loans/feature.feature"),
+                "loans",
+                [include_str!("../tasks/loans/plan-signatures.yaml"), include_str!("../tasks/loans/plan-oneline.yaml")],
+            ),
+            (
+                include_str!("../tasks/shipping/feature.feature"),
+                "shipping",
+                [include_str!("../tasks/shipping/plan-signatures.yaml"), include_str!("../tasks/shipping/plan-oneline.yaml")],
+            ),
+            (
+                include_str!("../tasks/stock/feature.feature"),
+                "stock",
+                [include_str!("../tasks/stock/plan-signatures.yaml"), include_str!("../tasks/stock/plan-oneline.yaml")],
+            ),
+        ];
+        for (feature, name, plans) in stories {
+            let scenarios = scenario_ids(feature);
+            assert!(scenarios.len() >= 5, "{name}");
+            let parsed: Vec<Plan> = plans.iter().map(|t| Plan::from_yaml(t).unwrap()).collect();
+            for plan in &parsed {
+                assert_eq!(plan.verify_coverage(&scenarios), Vec::<String>::new(), "{name}");
+            }
+            let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+            assert_eq!(shape(&parsed[0]), shape(&parsed[1]), "{name}");
+            let length = |p: &Plan| p.steps.iter().map(|s| s.instruction.len()).sum::<usize>();
+            assert!(length(&parsed[0]) > length(&parsed[1]), "{name}");
+        }
+    }
+
     #[test]
     fn a_plan_written_as_yaml_reads_back_as_the_same_plan() {
         for text in [PLAN, COVERED, SCOPED, include_str!("../tasks/widgets/plan.yaml")] {

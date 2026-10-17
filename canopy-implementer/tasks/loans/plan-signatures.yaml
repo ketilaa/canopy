@@ -1,0 +1,25 @@
+id: loans
+story: |
+  A member can borrow a book for 14 days. A member can have at most 3 active loans, and a book that is on
+  loan cannot be borrowed. Returning a book after its due date costs 0.50 per day late. A returned book can
+  be borrowed again.
+feature: tasks/loans/feature.feature
+steps:
+  - id: loans-1-loan
+    instruction: |
+      Create the record Loan in the package no.experis.loans with the components String memberId, String isbn, LocalDate borrowedOn and LocalDate dueOn. Add the static factory method Loan.start(String memberId, String isbn, LocalDate borrowedOn), which sets dueOn to 14 days after borrowedOn. Add the method BigDecimal lateFee(LocalDate returnedOn): the fee is 0.50 for each whole day after dueOn, and 0.00 when the book is returned on or before dueOn; the fee always has two decimals.
+      Add LoanTest that tests the due date and the late fee: returned early, on the due date, and late.
+    create:
+      - src/main/java/no/experis/loans/Loan.java
+      - src/test/java/no/experis/loans/LoanTest.java
+    covers: [a-book-is-lent-for-14-days, a-late-return-costs-0-50-per-day-after-the-due-date]
+  - id: loans-2-service
+    instruction: |
+      Create LoanService in the package no.experis.loans with a no-argument constructor and a map of the loans that are active, by isbn. Add Loan borrow(String memberId, String isbn, LocalDate today), which starts a loan with Loan.start and stores it. It throws IllegalStateException with the message "Book is already on loan" when the isbn is on loan to anyone, and IllegalStateException with the message "Loan limit reached" when the member already has 3 active loans. Add BigDecimal returnBook(String isbn, LocalDate today), which removes the loan and returns its late fee; it throws IllegalArgumentException with the message "Book is not on loan" when the isbn is not on loan. Add int activeLoans(String memberId).
+      Add LoanServiceTest that tests borrowing, both rejections, the limit being per member, returning, and borrowing again after a return.
+    create:
+      - src/main/java/no/experis/loans/LoanService.java
+      - src/test/java/no/experis/loans/LoanServiceTest.java
+    read_only:
+      - src/main/java/no/experis/loans/Loan.java
+    covers: [a-member-can-have-at-most-3-active-loans, a-book-that-is-on-loan-cannot-be-borrowed, a-returned-book-can-be-borrowed-again-and-frees-the-member-s-loan-slot, returning-a-book-that-is-not-on-loan-is-rejected]

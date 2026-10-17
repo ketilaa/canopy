@@ -218,8 +218,9 @@ const MAX_TOOL_CALLS: usize = 12;
 
 /// The paths listed under `## Files to create` in a user prompt.
 fn files_to_create(user: &str) -> Vec<String> {
-    let Some(at) = user.find("\n## Files to create\n") else { return vec![] };
-    user[at + 21..].lines().take_while(|l| l.starts_with("- ")).map(|l| l[2..].trim().to_string()).collect()
+    const HEADING: &str = "\n## Files to create\n";
+    let Some(at) = user.find(HEADING) else { return vec![] };
+    user[at + HEADING.len()..].lines().take_while(|l| l.starts_with("- ")).map(|l| l[2..].trim().to_string()).collect()
 }
 
 /// The system rules as a retry that shows files has them: without the two rules about finding and reading files.
@@ -312,6 +313,9 @@ fn main() {
     let mut seen_prompts = std::collections::HashSet::new();
     cases.retain(|c| seen_prompts.insert((c.system.clone(), c.user.clone())));
     println!("{} distinct retry prompts of the stage chosen", cases.len());
+    for c in &cases {
+        assert!(!files_to_create(&c.user).is_empty(), "no files to create parsed for {}", c.id);
+    }
     shuffle(&mut cases, config.seed);
     let mut chosen: Vec<Case> = Vec::new();
     for stage in ["test", "compile"] {

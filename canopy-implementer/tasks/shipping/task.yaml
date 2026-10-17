@@ -1,0 +1,9 @@
+name: shipping-planned
+instruction: "The shipping cost of a parcel depends on its zone, weight and the order value. Each zone has a base price, heavy parcels cost extra, domestic orders of high value ship free, and weights outside the allowed range are rejected."
+context: "Root package: no.experis.shipping.\nBuild: Maven, Java 21, JUnit 5; no framework. Do not change pom.xml."
+repo: java-shipping
+tag: baseline-shipping-001
+hidden_test: ShippingHiddenTest.java
+hidden_test_path: src/test/java/no/experis/shipping/ShippingHiddenTest.java
+min_tests_added: 4
+untouched: [pom.xml]

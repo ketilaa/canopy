@@ -321,3 +321,37 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
 - **Generality:** `one-story`, narrow failure mode, one model. Says whether a retry can work on the failures of
   the current prompt that we have; says nothing about other kinds of failure.
 - **Status:** running.
+
+### G1. Generalising within Java: three new greenfield stories, detail levels, and lean vs current (user's direction, 2026-10-17)
+- **Direction (from the user):** generalise within the Java ecosystem before raising the bar by modifying existing
+  code; the decisions for the next three hours are mine. So: more greenfield Java stories of different shapes, with
+  the same measuring method, before any modify-existing-code step.
+- **New material:** `--task story:<name>` in `run_step` loads `tasks/<name>/task.yaml` (instruction, context, repo,
+  tag, hidden test, minimum tests); three stories, each a plain Maven Java 21 / JUnit 5 repository in `dogfooding/`
+  (git-ignored) tagged `baseline-<name>-001`, with a Gherkin feature, a hidden acceptance test and two plans:
+  - `loans`: stateful rules with dates (`Loan` record with due date and late fee; `LoanService` with limit,
+    exclusivity, return). 2 steps.
+  - `shipping`: tiered computation (`Zone` enum with base price; `ShippingCalculator` with weight steps, rounding up
+    "each started 500 g", a free-shipping boundary, a weight range). 2 steps.
+  - `stock`: layered, immutable (`StockItem` record, `StockRepository` interface, `InMemoryStockRepository`,
+    `StockService` through constructor injection). 3 steps.
+  The plans are `plan-signatures.yaml` (L2: signatures and every rule in prose, exception types and messages
+  included, tests named by topic) and `plan-oneline.yaml` (L3: one sentence per step, signatures and the numeric
+  rules, without messages, exception types or scale), the same factor as C6.
+- **Hidden tests validated before use:** each passes a reference implementation and fails every non-equivalent
+  mutant tried (loans 4 of 4 killed, plus one equivalent mutant; shipping 5 of 5; stock 5 of 5).
+- **Matrix (n=10 per cell, same binary and tags):** order L3 and L2 on `lean` (compared with E3 and E2 on `current`);
+  for each new story L2 on `lean`, L3 on `lean`, L2 on `current`.
+- **Predictions (before any of it runs):**
+  1. *lean vs current.* On order L3 (current: hidden 0/10, 9 of 11 first attempts failed) `lean` is within 1 of
+     `current` on hidden passes; a `lean` result of 4 or more of 10 would mean the extra rules were hurting. On order
+     L2 (current 8/10) `lean` scores 7 or more. On each new story at L2, `lean` is at most 1 pass below `current`.
+     **Falsified (lean is not safe to adopt)** if `lean` is 3 or more passes below `current` on the L2 cell of any story.
+  2. *detail generalises.* L2 passes the hidden test in 6 or more of 10 runs on each new story; L3 in 5 or fewer on
+     each. **Falsified** if L3 reaches 8 or more of 10 on two stories (detail is not the general lever) or L2 is 4 or
+     fewer on two stories (the claim that L2 carries enough is order-specific).
+  3. *what L3 loses.* The hidden-test failures of L3 runs that complete name a message, an exception type or a scale
+     (details a feature states and a one-line step drops), not an algorithmic mistake, in at least 60% of cases.
+- **Generality:** that is the point: `none` until the matrix reports; after it, at best `multi-story` (four stories,
+  one stack: plain Java Maven, one model).
+- **Status:** queued.
