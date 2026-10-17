@@ -676,4 +676,19 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   ("up to 1000 grams the cost is the base price"): one more item for the threshold side the examples do not show.
   Generality: `one-story`; the item names the gap I found in this story's hidden test, so this is evidence that coverage
   items for unexemplified rules work, not that a Planner would find them unaided.
-- **Status:** queued.
+- **Result C16 (stock, `lean`, n=10, checklist plan):** hidden **6/10** (prose L2 10/10); all 10 runs completed all 3 steps
+  (30 of 30 steps passed), 4 first-attempt failures all recovered by a changed retry (0 identical). The four hidden failures
+  are compile errors in the hidden test against the fixed API: `StockItem` has no `onHand()`. In those four runs the
+  model wrote `StockItem` as a `final class` with `getOnHand()`, although every version of the instruction says "Create
+  the record StockItem ... with the components String sku and int onHand" (checklist 6 records, 4 classes; prose 10 of 10
+  records). The checklist items speak of "has onHand 15" and never write the accessor call. Prediction (at least 9 of 10):
+  **falsified**, and the falsifier (7 or fewer) holds: on a story that passes at prose level the checklist cost 4 runs, by
+  changing the API the plan specified.
+- **Reading C16:** a long, value-dense step can dilute a structural constraint that a shorter step keeps (record, accessor
+  names). The hidden test is an API contract; the plan stated the API once in prose and then illustrated behaviour in items
+  that never used the accessor syntax. Not separated here: dilution by length against the "has onHand" wording. Candidate
+  fix to test: write each item as the call it asserts (`new StockItem("SKU-1", 10).receive(5).onHand() is 15`).
+- **Summary of C13 to C16:** (1) concrete values are the active ingredient of the checklist (loans 10/10 with values only, 0/10
+  with wording only); (2) a coverage item for the side of a rule the examples do not show closed shipping's gap (6/10 to 9/10);
+  (3) a checklist can cost API fidelity (stock 10/10 to 6/10). Generality: each `one-story`, one model, plain Java.
+- **Status:** done.

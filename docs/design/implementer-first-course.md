@@ -134,3 +134,12 @@ generality levels.
   values of each scenario into a numbered list of tests per step. Before that, finish the cells in the change log
   that are marked queued (stock, restart), and decide what to do about steps whose first attempt is a model blind
   spot: plan detail works, retries do not.
+
+### Later the same day (C13 to C16)
+- The active ingredient of the L1 checklist is the **concrete values**: loans 10/10 with the values only, 0/10 with the
+  "MUST ... check the list" wording only. The wording is not needed.
+- A **coverage item for the side of a rule that the examples do not show** closed shipping's remaining gap (6/10 to 9/10);
+  a Planner would have to derive such items from the prose rules, which is untested.
+- A checklist can **cost API fidelity**: stock went from 10/10 (prose) to 6/10 because 4 runs wrote a class with
+  `getOnHand()` instead of the specified record. Items should be written as the calls they assert, accessors included.
+
