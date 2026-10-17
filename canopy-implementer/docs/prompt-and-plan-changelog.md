@@ -78,12 +78,21 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
   shows five lines (the lean rules); the user prompt is identical to A's. Prediction (B at least as good as A)
   held; it is not distinguishable from A in this story: both arms are at the ceiling, so B cannot be shown
   better, only not worse. 0 of 10 B runs assert the exception message either (as in A).
-- **Batch C (`persona`):** not run yet.
+- **Result, batch C (`--prompt persona`, n=10, same binary/plan/tag):** 10/10 scored, every step passed first
+  attempt. Import-audit refusals: 11 over 10 runs (A 12, B 15). Run 1's system prompt was read: the persona
+  sentence is joined to the head line, then the lean rules. No Javadoc or extra classes in any arm (every run
+  created exactly the four listed files). One run (5) made two `glob` calls in the same turn as its first submit
+  (the persona and lean prompts have no read rule, so this is the model's own habit); harmless. 0 of 10 runs
+  assert the exception message, as in A and B. Prediction (persona no worse than lean, no extras) held; like B
+  it cannot be shown better because the baseline is at the ceiling.
+- **Generality of the persona result:** `one-story`, and weaker than `lean`'s: on a 10/10 baseline a persona
+  has nothing to improve, so this says only that it does no harm here. Whether it helps needs a story or plan the
+  baseline does not already pass.
 - **Generality:** `one-story` for `lean` (n=10, order story, plain Java, Qwen3-14B Q4_K_M, one plan): the six
   removed rules were not needed here. A second story is required before they are treated as removable in general
   (the Spring widgets plan has modify steps and a framework, where "keep the existing code" and the JUnit/package
   rules may matter more). Original line, kept for the still-open `persona` arm: When measured it will be one story (order), one plan, one stack (plain Java Maven,
   JUnit 5), one model; a second story (course step 2) is needed before `lean` is a rule rather than a setting.
-- **Status:** `lean`: kept as a setting for the order plan (10/10, equal to `current`); `persona`: untested. Batches: A (`current`, done), B (`lean`, done), C (`persona`), n=10 each, same
+- **Status:** `lean`: kept as a setting for the order plan (10/10, equal to `current`); `persona`: no harm on the order plan (10/10), no measured benefit. Batches: A (`current`, done), B (`lean`, done), C (`persona`, done), n=10 each, same
   binary, same plan, same repository tag.
 - **Result:** see below once the batches finish.
