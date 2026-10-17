@@ -380,7 +380,17 @@ Status values: `untested`, `kept` (measured, adopted), `refuted` (measured, not 
      (details a feature states and a one-line step drops), not an algorithmic mistake, in at least 60% of cases.
 - **Generality:** that is the point: `none` until the matrix reports; after it, at best `multi-story` (four stories,
   one stack: plain Java Maven, one model).
-- **Status:** queued.
+- **Result (loans L2, `lean`, n=10, `--scale-hint-sides`):** hidden 0/10; step 1 passed in 0 runs; retries identical
+  to the failed answer **18 of 20**; 0 recovered. Prediction (at least 3 of 10 pass step 1): **falsified**, and the
+  logged falsifier (2 or fewer runs pass step 1) holds. Read together with C8 (plain hint: 1 run recovered, 9 of
+  19 identical): on loans the hint arms recovered 1 of 39 retries against 0 of 20 without a hint, and identical
+  retries were 27 of 39 against 20 of 20; the difference between the two hint wordings is within what n=10 can
+  resolve, and naming the sides did not help.
+- **Reading:** a stated fact at retry time rescued order L3 (8 of 13 retries) and almost nothing on loans (1 of
+  39). In order the repair is one-sided (add `setScale` in the code); in loans the first attempt is the problem
+  (10 of 10 runs write `BigDecimal.ZERO` in the code and expect it in the test), and the retry mostly repeats it.
+  Prevention at the first attempt, not repair, is where loans needs help.
+- **Status:** `refuted` for the sides wording (the plain hint stays as C8); the flag stays for reproducibility.
 
 ### C7. Retry mode `restart` (flag, default unchanged)
 - **Where:** `RetryMode` in `src/implementer.rs`, `run_step --retry feedback|restart`. Commit: see the git log entry
