@@ -1035,3 +1035,34 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   example a different window length and a 'more than N minutes' rule with no example time); predict a failure class of the B-series
   kind in at least 4 of 10 runs; falsified if 2 or fewer fail. Not run.
 - **Generality:** `multi-story`, the observation (five stories, one model); the explanation is untested.
+
+### T4. Tickets L2 with a boundary-bound case the rule leaves open (tests the refined rule; prediction first)
+- **Plan:** `tasks/tickets/plan-signatures-open.yaml` = T2 (L2, 10/10) with one change to step 1: the expiry rule "when at is more than 90
+  minutes after issuedAt" becomes "when the 90 minutes of validity counted from issuedAt have run out at the time of validation".
+  Whether validating at exactly issuedAt plus 90 minutes is valid is now not decided by the wording (the hidden test says valid);
+  the test sentence names no values, as in T2. This is the shipping gap (under 1000 g) in a different story and domain.
+- **Prediction:** at least 4 of 10 runs fail the hidden test on the boundary (a ticket validated at exactly 90 minutes rejected);
+  T2 is 10/10 with the unambiguous wording. **Falsified** (the hypothesis that boundary-bound cases need a stated value) if 2 or
+  fewer fail. Also read: do the model's own tests assert the boundary either way?
+- **Generality:** `none`; one story, one model; one factor (the wording of one rule).
+- **Result T4 (tickets, `lean`, n=10, the expiry rule worded so that the boundary is open):** hidden **9/10**; all 10 runs completed all 3
+  steps, 29 of 29 steps passed at the first attempt (one run's failed-hidden run is the only failure). Prediction (at least 4 of 10
+  fail on the boundary): **falsified**, and the falsifier (2 or fewer) holds: 1 failed. The failing run (07) wrote
+  `isBefore(issuedAt.plusMinutes(90))` for validity, rejecting exactly 90 minutes (`Ticket has expired` at 11:30); the other nine
+  wrote an expiry test of the form `at.isAfter(issuedAt.plusMinutes(90))` or an equivalent that keeps the boundary valid.
+- **Reading:** the hypothesis from the T2 counter-evidence (a boundary-bound case without a stated value fails) is **falsified** by this
+  one change: leaving the boundary open cost 1 run in 10, not 4 or more, although the rule sentence no longer decides it. What
+  differs from shipping's gap is the model's default: for "expired when 90 minutes have run out" the common idiom
+  (`isAfter(start.plusMinutes(90))`) happens to give the intended boundary, while for "each started 500 grams" the common idiom
+  (truncating division) gives the wrong one, and for a threshold test it invents a second expected value. So whether a plan must state
+  a case's value depends on whether the model's default answer matches the intent, which is not visible from the plan text
+  alone. The B-series rule (state call arguments and expected result for every named case) is a sufficient fix on order and
+  shipping, not shown necessary in general, and its scope cannot be read off the kind of rule (computed or boundary-bound).
+- **What this means for a Planner:** a rule of the form "state every case" is safe but over-includes; the information that decides whether
+  a value is needed is the Implementer's measured failure on that case, not a property of the plan text. That supports the course's
+  own order (the Planner is scored by whether the Implementer passes), and argues against a purely syntactic plan audit as the
+  Planner's ground truth (compare the audit's miss on stock and on rule coverage).
+- **Generality:** `one-story` (tickets, one rule), one model; one wording of an open boundary; the idiom explanation is read from 10 samples'
+  code and not separately tested (a test would be a rule where the default idiom is the wrong one, for example tickets with a
+  rule that wants exclusive ends).
+- **Status:** done.

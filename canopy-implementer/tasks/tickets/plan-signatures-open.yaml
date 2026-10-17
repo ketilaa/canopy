@@ -1,0 +1,41 @@
+id: tickets
+story: |
+  A single-journey ticket is issued, can be validated within 90 minutes of being issued, and can be cancelled until it
+  is validated. A validated or cancelled ticket cannot be validated again, an expired ticket cannot be validated, and
+  an unknown ticket is rejected.
+feature: tasks/tickets/feature.feature
+steps:
+  - id: tickets-1-ticket
+    instruction: |
+      Create the enum TicketStatus with the values ISSUED, VALIDATED and CANCELLED, and the record Ticket, both in the package no.experis.tickets. Ticket has the components String id, LocalDateTime issuedAt and TicketStatus status. It is immutable: the method Ticket validate(LocalDateTime at) returns a new ticket with the status VALIDATED, and Ticket cancel() returns a new ticket with the status CANCELLED; the original is never changed. validate throws IllegalStateException with the message "Ticket is cancelled" when the ticket is cancelled, with the message "Ticket is already validated" when it is validated, and with the message "Ticket has expired" when the 90 minutes of validity counted from issuedAt have run out at the time of validation (checked in that order). cancel throws IllegalStateException with the message "A validated ticket cannot be cancelled" when the ticket is validated.
+      Add TicketTest that tests validating inside the window, validating too late, validating twice, cancelling, validating a cancelled ticket, cancelling a validated ticket, and that the original ticket is unchanged.
+    create:
+      - src/main/java/no/experis/tickets/TicketStatus.java
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/test/java/no/experis/tickets/TicketTest.java
+    covers: [a-ticket-is-valid-for-90-minutes-from-when-it-was-issued, a-validated-ticket-cannot-be-validated-again, a-ticket-that-is-not-validated-can-be-cancelled, a-cancelled-ticket-cannot-be-validated, a-validated-ticket-cannot-be-cancelled]
+  - id: tickets-2-repository
+    instruction: |
+      In the package no.experis.tickets create the interface TicketRepository with Optional<Ticket> findById(String id) and void save(Ticket ticket), and InMemoryTicketRepository, which implements it with a HashMap keyed by id and has a no-argument constructor; save replaces a ticket with the same id.
+      Add InMemoryTicketRepositoryTest that tests finding a saved ticket, an unknown id giving an empty result, and saving again replacing the ticket.
+    create:
+      - src/main/java/no/experis/tickets/TicketRepository.java
+      - src/main/java/no/experis/tickets/InMemoryTicketRepository.java
+      - src/test/java/no/experis/tickets/InMemoryTicketRepositoryTest.java
+    read_only:
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/main/java/no/experis/tickets/TicketStatus.java
+    covers: [an-issued-ticket-is-issued]
+  - id: tickets-3-service
+    instruction: |
+      Create TicketService in the package no.experis.tickets with a constructor that takes a TicketRepository. Add Ticket issue(String id, LocalDateTime at), which saves and returns a new ticket with the status ISSUED; Ticket validate(String id, LocalDateTime at) and Ticket cancel(String id), which load the ticket, call validate or cancel on it, save the result and return it, and throw IllegalArgumentException with the message "Unknown ticket" when there is no ticket with that id. Use Ticket for the rules; the service only loads, calls and saves.
+      Add TicketServiceTest that creates the service with new TicketService(new InMemoryTicketRepository()) and tests issuing, validating, cancelling, a ticket that was validated being rejected on a second validation, and an unknown ticket for both validate and cancel.
+    create:
+      - src/main/java/no/experis/tickets/TicketService.java
+      - src/test/java/no/experis/tickets/TicketServiceTest.java
+    read_only:
+      - src/main/java/no/experis/tickets/Ticket.java
+      - src/main/java/no/experis/tickets/TicketStatus.java
+      - src/main/java/no/experis/tickets/TicketRepository.java
+      - src/main/java/no/experis/tickets/InMemoryTicketRepository.java
+    covers: [an-issued-ticket-is-issued, an-unknown-ticket-cannot-be-validated-or-cancelled]
