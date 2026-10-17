@@ -509,6 +509,18 @@ steps:
     }
 
     #[test]
+    fn the_stock_api_plan_has_the_shape_of_the_stock_checklist_and_states_the_api_in_each_step() {
+        let api = Plan::from_yaml(include_str!("../tasks/stock/plan-checklist-api.yaml")).unwrap();
+        let checklist = Plan::from_yaml(include_str!("../tasks/stock/plan-checklist.yaml")).unwrap();
+        let shape = |p: &Plan| p.steps.iter().map(|s| (s.id.clone(), s.scope.clone(), s.covers.clone())).collect::<Vec<_>>();
+        assert_eq!(shape(&api), shape(&checklist));
+        for step in &api.steps {
+            assert!(step.instruction.contains("API the tests use:") && step.instruction.contains("MUST"), "{}", step.id);
+        }
+        assert!(api.steps[0].instruction.contains("new StockItem(\"SKU-1\", 10).receive(5).onHand() is 15"));
+    }
+
+    #[test]
     fn the_loans_values_only_plan_lists_the_values_without_the_must_wording() {
         let values = Plan::from_yaml(include_str!("../tasks/loans/plan-values-only.yaml")).unwrap();
         let checklist = Plan::from_yaml(include_str!("../tasks/loans/plan-checklist.yaml")).unwrap();

@@ -1,6 +1,6 @@
 # Implementer: the agreed next steps (written 2026-10-17, to resume after a context clear)
 
-Status: agreed with the maintainer, not started. Read first, in order: the "Prompt Style and Working Course" section
+Status: Plans A and B done 2026-10-17 (A: stock with an API block 10/10, prediction held; B: audit meets its 3-of-4 criterion, fails on stock; see the change log). Next: the "Decision after A and B" section. Read first, in order: the "Prompt Style and Working Course" section
 of `CLAUDE.md`, `docs/design/implementer-first-course.md` (with its updates at the end),
 `canopy-implementer/docs/prompt-and-plan-changelog.md` (every change and measurement, with predictions and generality),
 `docs/retrospectives/2026-10-17.md`.

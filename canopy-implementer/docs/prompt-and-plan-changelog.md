@@ -692,3 +692,47 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   with wording only); (2) a coverage item for the side of a rule the examples do not show closed shipping's gap (6/10 to 9/10);
   (3) a checklist can cost API fidelity (stock 10/10 to 6/10). Generality: each `one-story`, one model, plain Java.
 - **Status:** done.
+
+## 2026-10-17: C17, stock at the checklist level with an API block
+
+- **Change (plan only, no prompt change):** `tasks/stock/plan-checklist-api.yaml` is `plan-checklist.yaml` (same steps, files,
+  coverage) with, in each step, a line `API the tests use: ...` naming the constructor, accessors and method signatures the
+  tests call, and every item written as the call it asserts (`new StockItem("SKU-1", 10).receive(5).onHand() is 15`).
+- **Why:** C16 lost 4 of 10 runs to `StockItem` written as a class with `getOnHand()`, the items never using the accessor.
+- **Prediction (before the run):** at least 9 of 10 runs pass the hidden test (checklist 6/10, prose 10/10). **Falsified** if 7 or
+  fewer: then the cost is not the missing accessor syntax and the next candidate is length/dilution.
+- **Generality:** `none` yet; one story, one model.
+- **Result C17 (stock, `lean`, n=10, checklist plan with API block):** hidden **10/10** (checklist 6/10, prose 10/10); all 10 runs
+  completed all 3 steps, 26 of 30 steps passed at the first attempt, 4 needed a second. No run used `getOnHand()`. Prediction (at
+  least 9 of 10): held; the falsifier (7 or fewer) did not occur. Side finding: all 10 wrote `StockItem` as a `final class`, none as
+  the record the instruction names (checklist 4 of 10 classes, prose 0 of 10), with `sku()` and `onHand()` accessors, which is all the
+  hidden test calls. So the earlier loss was the accessor names, not the class form: stating the API as the calls the tests make
+  fixed it, and the model still ignored "record". Generality: `one-story`, one model; the API block here was written by hand from
+  the hidden test's calls, so it shows the form works, not that a Planner would derive it.
+- **Status:** done.
+
+## 2026-10-17: Plan audit (analysis, not a prompt or plan change)
+
+- **Tool:** `examples/plan_audit.rs <feature> <plan>...` lists the literals a feature states (quoted strings, numbers, dates) that
+  appear in no step instruction of a plan. Substring match, so small integers (`1`, `3`) match too easily.
+- **Success criterion (stated before looking):** the count of missing literals orders the cells like the hidden-test pass rate (L3
+  worst, L2 or L1 best) on at least three of four stories.
+- **Result (missing literals, L3 one line / L2 prose / L1 checklist; hidden pass rate in brackets):**
+
+  | Story | L3 | L2 | L1 |
+  |---|---|---|---|
+  | order (19 literals) | 15 (0) | 14 (9) | 5 (9) |
+  | loans (16) | 13 (0) | 9 (0) | 0 (10) |
+  | shipping (23) | 11 (1) | 6 (5) | 0 (6) |
+  | stock (14) | 14 (0) | 10 (10) | 0 (6); with API block 0 (10) |
+
+  Held on order, loans and shipping (L3 worst, L1 fewest missing); **failed on stock**, where L1 has the fewest missing literals and
+  the lower pass rate. Three of four meets the criterion. What it cannot see, by construction and as seen: the shipping rule
+  coverage item changes 6/10 to 9/10 and the audit reads 0 both times; stock's cost was API shape, not a literal; L2 against L3 on
+  loans is 9 against 13 missing and 0 against 0 passed.
+- **Reading:** the audit measures how much of the feature's concrete content reaches the plan, which tracks plan detail, and detail is
+  what separated L3 from L1 everywhere. It is a necessary-condition check (a plan missing most literals fails), not a predictor of
+  the winner among detailed plans. Not wired into the Planner; a candidate for "audit, then revise" in course step 3 only together
+  with checks for API shape and rule coverage.
+- **Generality:** `none`; four stories, twelve cells, one model, a coarse criterion.
+- **Status:** done.
