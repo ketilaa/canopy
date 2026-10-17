@@ -1066,3 +1066,44 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   code and not separately tested (a test would be a rule where the default idiom is the wrong one, for example tickets with a
   rule that wants exclusive ends).
 - **Status:** done.
+
+### X1/X2. The idiom test: tickets with the opposite boundary (prediction first)
+- **Question:** T4 passed 9/10 with an open boundary. Is that because the model reads the wording, or because its default idiom
+  (`isAfter(issuedAt.plusMinutes(90))`, inclusive) happens to match the hidden test? Hold the plan text and change the intent.
+- **Task:** `tasks/tickets-exclusive/` (hidden test copy with the boundary reversed: validating at 10:30 and 11:29 is valid, at 11:30
+  and 11:31 is `Ticket has expired`; checked against a reference implementation, 6 of 6; the feature file and the rest are as
+  `tickets`; same baseline repo). The hidden test is the only thing that differs from T4.
+- **X1 `tasks/tickets-exclusive/plan-open.yaml`:** byte for byte the T4 plan (the 90 minutes "have run out at the time of validation").
+  **X2 `plan-stated.yaml`:** the same plus ", so a validation at exactly 90 minutes after issuedAt is expired too". `--prompt lean`, n=10.
+- **Prediction:** the idiom explanation says the model's output does not depend on the open wording, so X1 fails the hidden test (the
+  11:30 case) in at least 7 of 10 runs; X2 (the value stated) passes in at least 8 of 10. **Falsified** (the idiom explanation) if X1
+  fails in 3 or fewer: the model then reads the wording, and T4's 9/10 was comprehension. If X2 passes in 5 or fewer, a stated boundary
+  does not override the idiom either, which would be a stronger finding.
+- **Generality:** `none`; one story, one rule, one model.
+- **Result X1/X2 (`tickets-exclusive`, `lean`, n=10 each; hidden test: exactly 90 minutes is expired):**
+
+  | Plan | Hidden | Completed 3 steps | First-attempt steps | Code idiom |
+  |---|---|---|---|---|
+  | X1 open wording (= T4's text) | **0/10** | 9 | 27 of 28 | `isAfter(issuedAt.plusMinutes(90))` in 9 of 10 |
+  | X2 the boundary stated in the rule sentence | **0/10** | 10 | 30 of 30 | `isAfter(issuedAt.plusMinutes(90))` in 10 of 10 |
+  | (T4, inclusive hidden test, same wording as X1) | 9/10 | 10 | 29 of 29 | the same idiom |
+
+  Prediction X1 (fails in at least 7 of 10): held (all 9 completed runs fail with `expected IllegalStateException, nothing thrown` at
+  11:30). The falsifier (3 or fewer) did not occur. So the same plan text gives 9/10 or 0/10 depending on which boundary the hidden test wants:
+  T4's 9/10 was the idiom, not comprehension of the wording. Prediction X2 (at least 8 of 10 pass): **falsified, and the stronger branch
+  holds**: with the rule sentence saying "so a validation at exactly 90 minutes after issuedAt is expired too" all 10 runs still wrote the
+  inclusive idiom, all 10 passed their own tests and the gate (none of the model's tests checks exactly 90 minutes), and all 10 failed the
+  hidden test. A stated boundary in the rule prose did not override the default.
+- **Reading:** (1) the idiom explanation holds for this rule: the output follows the model's default for "expires after 90 minutes", and the
+  prose, open or explicit, does not move it. (2) The gate cannot help: the model writes its own tests from the same idiom and never probes the
+  exact boundary, so the code and its tests agree on the wrong answer. (3) In the B-series the fix was a stated value **in the cases the
+  step is told to test** (shipping 1001 and 1501, order 125.00 x 4); a statement in the rule sentence (X2, and shipping's B3) is not
+  that. The distinction is between a rule and a case. X3 would test it: X2 plus a test-sentence case "validating at exactly 90 minutes
+  after issuedAt (11:30 for 10:00) is expired".
+- **Consequence for the Planner:** a plan that states a rule correctly can still be implemented wrongly, undetected by the step's own tests. The
+  plan has to turn each boundary into a case the step must test, and the case has to carry the expected result; the plan text alone does not tell
+  which rules need this (T4 passed without it), so the Implementer's measured failure on the case has to decide, as the course says.
+- **Generality:** `one-story`, one rule, one model; the two intents are mirror images of one wording, which is the strongest design here and
+  the narrowest evidence.
+- **Status:** done. X3 not run (prediction: at least 8 of 10; falsified at 5 or fewer, which would mean even a case in the test sentence does not
+  move the idiom).
