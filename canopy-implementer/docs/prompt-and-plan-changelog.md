@@ -1385,3 +1385,20 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   files (names, signatures and exception types; no behaviour); S0 and S1 on stock saw the vaguer text. (2) The layered system rules gain "take every rule from the story and
   the scenarios; NEVER add a rule, a validation or a default that they do not state." One pilot sample is a thin basis for these changes; they are logged here so S2 is read
   with that in mind, and neither is a measured effect.
+- **Result S1 (current Planner + design pass, `--api`, `lean`, n=10 plans per story):**
+
+  | Story | Valid | Hidden pass | Steps planned (mean; S0) | Steps passed before the stop (mean; S0) |
+  |---|---|---|---|---|
+  | stock | 10/10 | **0/10** | 9.4 (7.2) | 1.1 (1.6) |
+  | tickets | 10/10 | **0/10** | 11.9 (11.7) | 1.7 (3.6) |
+  | order | 10/10 | **0/10** | 8.9 (7.4) | 0.6 (1.4) |
+  | shipping | 10/10 | **0/10** | 7.0 (7.3) | 1.2 (1.9) |
+  | loans | 10/10 | **0/10** | 10.3 (10.3) | 1.6 (2.1) |
+
+  Prediction (at most 3 of 10 on every story): held (0 on all five). The second falsifier (mean steps passed does not rise on at least 3 of the 5 stories) **holds**: it
+  rose on none; it fell on all five. The design pass, as built, makes the plans no better and the Implementer stops earlier. It adds a Design block of signatures
+  and test cases to the one-line instruction (longer steps) without changing the number of steps, and the cases it states are the model's own and not checked against the
+  feature (a case can contradict the scenarios). The earlier widgets result for this pass (Spring) does not carry over to plain Java here.
+- **Reading S0 and S1 together:** neither a one-line plan with scenarios in the context (S0) nor the same plan with designed signatures and cases (S1) comes near the
+  hand-written prose plans; what differs is what S2 changes: the step structure, rules in the instruction, and every case as a call with its result in a checklist.
+- **Status:** done.
