@@ -1,4 +1,4 @@
 Package no.experis.stock.
-record StockItem(String sku, int onHand); StockItem receive(int quantity); StockItem reserve(int quantity); both return a new item and throw IllegalArgumentException or IllegalStateException.
+record StockItem(String sku, int onHand); StockItem receive(int quantity) throws IllegalArgumentException; StockItem reserve(int quantity) throws IllegalArgumentException, IllegalStateException; both return a new item.
 interface StockRepository: Optional<StockItem> findBySku(String sku); void save(StockItem item). class InMemoryStockRepository implements it, no-argument constructor.
-class StockService, constructor StockService(StockRepository): void receive(String sku, int quantity); void reserve(String sku, int quantity); int available(String sku).
+class StockService, constructor StockService(StockRepository): void receive(String sku, int quantity); void reserve(String sku, int quantity) throws IllegalArgumentException, IllegalStateException; int available(String sku).

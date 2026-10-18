@@ -1379,3 +1379,9 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   decomposition and the API are given, and the hand-written plans' advantage is not shape alone. Also read: the notes (missing literals), since a plan that omits
   a literal is the failure class of the B-series.
 - **Generality:** `none`; five stories, one model, the API and the grouping given.
+- **Two changes made after one pilot plan (stock, planning only, before any S2 scoring):** the pilot's rules for the repository step invented behaviour the story does not
+  state (`findBySku` returning null where the API says `Optional`; `save` throwing on null) and made "Insufficient stock" an `IllegalArgumentException` because stock's
+  API text said only "IllegalArgumentException or IllegalStateException". (1) `tasks/stock/api.txt` now says which exception each method throws, like the other four API
+  files (names, signatures and exception types; no behaviour); S0 and S1 on stock saw the vaguer text. (2) The layered system rules gain "take every rule from the story and
+  the scenarios; NEVER add a rule, a validation or a default that they do not state." One pilot sample is a thin basis for these changes; they are logged here so S2 is read
+  with that in mind, and neither is a measured effect.

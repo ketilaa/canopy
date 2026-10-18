@@ -218,6 +218,7 @@ You write one step of an implementation plan for a Java Maven project, from the 
 ALWAYS state the rules of the unit as behaviour: every exception type, every exact message, every threshold and which side of it counts, every default.
 ALWAYS write each case as a call of the API with concrete values and its expected result, the way a test asserts it.
 ALWAYS write a case for every example row of every scenario that concerns this unit, and one case for each side of every threshold or step in the rules.
+ALWAYS take every rule from the story and the scenarios; NEVER add a rule, a validation or a default that they do not state.
 NEVER restate the API signatures in the rules."
         .to_string()
 }
