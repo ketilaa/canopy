@@ -1508,3 +1508,19 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Prediction (before the run):** at least 4 of 10 pass the hidden test (0 without). **Falsified** at 1 or fewer: then the model does not turn a named missing string into a message assertion that fixes its code, and the failing mechanism is
   the Implementer's behaviour at the first attempt (its code and test disagree with the plan) rather than something a gate can name.
 - **Generality:** `none`; one story's plans (paired); one model.
+- **Result S5 (the ten S4 tickets plans, `--checklist-audit`, `lean`, one run per plan; paired with S4's 0 of 10):** hidden **1/10** (plan 08 passed all three steps and the hidden test); 8 of 10 plans stop at step 1 (S4: 5);
+  1 plan stops at step 2 or 3 after step 1. Prediction (at least 4 of 10): **falsified**, and the falsifier (1 or fewer) holds. What the audit did: it refused the first submission of a step (the tests lacked the plan's quoted
+  messages; 375-character refusal naming them), the model then added message assertions, and its own tests failed on the mismatch with its production code (`expected <Ticket is cancelled> but was <Ticket is already validated>`)
+  in all three attempts: it changes what the code says only rarely (1 plan in 10, the same rate as the exact-boundary run X6). So the audit moves a silent wrong answer to a visible failing step, and the repair step is the limit again.
+- **Reading S4 and S5 together:** in the hand-written tickets plans that pass (T2, T3), the rules prose says which message goes with which condition, in order ("... "Ticket is cancelled" when the ticket is cancelled, "Ticket is already
+  validated" when it is validated, "Ticket has expired" when ... (checked in that order)"). The Planner's rules do not; its messages appear only in the checklist items, and the production code is written from the rules.
+- **Status:** done. The audit stays behind its flag.
+
+### S6. The Planner lists every exception as method, condition, type and message in a schema field (prediction first)
+- **Change (layered.rs, 19 tests):** `exceptions` (required array; each entry the method, the condition, the exception type, the exact message) in the unit schema, rendered by the harness as a "Throws (a method checks its conditions in the
+  order listed):" block between the rules and the checklist; a case that expects a message not listed in `exceptions` is refused with the usual retry and then dropped; the system rule asks for one entry per condition, in order.
+- **Run:** tickets, ten new plans, scored without the audit (S6a) and then the same ten plans with `--checklist-audit` (S6b). `lean`.
+- **Prediction (before the run):** S6a at least 4 of 10 (S4: 0), because the production code is now told which message goes with which condition, as in the hand-written plans that pass 10/10. **Falsified** at 1 or fewer: then the
+  list in the instruction does not reach the code as the prose did, or the model's list is wrong, and the mechanism is elsewhere. S6b: no prediction beyond not below S6a.
+- **Generality:** `none`; one story; the responsibilities and API are given.
+

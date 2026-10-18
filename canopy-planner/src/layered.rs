@@ -105,8 +105,20 @@ pub struct Case {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Draft {
     pub rules: String,
+    /// Every exception of the unit: the method, the condition, the type and the exact message, in the order a method checks them.
+    #[serde(default)]
+    pub exceptions: Vec<Throw>,
     pub cases: Vec<Case>,
     pub covers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Throw {
+    pub method: String,
+    pub when: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub message: String,
 }
 
 /// What the model may answer for one unit.
@@ -114,9 +126,24 @@ pub fn schema(scenario_ids: &[String]) -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["rules", "cases", "covers"],
+        "required": ["rules", "exceptions", "cases", "covers"],
         "properties": {
             "rules": {"type": "string", "minLength": 1, "maxLength": 1200},
+            "exceptions": {
+                "type": "array",
+                "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["method", "when", "type", "message"],
+                    "properties": {
+                        "method": {"type": "string", "minLength": 1, "maxLength": 80},
+                        "when": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "type": {"type": "string", "pattern": "^[A-Za-z]+Exception$"},
+                        "message": {"type": "string", "minLength": 1, "maxLength": 120}
+                    }
+                }
+            },
             "cases": {
                 "type": "array",
                 "minItems": 1,
@@ -160,6 +187,13 @@ pub fn normalise_expected(expected: &str) -> String {
         Some(m) if !m.is_empty() => format!("throws {kind} with the message \"{m}\""),
         _ => text.to_string(),
     }
+}
+
+/// The message an exception expectation names, after normalisation.
+fn expected_message(expected: &str) -> Option<String> {
+    let text = normalise_expected(expected);
+    let rest = text.split("with the message \"").nth(1)?;
+    rest.strip_suffix('"').map(str::to_string)
 }
 
 fn quoted(text: &str, quote: char) -> Option<String> {
@@ -231,6 +265,18 @@ pub fn render_instruction(api: &Api, index: usize, draft: &Draft, fact: Option<&
         unit.line,
         draft.rules.trim()
     );
+    if !draft.exceptions.is_empty() {
+        out.push_str("Throws (a method checks its conditions in the order listed):\n");
+        for t in &draft.exceptions {
+            out.push_str(&format!(
+                "- {}: throws {} with the message \"{}\" when {}\n",
+                t.method.trim(),
+                t.kind.trim(),
+                t.message.trim(),
+                t.when.trim().trim_end_matches('.')
+            ));
+        }
+    }
     if let Some(fact) = fact {
         out.push_str(&format!("Fact: {fact}\n"));
     }
@@ -313,7 +359,7 @@ pub struct Input<'a> {
 fn system() -> String {
     "\
 You write one step of an implementation plan for a Java Maven project, from the story, the scenarios and the project's fixed API.
-ALWAYS state the rules of the unit as behaviour: every exception type, every exact message, every threshold and which side of it counts, every default.
+ALWAYS list in `exceptions` every exception of the unit, one entry per condition and in the order the method checks them: the method, the condition, the exception type and the exact message the story or the scenarios give.\nALWAYS state the rules of the unit as behaviour: every exception type, every exact message, every threshold and which side of it counts, every default.
 ALWAYS write each case as a call of the API with concrete values and its expected result, the way a test asserts it. Write an exception as: throws <Type> with the message \"<exact message>\". Each case starts from fresh objects: `given` lists the calls that set up its state (empty when it needs none), `call` is the one call under test, `expected` is its result.
 ALWAYS write only the cases for what this unit is responsible for; a case may use only the types of this unit and of the units before it.
 ALWAYS write a case for every example row of every scenario that concerns this unit, and one case for each side of every threshold or step in the rules, using the values the scenarios state.
@@ -391,6 +437,7 @@ fn parse(raw: &str, scenario_ids: &[String]) -> Result<Draft, Vec<String>> {
 /// What is wrong with a single case, by its index: a later unit's type, or a number nobody stated.
 fn case_problems(draft: &Draft, later_types: &[String], allowed: &BTreeSet<String>) -> Vec<(usize, String)> {
     let mut out = Vec::new();
+    let declared: Vec<&str> = draft.exceptions.iter().map(|t| t.message.trim()).collect();
     for (i, case) in draft.cases.iter().enumerate() {
         let full = format!("{} {} {}", case.given, case.call, case.expected);
         for t in later_types {
@@ -399,6 +446,17 @@ fn case_problems(draft: &Draft, later_types: &[String], allowed: &BTreeSet<Strin
                     i,
                     format!(
                         "case {} uses {t}, which a later unit creates; use only the types of this unit and of the units before it, and leave out what this unit is not responsible for",
+                        i + 1
+                    ),
+                ));
+            }
+        }
+        if let Some(message) = expected_message(&case.expected) {
+            if !declared.contains(&message.as_str()) {
+                out.push((
+                    i,
+                    format!(
+                        "case {} expects the message \"{message}\", which `exceptions` does not list; list every exception with its exact message",
                         i + 1
                     ),
                 ));
@@ -602,6 +660,7 @@ class StockService, constructor StockService(StockRepository): int available(Str
     fn draft(rules: &str, cases: &[(&str, &str)], covers: &[&str]) -> Draft {
         Draft {
             rules: rules.into(),
+            exceptions: vec![],
             cases: cases.iter().map(|(c, e)| Case { given: String::new(), call: (*c).into(), expected: (*e).into() }).collect(),
             covers: covers.iter().map(|s| s.to_string()).collect(),
         }
@@ -717,6 +776,7 @@ class StockService, constructor StockService(StockRepository): int available(Str
         let api = parse_api("Package a.b.\nrecord Money(java.math.BigDecimal amount). BigDecimal total().\n").unwrap();
         let d = Draft {
             rules: "r".into(),
+            exceptions: vec![],
             cases: vec![Case { given: "a.add(10); a.add(5);".into(), call: "a.total()".into(), expected: "is 15.00".into() }],
             covers: vec![],
         };
@@ -849,5 +909,28 @@ class StockService, constructor StockService(StockRepository): int available(Str
         let d = draft("r", &[("a.fee()", "0.50")], &[]);
         assert!(render_instruction(&api, 0, &d, None).contains("1. a.fee(): new BigDecimal(\"0.50\")"));
         assert!(render_instruction(&api, 1, &d, None).contains("1. a.fee(): 0.50"), "a unit without BigDecimal keeps the text");
+    }
+
+    #[test]
+    fn the_exceptions_are_rendered_as_a_list_of_condition_type_and_message_and_a_case_may_only_expect_a_listed_message() {
+        let api = parse_api("Package a.b.\nclass A: void f().\n").unwrap();
+        let throws = |when: &str, message: &str| Throw { method: "f()".into(), when: when.into(), kind: "IllegalStateException".into(), message: message.into() };
+        let d = Draft {
+            rules: "r".into(),
+            exceptions: vec![throws("the thing is cancelled.", "Too late"), throws("the thing is done", "Already done")],
+            cases: vec![Case { given: String::new(), call: "new A().f()".into(), expected: "IllegalStateException: Too late".into() }],
+            covers: vec![],
+        };
+        let text = render_instruction(&api, 0, &d, None);
+        assert!(text.contains("\nRules: r\nThrows (a method checks its conditions in the order listed):\n- f(): throws IllegalStateException with the message \"Too late\" when the thing is cancelled\n- f(): throws IllegalStateException with the message \"Already done\" when the thing is done\n"), "{text}");
+        assert!(case_problems(&d, &[], &["0".to_string()].into_iter().collect()).is_empty());
+        let mut unlisted = d.clone();
+        unlisted.cases[0].expected = "throws IllegalStateException with the message \"Elsewhere\"".into();
+        let problems = case_problems(&unlisted, &[], &BTreeSet::new());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].1.contains("\"Elsewhere\"") && problems[0].1.contains("`exceptions`"), "{problems:?}");
+        let schema = schema(&["s".to_string()]);
+        assert_eq!(schema["properties"]["exceptions"]["items"]["properties"]["type"]["pattern"], "^[A-Za-z]+Exception$");
+        assert!(schema["required"].as_array().unwrap().contains(&json!("exceptions")));
     }
 }
