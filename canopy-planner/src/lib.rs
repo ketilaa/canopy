@@ -9,6 +9,7 @@ pub mod design;
 pub mod draft;
 pub mod facts;
 pub mod gherkin;
+pub mod layered;
 pub mod planner;
 pub mod prompt;
 pub mod render;

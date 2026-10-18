@@ -4,7 +4,7 @@
 For one task: runs `run_planner` for N plans, then runs `run_step` once on each plan that came out and reads the
 hidden-test verdict. Prints a table and writes results.csv in the output directory.
 
-usage: score_planner.py --task stock --runs 10 --url http://HOST:8080 --out DIR [--api] [--design] [--prompt lean]
+usage: score_planner.py --task stock --runs 10 --url http://HOST:8080 --out DIR [--api | --layered] [--design] [--prompt lean]
        [--planner-arg ARG]... [--step-arg ARG]...     (extra flags passed through to run_planner / run_step)
 The binaries are the debug examples of the workspace (cargo build --examples first).
 """
@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="Qwen/Qwen3-14B-GGUF:Q4_K_M")
     ap.add_argument("--api", action="store_true")
+    ap.add_argument("--layered", action="store_true", help="use run_layered (steps from the API, rules and cases from the model)")
     ap.add_argument("--design", action="store_true", help="run the design pass (design_plan) on each plan and score plan.designed.yaml")
     ap.add_argument("--prompt", default="lean")
     ap.add_argument("--planner-arg", action="append", default=[])
@@ -35,8 +36,9 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     plan_dir = os.path.join(a.out, "plans")
     os.makedirs(plan_dir, exist_ok=True)
-    cmd = [os.path.join(BIN, "run_planner"), "--task", a.task, "--runs", str(a.runs), "--url", a.url,
-           "--model", a.model, "--out", plan_dir] + (["--api"] if a.api else []) + a.planner_arg
+    planner = "run_layered" if a.layered else "run_planner"
+    cmd = [os.path.join(BIN, planner), "--task", a.task, "--runs", str(a.runs), "--url", a.url,
+           "--model", a.model, "--out", plan_dir] + (["--api"] if a.api and not a.layered else []) + a.planner_arg
     run(cmd, os.path.join(a.out, "planner.log"))
     batches = sorted(glob.glob(os.path.join(plan_dir, "2026*")))
     if not batches:
