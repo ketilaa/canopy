@@ -177,6 +177,8 @@ pub struct Implementer {
     retry: RetryMode,
     /// How a step's tests and production code are split into model calls.
     protocol: Protocol,
+    /// Whether a submission whose tests lack the quoted strings of the step's numbered checklist is refused.
+    checklist_audit: bool,
     /// Whether a test failure that is the same number at two scales gets the BigDecimal scale hint.
     scale_hint: bool,
     /// With the scale hint: also say which value the code returned and which the test expected.
@@ -221,6 +223,13 @@ impl Implementer {
     }
 
     /// Chooses what a retry after a failed compile or test shows the model.
+    /// Refuses a submission whose test files do not contain every double-quoted string of the step's numbered items
+    /// (`gates::check_checklist_strings`). Off by default; measured in docs/prompt-and-plan-changelog.md (S5).
+    pub fn with_checklist_audit(mut self, on: bool) -> Self {
+        self.checklist_audit = on;
+        self
+    }
+
     pub fn with_protocol(mut self, protocol: Protocol) -> Self {
         self.protocol = protocol;
         self
@@ -247,6 +256,7 @@ impl Implementer {
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
             protocol: Protocol::default(),
+            checklist_audit: false,
             scale_hint: false,
             scale_hint_sides: false,
         }
@@ -270,6 +280,7 @@ impl Implementer {
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
             protocol: Protocol::default(),
+            checklist_audit: false,
             scale_hint: false,
             scale_hint_sides: false,
         }
@@ -619,6 +630,13 @@ impl Implementer {
                                         step.kind,
                                         self.classpath.as_deref(),
                                     )
+                                })
+                                .and_then(|_| {
+                                    if self.checklist_audit {
+                                        gates::check_checklist_strings(&files, &step.instruction)
+                                    } else {
+                                        Ok(())
+                                    }
                                 }) {
                                 Err(rejection) => (ToolOutcome::Refused, rejection.message()),
                                 Ok(()) => {
@@ -1250,6 +1268,8 @@ mod tests {
     const OLD_GREETER: &str = "package com.example;\npublic class Greeter { }\n";
     const OLD_TEST: &str = "package com.example;\nclass GreeterTest { void t() { new Greeter(); } }\n";
     const NEW_GREETER: &str = "package com.example;\npublic class Greeter { /* trims */ }\n";
+    const NEW_TEST_WITH_MESSAGE: &str =
+        "package com.example;\nclass GreeterTest { void t() { new Greeter(); } void fails() { assertEquals(\"Too late\", e.getMessage()); } }\n";
     const NEW_TEST: &str =
         "package com.example;\nclass GreeterTest { void t() { new Greeter(); } void trims() { new Greeter(); } }\n";
 
@@ -2027,6 +2047,44 @@ mod tests {
         rig.implementer = rig.implementer.with_protocol(Protocol::TestFirst);
         assert_eq!(rig.implementer.run_step(rig.dir.path(), &ticket_step()), StepOutcome::Passed { attempts: 2 });
         assert!(user_prompt(&rig, 3).contains("only the test file"), "attempt 2 asks for the tests again");
+    }
+
+    #[test]
+    fn with_the_checklist_audit_a_submission_whose_tests_lack_the_quoted_strings_is_refused_and_the_corrected_one_is_accepted() {
+        let mut rig = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST_WITH_MESSAGE)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_checklist_audit(true);
+        let mut step = nav_step();
+        step.instruction = "The Greeter should fail.\n1. new Greeter().fail(): throws IllegalStateException with the message \"Too late\"".into();
+        assert_eq!(rig.implementer.run_step(rig.dir.path(), &step), StepOutcome::Passed { attempts: 1 });
+        let log = tool_log(&rig);
+        assert_eq!(log.iter().filter(|(_, o)| *o == ToolOutcome::Refused).count(), 1, "{log:?}");
+        assert!(tool_result(&rig, 2).contains("\"Too late\""), "{}", tool_result(&rig, 2));
+        assert!(on_disk(&rig, GREETER_TEST).contains("Too late"));
+    }
+
+    #[test]
+    fn without_the_checklist_audit_the_same_submission_is_accepted() {
+        let rig = tool_rig(
+            vec![
+                calls(vec![read_file(GREETER), read_file(GREETER_TEST)]),
+                calls(vec![submit(&[(GREETER, NEW_GREETER), (GREETER_TEST, NEW_TEST)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        let mut step = nav_step();
+        step.instruction = "The Greeter should fail.\n1. new Greeter().fail(): throws IllegalStateException with the message \"Too late\"".into();
+        assert_eq!(rig.implementer.run_step(rig.dir.path(), &step), StepOutcome::Passed { attempts: 1 });
     }
 
     #[test]

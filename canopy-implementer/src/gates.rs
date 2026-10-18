@@ -43,6 +43,8 @@ pub enum Rejection {
     ImportsNotDeclared,
     /// Imports the checklist lists that the file does not contain: each file and the qualified name.
     DeclaredImportAbsent(Vec<(String, String)>),
+    /// Quoted strings of the step's numbered checklist that no submitted test file contains.
+    ChecklistStringsAbsent(Vec<String>),
 }
 
 impl Rejection {
@@ -118,6 +120,12 @@ impl Rejection {
                     paths = paths.join(", ")
                 )
             }
+            Rejection::ChecklistStringsAbsent(strings) => format!(
+                "Not submitted. The checklist lists these quoted strings, and none of your test files contains them: {}. \
+                 Write a test for each item that uses them (check an exception's message with assertEquals on getMessage()), \
+                 then call submit_files again with all your files.",
+                strings.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", ")
+            ),
             Rejection::ImportsNotDeclared => {
                 "Not submitted. submit_files needs the `declared_imports` list: for every file, each \
                  class it uses from another package and its qualified name, written before the files. Send it \
@@ -422,6 +430,46 @@ fn string_literals(text: &str) -> Vec<String> {
         escaped = c == '\\' && !escaped;
     }
     literals
+}
+
+/// The double-quoted strings of the numbered items of a step's instruction (lines that start with `1.`, `2.` ...), once each, in order.
+pub fn checklist_strings(instruction: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in instruction.lines().map(str::trim) {
+        let digits = line.chars().take_while(char::is_ascii_digit).count();
+        if digits == 0 || !line[digits..].starts_with(". ") {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('"').collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i % 2 == 1 && !part.is_empty() && !found.iter().any(|f| f == part) {
+                found.push((*part).to_string());
+            }
+        }
+    }
+    found
+}
+
+/// Checks that the quoted strings of the step's numbered checklist appear in the test files of the submission: the mechanical
+/// form of "it must contain one test for each item". A submission without test files, or an instruction without such items,
+/// passes. A deterministic audit: nothing is changed.
+pub fn check_checklist_strings(files: &GeneratedFiles, instruction: &str) -> Result<(), Rejection> {
+    let wanted = checklist_strings(instruction);
+    let tests: Vec<&str> = files
+        .files
+        .iter()
+        .filter(|f| f.path.starts_with("src/test/"))
+        .map(|f| f.content.as_str())
+        .collect();
+    if wanted.is_empty() || tests.is_empty() {
+        return Ok(());
+    }
+    let absent: Vec<String> = wanted.into_iter().filter(|w| !tests.iter().any(|t| t.contains(w.as_str()))).collect();
+    if absent.is_empty() {
+        Ok(())
+    } else {
+        Err(Rejection::ChecklistStringsAbsent(absent))
+    }
 }
 
 /// Checks the model's import checklist against its files: when one is required it must be there, and every
@@ -1471,5 +1519,28 @@ mod tests {
             dir.path(),
         );
         assert!(matches!(r, Err(Rejection::OutOfScope { .. })), "{r:?}");
+    }
+
+    #[test]
+    fn the_quoted_strings_of_the_numbered_items_must_appear_in_the_submitted_tests() {
+        let instruction = "Create X with the message \"Not in items\".\nAdd XTest.\n1. new X(\"A-1\").f(): throws IllegalStateException with the message \"Too late\"\n2. new X(\"A-1\").g(): is 5\n3. new X(\"A-2\").f(): throws IllegalStateException with the message \"Too late\"";
+        assert_eq!(checklist_strings(instruction), ["A-1", "Too late", "A-2"]);
+        let files = |test: &str| GeneratedFiles {
+            files: vec![
+                GeneratedFile { path: GREETER.into(), content: "class Greeter { \"Too late\" }".into() },
+                GeneratedFile { path: GREETER_TEST.into(), content: test.into() },
+            ],
+        };
+        assert_eq!(check_checklist_strings(&files("\"A-1\" \"A-2\" \"Too late\""), instruction), Ok(()));
+        assert_eq!(
+            check_checklist_strings(&files("\"A-1\" \"A-2\""), instruction),
+            Err(Rejection::ChecklistStringsAbsent(vec!["Too late".into()])),
+            "a string in the production file does not count"
+        );
+        let message = Rejection::ChecklistStringsAbsent(vec!["Too late".into()]).message();
+        assert!(message.starts_with("Not submitted.") && message.contains("\"Too late\"") && message.contains("getMessage()"), "{message}");
+        let production_only = GeneratedFiles { files: vec![GeneratedFile { path: GREETER.into(), content: "x".into() }] };
+        assert_eq!(check_checklist_strings(&production_only, instruction), Ok(()), "no test files: not this gate's business");
+        assert_eq!(check_checklist_strings(&files("nothing"), "no numbered items with \"quotes\" here"), Ok(()));
     }
 }

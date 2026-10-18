@@ -446,7 +446,7 @@ fn task(name: &str) -> Result<Task, String> {
 }
 
 const USAGE: &str =
-    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona] [--retry feedback|restart] [--protocol one-answer|test-first] [--scale-hint] [--scale-hint-sides] [--context-extra TEXT]";
+    "usage: run_step [--task story:<name>|create|trim|nav|pasted|hi|naming|vat|naming-planned|vat-planned|widgets-planned|widgets-create|widgets-invalid|order-planned] [--runs N] [--attempts N] [--tag TAG] [--repo PATH] [--url URL] [--model ID] [--out DIR] [--plan FILE] [--no-classpath] [--surfaces] [--prompt current|lean|persona] [--retry feedback|restart] [--protocol one-answer|test-first] [--checklist-audit] [--scale-hint] [--scale-hint-sides] [--context-extra TEXT]";
 
 struct Config {
     task: String,
@@ -470,6 +470,8 @@ struct Config {
     retry: canopy_implementer::implementer::RetryMode,
     /// How a step's tests and production code are split into model calls (`--protocol test-first`).
     protocol: canopy_implementer::implementer::Protocol,
+    /// Refuse a submission whose tests lack the quoted strings of the numbered checklist (`--checklist-audit`).
+    checklist_audit: bool,
     /// Add the BigDecimal scale hint to a test failure that is the same number at two scales (`--scale-hint`).
     scale_hint: bool,
     /// The scale hint also names which value the code returned and which the test expected (`--scale-hint-sides`).
@@ -496,6 +498,7 @@ fn parse_args() -> Result<Config, String> {
         prompt: Default::default(),
         retry: Default::default(),
         protocol: Default::default(),
+        checklist_audit: false,
         scale_hint: false,
         scale_hint_sides: false,
         context_extra: String::new(),
@@ -526,6 +529,7 @@ fn parse_args() -> Result<Config, String> {
             "--scale-hint" => config.scale_hint = true,
             "--scale-hint-sides" => config.scale_hint_sides = true,
             "--context-extra" => config.context_extra = value("--context-extra")?,
+            "--checklist-audit" => config.checklist_audit = true,
             "--protocol" => {
                 let name = value("--protocol")?;
                 config.protocol = canopy_implementer::implementer::Protocol::parse(&name)
@@ -810,7 +814,7 @@ fn run_one(config: &Config, task: &Task, batch_dir: &Path, batch_id: &str, n: u3
         Some(index) => implementer.with_classpath(index.clone()),
         None => implementer,
     };
-    let implementer = implementer.with_prompt(config.prompt).with_retry(config.retry).with_protocol(config.protocol).with_scale_hint(config.scale_hint)
+    let implementer = implementer.with_prompt(config.prompt).with_retry(config.retry).with_protocol(config.protocol).with_checklist_audit(config.checklist_audit).with_scale_hint(config.scale_hint)
     .with_scale_hint_sides(config.scale_hint_sides);
     let implementer = if config.surfaces {
         implementer.with_surfaces(Arc::new(canopy_implementer::surfaces::RootsSurfaces::new("roots")))
