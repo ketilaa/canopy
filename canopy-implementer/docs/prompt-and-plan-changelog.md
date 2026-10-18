@@ -1363,3 +1363,19 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   average, compile failures down (the signatures name what earlier steps made). **Falsified** if any story reaches 5 or more (then step detail alone,
   without fewer steps, is enough), or if the mean steps passed does not rise on at least 3 of the 5 stories (then the design text is not read).
 - **Generality:** `none` yet; five stories, one model.
+
+### S2. The layered Planner (prediction first; built after S0 and S1)
+- **What:** `canopy-planner/src/layered.rs`, `run_layered`, `score_planner.py --layered`. The steps are computed from the story's API input (one step per API
+  line, in order; files from the type names; earlier steps' files read-only); the model fills, per step and in a schema, `rules` (exception types, exact
+  messages, thresholds), `cases` (a call with concrete values and the expected result) and `covers`; the harness renders the instruction from those fields in the
+  shape the B-series and C17 measured: "Create the following in the package ...: <API line>", "Rules: ...", "API the tests use: <this and earlier lines>", "Add <X>Test.
+  It MUST contain one test for each item ... 1. call: expected ...". One retry per step on an unusable answer. Notes (not gates) list the feature's literals that no
+  step contains and the scenarios no step covers. 7 unit tests.
+- **What it assumes, stated because it makes the comparison easier than S0:** the API input already groups the types into steps. I wrote the five `api.txt` files
+  from the hand-written plans, so the number and order of steps equals the hand-written plans' (2 or 3). This tests whether the model can supply the rules and the
+  cases of each step, not whether it can decompose the work. S0 and S1 had to decompose and did it into 7 to 12 steps.
+- **Prediction (before any run):** hidden pass of at least 5 of 10 on each of stock, tickets and order (hand-written L2: 10, 10, 7 to 9) and at least 3 of 10 on
+  shipping (L2 3 to 5); loans anything (L2 0). **Falsified** if stock, tickets or order is 2 or fewer: then the model cannot write the rules and cases even when the
+  decomposition and the API are given, and the hand-written plans' advantage is not shape alone. Also read: the notes (missing literals), since a plan that omits
+  a literal is the failure class of the B-series.
+- **Generality:** `none`; five stories, one model, the API and the grouping given.
