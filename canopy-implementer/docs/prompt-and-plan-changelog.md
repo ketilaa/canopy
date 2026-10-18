@@ -1107,3 +1107,36 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   the narrowest evidence.
 - **Status:** done. X3 not run (prediction: at least 8 of 10; falsified at 5 or fewer, which would mean even a case in the test sentence does not
   move the idiom).
+
+### X3. The boundary as a case in the test sentence (prediction first)
+- **Plan:** `tasks/tickets-exclusive/plan-stated-case.yaml` = X2 (the boundary stated in the rule sentence, 0/10) plus, in step 1's test
+  sentence, the case "validating at exactly 90 minutes after issuedAt (11:30 for a ticket issued at 10:00), which is expired". The rule
+  sentence is unchanged from X2. Same task, hidden test and `--prompt lean`, n=10.
+- **Prediction:** at least 8 of 10 pass the hidden test: the case makes the model write a test at the boundary, the test fails against the
+  inclusive idiom, and the gate and retry move the code. **Falsified** at 5 or fewer: then even a case in the test sentence does not move
+  the idiom, and the retry (or the first attempt) ignores its own failing test.
+- **Generality:** `none`; one story, one rule, one model; one factor against X2.
+- **Result X3 (`tickets-exclusive`, `lean`, n=10, the boundary as a case in the test sentence):** hidden **0/10**, and no run got past step 1:
+  0 of 10 completed, 0 steps passed (10 of 10 step starts failed after 3 attempts). Prediction (at least 8 of 10): **falsified**, and the
+  falsifier (5 or fewer) holds by the widest margin. What changed against X2: the model now writes the boundary test in all 10 runs
+  (`testValidateAtExactly90Minutes`, `assertThrows(IllegalStateException.class, () -> ticket.validate(issuedAt.plusMinutes(90)))`),
+  and writes `if (at.isAfter(issuedAt.plusMinutes(90)))` in the same answer, so its own test fails (`TicketTest.testValidateAtExactly90Minutes:22
+  Expected java.lang.IllegalStateException to be thrown, but nothing was thrown`). The gate catches it, as intended. The repair does not:
+  in the 3 runs whose three calls I compared (02, 03, 05) the retry answers are the same length to the token (1135/1135, 1338/1338,
+  1253/1257 completion tokens) and the `isAfter` line is unchanged in all three attempts of run 02. The retry prompt shows the previous
+  answer, the test name and line, the exception line and the message above; it does not show the test's source line.
+- **Reading:** the model writes a test that contradicts its own code in one answer, so the idiom is not a belief the case could change: the
+  test is derived from the case, the code from the idiom, and the two are generated without reconciling. The feedback names the failing
+  test method but the model does not trace it to the comparison operator; "retries repeat the failed answer" (G1) holds here in the
+  strongest form. This is a recovery problem on the harness side, not a plan-detail problem: the plan now carries the case, the gate
+  catches the disagreement, and the repair rung (restart, retry with feedback) does not resolve it.
+- **Summary X1 to X3 (exclusive hidden boundary, hidden pass of 10):** open wording 0, boundary in the rule sentence 0, boundary as a case in the test
+  sentence 0 (gate failure). Inclusive hidden boundary (T4, same wording as X1): 9. What each rung did: rule prose, no effect; a case in the
+  test sentence, the failure moves from the hidden test to the gate; the retry, no effect.
+- **A candidate for the next rung (a proposal, not implemented; it changes harness code, which needs your go-ahead):** put the failing test's source line in the
+  retry feedback, as a stated fact computed from the surefire output (`TicketTest.java:22: assertThrows(IllegalStateException.class, () ->
+  ticket.validate(issuedAt.plusMinutes(90)))`), so the model can see the call that did not throw next to its own comparison. Prediction:
+  X3 passes at least 6 of 10 with the source line in the feedback; falsified at 2 or fewer. A cheaper variant that needs no code: run
+  X3 with `--context-extra` carrying that sentence as a fact; both are single-factor changes.
+- **Generality:** `one-story`, one rule, one model; 10 of 10 is a strong result for this rule only.
+- **Status:** done.
