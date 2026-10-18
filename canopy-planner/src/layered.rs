@@ -234,6 +234,8 @@ pub struct Notes {
     pub uncovered_scenarios: Vec<String>,
     /// One entry per unit that never got a usable answer.
     pub failed_units: Vec<String>,
+    /// Cases removed after the retry because they used a later unit's type or a number nobody stated: (unit, case, why).
+    pub dropped_cases: Vec<(String, String, String)>,
 }
 
 #[derive(Debug)]
@@ -302,7 +304,8 @@ fn messages(input: &Input, index: usize, previous: Option<(&str, &[String])>) ->
     vec![Message::system(&system()), Message::user(&user)]
 }
 
-fn parse(raw: &str, scenario_ids: &[String], later_types: &[String], allowed: &BTreeSet<String>) -> Result<Draft, Vec<String>> {
+/// The answer as a draft, or what is wrong with its shape.
+fn parse(raw: &str, scenario_ids: &[String]) -> Result<Draft, Vec<String>> {
     let draft: Draft = serde_json::from_str(raw).map_err(|e| vec![format!("the answer is not valid: {e}")])?;
     let mut problems = Vec::new();
     if draft.rules.trim().is_empty() {
@@ -316,28 +319,6 @@ fn parse(raw: &str, scenario_ids: &[String], later_types: &[String], allowed: &B
             problems.push(format!("case {} has an empty call or an empty expected result", i + 1));
         }
     }
-    for (i, case) in draft.cases.iter().enumerate() {
-        let text = format!("{} {} {}", case.given, case.call, case.expected);
-        for t in later_types {
-            if mentions(&text, t) {
-                problems.push(format!(
-                    "case {} uses {t}, which a later unit creates; use only the types of this unit and of the units before it, and leave out what this unit is not responsible for",
-                    i + 1
-                ));
-            }
-        }
-    }
-    for (i, case) in draft.cases.iter().enumerate() {
-        let text = without_quoted(&format!("{} {} {}", case.given, case.call, case.expected));
-        let invented: Vec<String> = numbers_in(&text).into_iter().filter(|n| !allowed.contains(n)).collect();
-        if !invented.is_empty() {
-            problems.push(format!(
-                "case {} uses the number(s) {}, which the story, the scenarios and the API do not state; use only the values they give",
-                i + 1,
-                invented.join(", ")
-            ));
-        }
-    }
     for id in &draft.covers {
         if !scenario_ids.contains(id) {
             problems.push(format!("covers names `{id}`, which is not a scenario"));
@@ -348,6 +329,38 @@ fn parse(raw: &str, scenario_ids: &[String], later_types: &[String], allowed: &B
     } else {
         Err(problems)
     }
+}
+
+/// What is wrong with a single case, by its index: a later unit's type, or a number nobody stated.
+fn case_problems(draft: &Draft, later_types: &[String], allowed: &BTreeSet<String>) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, case) in draft.cases.iter().enumerate() {
+        let full = format!("{} {} {}", case.given, case.call, case.expected);
+        for t in later_types {
+            if mentions(&full, t) {
+                out.push((
+                    i,
+                    format!(
+                        "case {} uses {t}, which a later unit creates; use only the types of this unit and of the units before it, and leave out what this unit is not responsible for",
+                        i + 1
+                    ),
+                ));
+            }
+        }
+        let invented: Vec<String> =
+            numbers_in(&without_quoted(&full)).into_iter().filter(|n| !allowed.contains(n)).collect();
+        if !invented.is_empty() {
+            out.push((
+                i,
+                format!(
+                    "case {} uses the number(s) {}, which the story, the scenarios and the API do not state; use only the values they give",
+                    i + 1,
+                    invented.join(", ")
+                ),
+            ));
+        }
+    }
+    out
 }
 
 /// The numbers a text writes, by value: integers as themselves (so `03` and `3` are one) and decimals as written without trailing zeros.
@@ -414,6 +427,8 @@ pub fn plan_layered(generator: &dyn Generator, input: &Input) -> Layered {
     for (index, unit) in input.api.units.iter().enumerate() {
         let mut previous: Option<(String, Vec<String>)> = None;
         let mut drafted: Option<Draft> = None;
+        // The last answer of the right shape whose cases had problems, kept for the recovery below.
+        let mut flawed: Option<(Draft, Vec<(usize, String)>)> = None;
         let later_types: Vec<String> = input.api.units[index + 1..].iter().flat_map(|u| u.types.clone()).collect();
         for attempt in 1..=MAX_ATTEMPTS {
             let request = StructuredRequest {
@@ -431,13 +446,33 @@ pub fn plan_layered(generator: &dyn Generator, input: &Input) -> Layered {
                         vec!["The answer hit the token limit; write fewer or shorter cases.".to_string()],
                     ))
                 }
-                Ok(r) => match parse(&r.content, &scenario_ids, &later_types, &allowed) {
+                Ok(r) => match parse(&r.content, &scenario_ids) {
                     Ok(draft) => {
-                        drafted = Some(draft);
-                        break;
+                        let problems = case_problems(&draft, &later_types, &allowed);
+                        if problems.is_empty() {
+                            drafted = Some(draft);
+                            break;
+                        }
+                        previous = Some((r.content, problems.iter().map(|(_, p)| p.clone()).collect()));
+                        flawed = Some((draft, problems));
                     }
                     Err(problems) => previous = Some((r.content, problems)),
                 },
+            }
+        }
+        if drafted.is_none() {
+            // Recover by subtraction, not by trusting the model: drop the flagged cases when others remain.
+            if let Some((mut draft, problems)) = flawed {
+                let flagged: BTreeSet<usize> = problems.iter().map(|(i, _)| *i).collect();
+                let kept: Vec<Case> =
+                    draft.cases.iter().enumerate().filter(|(i, _)| !flagged.contains(i)).map(|(_, c)| c.clone()).collect();
+                if !kept.is_empty() {
+                    for (i, why) in &problems {
+                        notes.dropped_cases.push((unit.line.clone(), draft.cases[*i].call.clone(), why.clone()));
+                    }
+                    draft.cases = kept;
+                    drafted = Some(draft);
+                }
             }
         }
         let Some(draft) = drafted else {
@@ -694,5 +729,31 @@ class StockService, constructor StockService(StockRepository): int available(Str
         let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
         assert!(result.plan.is_some());
         assert_eq!(requests.lock().unwrap().len(), 1, "no retry for a new id");
+    }
+
+    #[test]
+    fn a_unit_whose_retry_still_has_flawed_cases_keeps_its_good_cases_and_the_notes_name_what_was_dropped() {
+        let api = parse_api("Package a.b.\nclass A: void f(int n).\n").unwrap();
+        let feature = Feature::parse("Feature: F\n  Scenario: S\n    When 10 units are used\n    Then ok\n").unwrap();
+        let both = |first: &str| answer("r", &[("new A().f(10)", "ok"), (first, "ok")], &["s"]);
+        let (generator, requests) = script(vec![both("new A().f(77)"), both("new A().f(88)")]);
+        let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
+        let plan = result.plan.expect("a plan");
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        let text = &plan.steps[0].instruction;
+        assert!(text.contains("1. new A().f(10): ok") && !text.contains("88") && !text.contains("77"), "{text}");
+        assert_eq!(result.notes.dropped_cases.len(), 1);
+        assert!(result.notes.dropped_cases[0].1.contains("f(88)") && result.notes.dropped_cases[0].2.contains("88"), "{:?}", result.notes);
+        assert!(result.notes.failed_units.is_empty());
+    }
+
+    #[test]
+    fn a_unit_whose_every_case_is_flawed_after_the_retry_leaves_no_plan() {
+        let api = parse_api("Package a.b.\nclass A: void f(int n).\n").unwrap();
+        let feature = Feature::parse("Feature: F\n  Scenario: S\n    When 10 units are used\n    Then ok\n").unwrap();
+        let (generator, _) = script(vec![answer("r", &[("new A().f(77)", "ok")], &["s"]), answer("r", &[("new A().f(78)", "ok")], &["s"])]);
+        let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
+        assert!(result.plan.is_none());
+        assert_eq!(result.notes.failed_units.len(), 1);
     }
 }

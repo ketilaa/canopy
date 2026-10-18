@@ -134,15 +134,17 @@ fn real_main() -> Result<(), String> {
             "missing_literals": result.notes.missing_literals,
             "uncovered_scenarios": result.notes.uncovered_scenarios,
             "failed_units": result.notes.failed_units,
+            "dropped_cases": result.notes.dropped_cases,
             "metrics": metrics.snapshot(),
         });
         std::fs::write(run_dir.join("summary.json"), serde_json::to_string_pretty(&summary).unwrap())
             .map_err(|e| e.to_string())?;
         println!(
-            "  plan: {}; steps: {steps}; missing literals: {:?}; uncovered scenarios: {:?}",
+            "  plan: {}; steps: {steps}; missing literals: {:?}; uncovered scenarios: {:?}; dropped cases: {}",
             result.plan.is_some(),
             result.notes.missing_literals,
-            result.notes.uncovered_scenarios
+            result.notes.uncovered_scenarios,
+            result.notes.dropped_cases.len()
         );
     }
     println!("\n{valid}/{runs} plans. Artifacts: {}", batch_dir.display());

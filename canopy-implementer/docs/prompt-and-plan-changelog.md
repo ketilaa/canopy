@@ -1445,3 +1445,7 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **S3, first start (aborted after stock):** 4 of 10 plans valid, 3 of 10 hidden passes (3 of the 4 plans that came out passed). 6 plans had a unit the Planner could not get past the number check in two
   attempts: the check counted digits inside quoted strings, so a new id such as `"SKU-2"` was refused as an invented number (10 of the 11 refusals read). That is a defect in the check, not a model result, and
   it was fixed (quoted strings are names; a test pins it) before the rerun; the aborted attempt's other stories were not run. The prediction above is unchanged for the rerun.
+- **S3, second start (aborted after 5 stock plans):** with the quoted-string fix the check still refused made-up but harmless inputs (a quantity of 2, 20) and a unit that kept using one made the
+  whole plan invalid (the 5 plans read: 4 refusals of `2`, 2 of `20`). A refusal after the one retry should not discard a unit: the recovery in the project's own escalation order is to verify,
+  then recover deterministically, so after the retry the flagged cases are dropped when others remain and the notes record each dropped case and why (a unit whose every case is flagged still leaves no plan). 15 unit tests.
+  `summary.json` and the console now report dropped cases. The prediction is unchanged for the third start; the number of dropped cases per plan is read alongside the hidden pass.
