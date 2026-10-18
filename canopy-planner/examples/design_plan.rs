@@ -2,7 +2,7 @@
 //! the cases to check, written into the step's instruction (see `design.rs`). The plan and its repository are
 //! read from a planner run directory; `plan.designed.yaml` and `design-notes.txt` are written beside them.
 //!
-//! usage: design_plan [--task widgets|widgets-create|widgets-invalid] [--url URL] [--model ID] [--plan FILE] <planner run dir>...
+//! usage: design_plan [--task widgets|widgets-create|widgets-invalid|order|loans|shipping|stock|tickets] [--url URL] [--model ID] [--plan FILE] <planner run dir>...
 //!        (the plan defaults to plan.rederived.yaml, then plan.yaml)
 use std::path::Path;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use canopy_planner::design::design_plan;
 use canopy_planner::facts::RepoFacts;
 use canopy_planner::gherkin::Feature;
 
-const FEATURES: [(&str, &str); 3] = [
+const FEATURES: [(&str, &str); 8] = [
     (
         "widgets",
         include_str!("../../canopy-implementer/tasks/widgets/feature.feature"),
@@ -28,6 +28,26 @@ const FEATURES: [(&str, &str); 3] = [
     (
         "widgets-invalid",
         include_str!("../../canopy-implementer/tasks/widgets-invalid/feature.feature"),
+    ),
+    (
+        "order",
+        include_str!("../../canopy-implementer/tasks/order/feature.feature"),
+    ),
+    (
+        "loans",
+        include_str!("../../canopy-implementer/tasks/loans/feature.feature"),
+    ),
+    (
+        "shipping",
+        include_str!("../../canopy-implementer/tasks/shipping/feature.feature"),
+    ),
+    (
+        "stock",
+        include_str!("../../canopy-implementer/tasks/stock/feature.feature"),
+    ),
+    (
+        "tickets",
+        include_str!("../../canopy-implementer/tasks/tickets/feature.feature"),
     ),
 ];
 

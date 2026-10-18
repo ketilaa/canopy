@@ -1352,3 +1352,14 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   the story, the feature and the API input: that is the Planner's work for the next increment, scored by this same driver.
 - **Generality:** `multi-story`, one model, one Planner version, the API a given input. n=10 per story, one run per plan.
 - **Status:** done. Baseline for S1 onward.
+
+### S1. The Planner with its existing design pass (prediction first)
+- **What:** `run_planner --api` as in S0, then `design_plan` (the design pass of `canopy-planner/src/design.rs`: one schema-constrained call per step stating
+  its classes, signatures, how a test builds its subject and the cases, rendered into the step's instruction) on each plan; the Implementer runs
+  `plan.designed.yaml`. `score_planner.py --design`; `design_plan` learned the five Java features. Everything else as S0 (n=10 plans per story,
+  one Implementer run per plan, `lean`). The design pass had only been run on the widgets stories before.
+- **Prediction (before the batch):** hidden pass at most 3 of 10 on every story: the pass adds signatures and cases per step but not the rules and
+  does not change the number of steps (7 to 12), the two things the S0 failures point at. Expected movement: steps passed per plan up by about 1 on
+  average, compile failures down (the signatures name what earlier steps made). **Falsified** if any story reaches 5 or more (then step detail alone,
+  without fewer steps, is enough), or if the mean steps passed does not rise on at least 3 of the 5 stories (then the design text is not read).
+- **Generality:** `none` yet; five stories, one model.

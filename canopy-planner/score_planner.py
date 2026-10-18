@@ -4,7 +4,7 @@
 For one task: runs `run_planner` for N plans, then runs `run_step` once on each plan that came out and reads the
 hidden-test verdict. Prints a table and writes results.csv in the output directory.
 
-usage: score_planner.py --task stock --runs 10 --url http://HOST:8080 --out DIR [--api] [--prompt lean]
+usage: score_planner.py --task stock --runs 10 --url http://HOST:8080 --out DIR [--api] [--design] [--prompt lean]
        [--planner-arg ARG]... [--step-arg ARG]...     (extra flags passed through to run_planner / run_step)
 The binaries are the debug examples of the workspace (cargo build --examples first).
 """
@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="Qwen/Qwen3-14B-GGUF:Q4_K_M")
     ap.add_argument("--api", action="store_true")
+    ap.add_argument("--design", action="store_true", help="run the design pass (design_plan) on each plan and score plan.designed.yaml")
     ap.add_argument("--prompt", default="lean")
     ap.add_argument("--planner-arg", action="append", default=[])
     ap.add_argument("--step-arg", action="append", default=[])
@@ -50,7 +51,13 @@ def main():
             meta = json.load(open(os.path.join(rd, "summary.json")))
         except Exception:
             pass
-        row = {"run": n, "valid": os.path.exists(plan), "steps_planned": "", "steps_passed": "", "hidden": "not_run"}
+        if a.design and os.path.exists(plan):
+            run([os.path.join(BIN, "design_plan"), "--task", a.task, "--url", a.url, "--model", a.model, rd],
+                os.path.join(a.out, f"design-{n:02d}.log"))
+            designed = os.path.join(rd, "plan.designed.yaml")
+            if os.path.exists(designed):
+                plan = designed
+        row = {"run": n, "valid": os.path.exists(os.path.join(rd, "plan.yaml")), "steps_planned": "", "steps_passed": "", "hidden": "not_run"}
         if row["valid"]:
             sd = os.path.join(a.out, f"impl-{n:02d}")
             os.makedirs(sd, exist_ok=True)
