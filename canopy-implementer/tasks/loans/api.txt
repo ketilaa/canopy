@@ -1,0 +1,3 @@
+Package no.experis.loans.
+record Loan(String memberId, String isbn, LocalDate borrowedOn, LocalDate dueOn); static Loan Loan.start(String memberId, String isbn, LocalDate borrowedOn); BigDecimal lateFee(LocalDate returnedOn).
+class LoanService, no-argument constructor: Loan borrow(String memberId, String isbn, LocalDate today) throws IllegalStateException; BigDecimal returnBook(String isbn, LocalDate today) throws IllegalArgumentException; int activeLoans(String memberId).

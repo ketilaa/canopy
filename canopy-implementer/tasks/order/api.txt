@@ -1,0 +1,3 @@
+Package no.experis.orders.
+record Order(UUID id, String customerId, String productId, int quantity, BigDecimal total); static Order Order.place(String customerId, String productId, BigDecimal unitPrice, int quantity) throws IllegalArgumentException.
+class OrderService, no-argument constructor: Order placeOrder(String customerId, String productId, BigDecimal unitPrice, int quantity); Optional<Order> findById(UUID id).

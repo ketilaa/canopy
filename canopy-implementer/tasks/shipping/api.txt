@@ -1,0 +1,3 @@
+Package no.experis.shipping.
+enum Zone { DOMESTIC, EUROPE, WORLD } with BigDecimal basePrice().
+class ShippingCalculator, no-argument constructor: BigDecimal cost(Zone zone, int weightGrams, BigDecimal orderValue) throws IllegalArgumentException.

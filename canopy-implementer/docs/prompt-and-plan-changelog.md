@@ -1289,3 +1289,20 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   system rules do not change the result, as on order and on every earlier comparison. **Falsified** if `current` beats `lean` by 3 or more
   on any story (then the lean prompt loses something there), or if `current` is 3 or more below `lean` (then `current` hurts).
 - **Generality:** `none` yet; the first comparison on these three stories; one model.
+- **Result P1-P3 (`--prompt current`, L2 plans, n=10 each; reference `lean` from this session's fresh runs):**
+
+  | Story | `current` hidden | `current` steps first attempt / later / failed | `lean` hidden (steps first attempt) |
+  |---|---|---|---|
+  | loans | 0/10 | 0 / 0 / 10 | 0/10 |
+  | shipping | 1/10 | 11 / 0 / 9 | 3/10 (earlier 5/10) |
+  | stock | 10/10 | 25 / 5 / 0 | 10/10 (30 of 30) |
+
+  Prediction (each within 2 of `lean`: loans 0 to 2, shipping 1 to 5, stock 8 to 10): held on all three. The falsifiers (`current` 3 or more
+  above or below `lean`) did not occur against the fresh reference; against shipping's earlier 5/10 `current` is 4 lower, which is the spread
+  that cell has between batches (5 then 3 for `lean`). The one difference in kind is stock: `current` needed a second or third attempt in 5 of
+  30 steps where `lean` passed 30 of 30 at the first, with the same final result.
+- **Reading:** with this one more comparison on three stories the system prompt (`current` against `lean`) does not change the hidden-test
+  result on any story where it has been compared (order, loans, shipping, stock; tickets and the rest were run `lean` only). G1's prediction 1
+  stands for all four, with the note that `current` costs attempts on stock. Generality: `multi-story` for "the extra system rules do not matter
+  at the hidden-test level", one model, one stack.
+- **Status:** done.

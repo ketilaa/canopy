@@ -78,6 +78,46 @@ const ORDER: Task = Task {
     golden: None,
 };
 
+const LOANS: Task = Task {
+    name: "loans",
+    repo: "java-loans",
+    tag: "baseline-loans-001",
+    feature_path: "tasks/loans/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/loans/feature.feature"),
+    story: "A member can borrow a book for 14 days. A member can have at most 3 active loans, and a book that is on loan cannot be borrowed. Returning a book after its due date costs 0.50 per day late. A returned book can be borrowed again.",
+    golden: Some(include_str!("../../canopy-implementer/tasks/loans/plan-signatures.yaml")),
+};
+
+const SHIPPING: Task = Task {
+    name: "shipping",
+    repo: "java-shipping",
+    tag: "baseline-shipping-001",
+    feature_path: "tasks/shipping/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/shipping/feature.feature"),
+    story: "The shipping cost of a parcel depends on its zone, weight and the order value. Each zone has a base price, heavy parcels cost extra, domestic orders of high value ship free, and weights outside the allowed range are rejected.",
+    golden: Some(include_str!("../../canopy-implementer/tasks/shipping/plan-signatures.yaml")),
+};
+
+const STOCK: Task = Task {
+    name: "stock",
+    repo: "java-stock",
+    tag: "baseline-stock-001",
+    feature_path: "tasks/stock/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/stock/feature.feature"),
+    story: "Stock can be received and reserved per SKU. Reserving takes units out of what is available, more than is available cannot be reserved, an unknown SKU cannot be reserved, and a quantity must be positive.",
+    golden: Some(include_str!("../../canopy-implementer/tasks/stock/plan-signatures.yaml")),
+};
+
+const TICKETS: Task = Task {
+    name: "tickets",
+    repo: "java-tickets",
+    tag: "baseline-tickets-001",
+    feature_path: "tasks/tickets/feature.feature",
+    feature: include_str!("../../canopy-implementer/tasks/tickets/feature.feature"),
+    story: "A single-journey ticket is issued, can be validated within 90 minutes of being issued, and can be cancelled until it is validated. A validated or cancelled ticket cannot be validated again, an expired ticket cannot be validated, and an unknown ticket is rejected.",
+    golden: Some(include_str!("../../canopy-implementer/tasks/tickets/plan-signatures.yaml")),
+};
+
 struct Config {
     task: String,
     runs: u32,
@@ -85,9 +125,11 @@ struct Config {
     url: String,
     model: String,
     out: PathBuf,
+    /// Give the Planner the task's fixed API (`--api`), so that a hidden test written against it can score the plan.
+    api: bool,
 }
 
-const USAGE: &str = "usage: run_planner [--task widgets|widgets-create|widgets-invalid|order] [--runs N] [--tag TAG] [--url URL] [--model ID] [--out DIR]";
+const USAGE: &str = "usage: run_planner [--task widgets|widgets-create|widgets-invalid|order|loans|shipping|stock|tickets] [--runs N] [--tag TAG] [--api] [--url URL] [--model ID] [--out DIR]";
 
 fn parse_args() -> Result<Config, String> {
     let mut config = Config {
@@ -97,6 +139,7 @@ fn parse_args() -> Result<Config, String> {
         url: "http://localhost:8080".into(),
         model: "Qwen/Qwen3-14B-GGUF:Q4_K_M".into(),
         out: Path::new(env!("CARGO_MANIFEST_DIR")).join("runs"),
+        api: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -106,6 +149,7 @@ fn parse_args() -> Result<Config, String> {
             "--task" => config.task = value("--task")?,
             "--runs" => config.runs = value("--runs")?.parse().map_err(|e| format!("--runs: {e}"))?,
             "--tag" => config.tag = Some(value("--tag")?),
+            "--api" => config.api = true,
             "--url" => config.url = value("--url")?,
             "--model" => config.model = value("--model")?,
             "--out" => config.out = value("--out")?.into(),
@@ -121,9 +165,25 @@ fn task(name: &str) -> Result<&'static Task, String> {
         "widgets-create" => Ok(&WIDGETS_CREATE),
         "widgets-invalid" => Ok(&WIDGETS_INVALID),
         "order" => Ok(&ORDER),
+        "loans" => Ok(&LOANS),
+        "shipping" => Ok(&SHIPPING),
+        "stock" => Ok(&STOCK),
+        "tickets" => Ok(&TICKETS),
         other => Err(format!(
-            "unknown task {other}; known: widgets, widgets-create, widgets-invalid, order"
+            "unknown task {other}; known: widgets, widgets-create, widgets-invalid, order, loans, shipping, stock, tickets"
         )),
+    }
+}
+
+/// The API a task's hidden test is written against: names and signatures, no behaviour (the feature carries that).
+fn api_text(task: &str) -> Option<&'static str> {
+    match task {
+        "order" => Some(include_str!("../../canopy-implementer/tasks/order/api.txt")),
+        "loans" => Some(include_str!("../../canopy-implementer/tasks/loans/api.txt")),
+        "shipping" => Some(include_str!("../../canopy-implementer/tasks/shipping/api.txt")),
+        "stock" => Some(include_str!("../../canopy-implementer/tasks/stock/api.txt")),
+        "tickets" => Some(include_str!("../../canopy-implementer/tasks/tickets/api.txt")),
+        _ => None,
     }
 }
 
@@ -261,7 +321,14 @@ fn run_one(
         .golden
         .map(|g| Plan::from_yaml(g).map_err(|e| e.to_string()))
         .transpose()?;
-    let story = task.story.to_string();
+    let story = match (config.api, api_text(task.name)) {
+        (true, Some(api)) => format!(
+            "{}\n\nThe API is fixed by the project; use these names and signatures exactly:\n{}",
+            task.story,
+            api.trim_end()
+        ),
+        _ => task.story.to_string(),
+    };
 
     let metrics = Arc::new(MetricsObserver::new());
     let trace = TraceWriter::create(&run_dir.join("events.jsonl"), &format!("{batch_id}/run-{n:02}"))

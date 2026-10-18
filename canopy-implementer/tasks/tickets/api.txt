@@ -1,0 +1,4 @@
+Package no.experis.tickets.
+enum TicketStatus { ISSUED, VALIDATED, CANCELLED }. record Ticket(String id, LocalDateTime issuedAt, TicketStatus status); Ticket validate(LocalDateTime at) and Ticket cancel() return a new ticket and throw IllegalStateException.
+interface TicketRepository: Optional<Ticket> findById(String id); void save(Ticket ticket). class InMemoryTicketRepository implements it, no-argument constructor.
+class TicketService, constructor TicketService(TicketRepository): Ticket issue(String id, LocalDateTime at); Ticket validate(String id, LocalDateTime at); Ticket cancel(String id); an unknown id throws IllegalArgumentException.
