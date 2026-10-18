@@ -1254,3 +1254,27 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   tickets T3, stock L1+API, shipping B5), each n=10, `test-first` against their one-answer numbers; and order L2 (7/10), where the model's own
   test is sometimes wrong, to see the cost of a test that cannot be repaired.
 - **Status:** queued.
+- **Result X6 (`tickets-exclusive`, `lean`, `--protocol test-first`, X3's plan, n=10):** hidden **0/10**; 0 runs completed, 10 of 10 step starts failed
+  at step 1 after 3 attempts. Prediction (at least 5 of 10): **falsified**, and the falsifier (2 or fewer) holds. 7 runs fail only at
+  `testValidateAtExactly90Minutes ... nothing was thrown` (the comparison line is `at.isAfter(issuedAt.plusMinutes(90))` in 27 of 30
+  production answers); 12 of 20 retries are identical to the failed production answer, 0 recovered.
+- **What the protocol did change:**
+  - The idiom moved once in ten runs: run 08 wrote `issuedAt.plusMinutes(90).isBefore(at) || issuedAt.plusMinutes(90).equals(at)` in attempts 1
+    to 3 (the intended boundary) and then still failed, see next point. So with a fixed, visible test, 1 run in 10 reached the right comparison; one-answer
+    X3, X4 and X5 reached it in 0 of 30 runs.
+  - The cost of fixed tests showed in 3 runs (01, 04, 08): the model's own test is wrong in a second place (`testOriginalTicketUnchanged` calls `cancel()`
+    on a validated ticket and expects no exception; `testCancel` compares a cancelled ticket with an ISSUED one) and the production call cannot repair
+    a wrong test. Run 08 had the right boundary and failed on this alone. In the one-answer protocol the retry could have edited that test.
+- **Reading:** a test the model can see, in a separate call, does not make it reconcile its comparison with the test (27 of 30 answers); the model's
+  idiom for `expired after N minutes` is strong against an explicit assertion in its own context. The protocol is the wrong lever for this rule, and it
+  trades away test repair. It stays behind the flag, default off.
+- **Not run, by the condition set in the entry above:** the regression batches (order L1, tickets T3, stock, shipping B5, order L2); they only matter if the
+  protocol helps. The order L2 prediction stands as a hypothesis: it would lose runs where the model's test is wrong (3 of 10 here show that class).
+- **What is left for this rule (the exact boundary on this model):** (a) accept it as a model limit and say so in the Planner's scoring: such a case is
+  not a plan-detail failure, it is not repaired by retries, a role fact, a diagnostic fact, a case in the test sentence or a two-call protocol, so a plan
+  cannot buy it back; (b) the one lever that acts on the model's output without asking it to reason: sample several production answers against the fixed
+  test and keep the first that passes (best of N, verified by the build, so no trust in the model). Run 08 suggests the right comparison is reachable
+  (about 1 run in 10); a prediction for it: with N=8 production samples per step and the test fixed, X3 passes at least 4 of 10, falsified at 1 or fewer. It
+  costs N calls per failing step. (c) A different model, which this setup cannot test here.
+- **Generality:** `one-story`, one rule, one model; 100 attempts across X3 to X6.
+- **Status:** done. The flag remains, off by default.
