@@ -328,7 +328,7 @@ fn parse(raw: &str, scenario_ids: &[String], later_types: &[String], allowed: &B
         }
     }
     for (i, case) in draft.cases.iter().enumerate() {
-        let text = format!("{} {} {}", case.given, case.call, case.expected);
+        let text = without_quoted(&format!("{} {} {}", case.given, case.call, case.expected));
         let invented: Vec<String> = numbers_in(&text).into_iter().filter(|n| !allowed.contains(n)).collect();
         if !invented.is_empty() {
             problems.push(format!(
@@ -374,6 +374,11 @@ pub fn numbers_in(text: &str) -> BTreeSet<String> {
         }
     }
     found
+}
+
+/// The text with the contents of double-quoted strings taken out: an id such as `"SKU-2"` or a message is a name, not a number.
+fn without_quoted(text: &str) -> String {
+    text.split('"').step_by(2).collect::<Vec<_>>().join(" ")
 }
 
 /// What a case may write: the numbers of the story, the scenarios and the API, and 0 and 1.
@@ -679,5 +684,15 @@ class StockService, constructor StockService(StockRepository): int available(Str
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(requests[1].messages[1].content.contains("uses the number(s) 11"), "{}", requests[1].messages[1].content);
+    }
+
+    #[test]
+    fn digits_inside_quoted_strings_are_names_and_not_numbers_a_case_may_not_invent() {
+        let api = parse_api("Package a.b.\nclass A: void f(String sku).\n").unwrap();
+        let feature = Feature::parse("Feature: F\n  Scenario: S\n    When 10 units of \"SKU-1\" are received\n    Then ok\n").unwrap();
+        let (generator, requests) = script(vec![answer("r", &[("new A().f(\"SKU-2\")", "is \"Unknown SKU 9\"")], &["s"])]);
+        let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
+        assert!(result.plan.is_some());
+        assert_eq!(requests.lock().unwrap().len(), 1, "no retry for a new id");
     }
 }

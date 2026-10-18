@@ -1442,3 +1442,6 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Prediction (before the run):** hidden pass at least 5 of 10 on each of stock, tickets and order, at least 4 on shipping and at least 3 on loans. **Falsified** if stock, tickets or order is 3 or
   fewer. Also read: refusals by the verifier (how often the model uses a number the check refuses) and whether the value check keeps useful items out.
 - **Generality:** `none`; five stories, one model; the API, the unit grouping and the responsibilities are all given.
+- **S3, first start (aborted after stock):** 4 of 10 plans valid, 3 of 10 hidden passes (3 of the 4 plans that came out passed). 6 plans had a unit the Planner could not get past the number check in two
+  attempts: the check counted digits inside quoted strings, so a new id such as `"SKU-2"` was refused as an invented number (10 of the 11 refusals read). That is a defect in the check, not a model result, and
+  it was fixed (quoted strings are names; a test pins it) before the rerun; the aborted attempt's other stories were not run. The prediction above is unchanged for the rerun.
