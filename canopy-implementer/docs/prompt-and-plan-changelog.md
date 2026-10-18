@@ -1306,3 +1306,19 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   stands for all four, with the note that `current` costs attempts on stock. Generality: `multi-story` for "the extra system rules do not matter
   at the hidden-test level", one model, one stack.
 - **Status:** done.
+
+## 2026-10-18: S0, the baseline of the Planner scored by the Implementer (course step 3 starts here)
+
+- **What:** `canopy-planner/score_planner.py` runs `run_planner` for N plans and then `run_step` once on each plan, reading the hidden-test verdict.
+  The Planner is the current master one (draft call, retry, the verifier; no design pass), `--prompt lean` for the Implementer. `run_planner --api`
+  adds the story's fixed API (`tasks/<story>/api.txt`: names and signatures, no behaviour) to the story text, because a plan chooses its own class names
+  and the hidden tests are written against a fixed API; without it a plan could be right and still score zero. The API is therefore an input the
+  Planner is given, as the spec step would give it, not something it derives. Pilot (stock, 2 plans, 2026-10-18): both valid (one on the first draft), 8
+  and 10 steps; the Implementer stopped at step 3 and step 2 (0 of 2); planning took 25 to 50 s per plan.
+- **Stories and reference (hidden pass of 10, hand-written plans, `lean`):** order L2 7 to 9, L1 10; loans L2 0, L1 10; shipping L2 3 to 5, L1 10; stock L2 10;
+  tickets L2 10 (T2), one-line plans (L3) 0 to 1 on all stories.
+- **Prediction (before the batch):** at least 8 of 10 plans valid on every story; hidden pass at most 2 of 10 on every story, i.e. the Planner as built
+  scores at the L3 line and not at the hand-written L2 line, as order did in the earlier Planner batches (plan validity 10/10, Implementer 0 to 1 of 10).
+  **Falsified** if the Planner reaches 5 or more on any story (then the plan shape is not what the hand-written plans add), or if fewer than 6 of 10 plans
+  are valid on any story (then the baseline cannot be read).
+- **Generality:** `none` yet; five stories, one model, one Planner version, n=10 each; the API input is a human decision here.
