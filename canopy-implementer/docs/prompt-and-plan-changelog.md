@@ -1523,4 +1523,13 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Prediction (before the run):** S6a at least 4 of 10 (S4: 0), because the production code is now told which message goes with which condition, as in the hand-written plans that pass 10/10. **Falsified** at 1 or fewer: then the
   list in the instruction does not reach the code as the prose did, or the model's list is wrong, and the mechanism is elsewhere. S6b: no prediction beyond not below S6a.
 - **Generality:** `none`; one story; the responsibilities and API are given.
+- **Result S6a (tickets, layered Planner with the `exceptions` field, no audit, `lean`, n=10 plans):** 10/10 valid, hidden **5/10** (S4: 0; S5, the audit on S4's plans: 1), 6 plans finish all three steps (S4: 5),
+  mean steps passed 2.1. Prediction (at least 4 of 10): **held**; the falsifier (1 or fewer) did not occur. The hand-written prose plan for tickets scores 10/10, so the gap that remains is 5 plans that stop at
+  step 1 to 3 (not read yet). The one change since S4 is the rendered "Throws" list: the mechanism the hand plans have (condition, type and message next to the production code's task) now exists in the Planner's output, and tickets
+  moved from 0 to 5 with it. Not yet done: S6b (the audit on these plans), S6 on the other four stories (a regression check against S4: stock 8, order 5, shipping 5, loans 6), and the read of the 5 failing plans.
+- **State of the Planner scoring after S0 to S6 (hidden passes of 10; same five stories, same Implementer, plans scored once each):** S0 current Planner 0/0/0/1/0 (1 of 50); S1 + design pass 0 of 50; S2 layered 7 of 50; S3 20 of 50; S4 24 of 50
+  (stock 8, tickets 0, order 5, shipping 5, loans 6); tickets with S6 5. Hand-written prose plans: stock 10, tickets 10, order 7 to 9, shipping 3 to 5, loans 0. What the Planner is given and what it derives: the API
+  (names, signatures, exception types), the grouping of types into steps and each unit's responsibility are inputs; the rules, the cases (with values from the feature) and the exceptions are the model's, rendered by the harness
+  in the measured plan shape, with computed facts (decimal scale), deterministic wording (exception and BigDecimal forms), and checks (a case may only use the unit's own types, numbers the story states, and listed messages).
+- **Status:** S6a done; paused here at the maintainer's request.
 
