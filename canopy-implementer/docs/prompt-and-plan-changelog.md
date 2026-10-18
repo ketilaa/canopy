@@ -1140,3 +1140,50 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   X3 with `--context-extra` carrying that sentence as a fact; both are single-factor changes.
 - **Generality:** `one-story`, one rule, one model; 10 of 10 is a strong result for this rule only.
 - **Status:** done.
+
+### X4. X3 with a stated diagnostic fact in the project context (`--context-extra`; prediction first)
+- **Why this variant:** the proposed harness change puts the failing test's source line in the retry feedback; that line differs per run, so
+  `--context-extra` (a static line in the Project section of every step and attempt) cannot carry it. The closest static fact is about how
+  to read the failure, not about this rule: `When a test fails with "Expected X to be thrown, but nothing was thrown", the call in that
+  test did not reach the code that throws: check each comparison on the path of that call, including whether it includes or excludes the
+  value the test uses.` It does not name the operator or this story. Whether it carries the effect of the dynamic line is a separate,
+  later question.
+- **Run:** X3's plan (`plan-stated-case.yaml`), task `tickets-exclusive`, `--prompt lean`, n=10, with `--context-extra` set to that sentence.
+- **Prediction:** at most 3 of 10 pass the hidden test (X3 0/10): a generic sentence in the Project section is a hint, the model already
+  sees the failing test and an identical retry, and a sentence about reading failures is further from the comparison than the failure
+  itself. **Falsified** at 6 or more: a stated diagnostic fact moves the repair, and the dynamic source line is worth building.
+  Also measured: first-attempt gate failures (expected 10 of 10 as X3), retries identical to the failed answer, and any run whose retry changes the comparison.
+- **Generality:** `none`; one story, one rule, one model.
+- **Result X4 (`tickets-exclusive`, `lean`, n=10, X3 plus the diagnostic fact in the project context):** hidden **0/10**; 0 runs completed, 10 of
+  10 step starts failed at step 1 after 3 attempts, all with `testValidateAtExactly90Minutes ... nothing was thrown`. Prediction (at most 3 of 10):
+  held; the falsifier (6 or more) did not occur. The comparison line in the submitted `Ticket.java` is `if (at.isAfter(issuedAt.plusMinutes(90)))`
+  in all 30 attempts (10 runs by 3). The only visible effect of the fact: 5 of 20 retries were byte-identical to the failed answer, against 10 of
+  20 in X3, so the sentence perturbs the retry and does not aim it.
+
+### Repair behaviour, measured over this session's batches (`docs/repair_behaviour.py`; 219 failed attempts that had a retry; this session's batches only, `lean`, one model)
+- **Recovery is rare:** 19 of 219 retries (9%) passed the gate; 0 of 96 retries that were an identical answer did.
+- **By what the retry changed (retries / recovered):** nothing (identical answer) 96 / 0; production code only 7 / 3; test only 25 / 7; both
+  91 / 9. A retry that changes only one side recovers more often (10 of 32, 31%) than one that rewrites both (9 of 91, 10%), although the
+  one-side group is small and selected (the model touches one side when the failure points at it).
+- **By failure class (retries / identical / recovered):** a wrong expected value in the model's own test 179 / 82 / 13; an expected
+  exception that was not thrown 26 / 13 / 1; other 10 / 1 / 5; compile 4 / 0 / 0. Retries that are not identical recover 19 of 123 (15%).
+- **X3 and X4 specifically (the exact-boundary tickets rule):** 40 retries, 0 recovered; in all 60 attempts the comparison line and the
+  exact-90 test case are unchanged. The retry changed other parts of the files (formatting, other tests) but never the one
+  line the failure points at.
+- **What the retry prompt contains** (read in X3 run 02): the task, the previous answer in full (so the failing test's source line is already in the
+  prompt, next to the production code), the test name and line number, the exception message, "your previous answer was undone", and
+  the instruction to fix the errors. So the proposed source-line addition would repeat text already present; X4's static fact moved nothing.
+  The model has the test, the code and the error and does not connect them.
+- **Reading:** repair does not fail for lack of information in the prompt; the model does not reason from the failing assertion to the
+  comparison operator, and 44% of retries change nothing at all. More text of the same kind (a line, a generic sentence) is the wrong
+  lever. Candidates that act differently, in the escalation order: (a) verify and recover deterministically: for `expected exception not
+  thrown`, compute the boundary the test exercises (the call's arguments are in the test source) and report the nearest production
+  conditional that the call passed through, which needs coverage data (a larger harness change); (b) change who decides: tell the retry that the
+  test is the specification, so only production code may change (a stated fact about roles; it changes which file the model edits, which the
+  `production code only` row suggests is the productive one, 3 of 7, and X3 shows the model otherwise edits neither); (c) sample diversity,
+  measured already (restart equals feedback, R3).
+- **Not recommended:** the source-line feedback (information already present, 0 of 40 on the closest static analogue). If a harness change is
+  chosen, (b) first, as a measured prompt-side fact with `--context-extra`: prediction X3 passes 3 of 10 or more; falsified at 1 or fewer.
+- **Generality:** the repair table is `multi-story`, one model, mostly stock/shipping/order/tickets batches of this session, not a fixed sample;
+  X3/X4 are `one-story`. The 'recovered' count treats a retry whose gate passed as recovered, whatever the later steps did.
+- **Status:** done. No harness change made.
