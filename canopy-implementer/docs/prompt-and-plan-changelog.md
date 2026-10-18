@@ -1187,3 +1187,33 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Generality:** the repair table is `multi-story`, one model, mostly stock/shipping/order/tickets batches of this session, not a fixed sample;
   X3/X4 are `one-story`. The 'recovered' count treats a retry whose gate passed as recovered, whatever the later steps did.
 - **Status:** done. No harness change made.
+
+### X5. X3 with "the test is the specification" as a stated fact (`--context-extra`; prediction first)
+- **Fact:** `The tests are the specification: when a test fails, change the production code to satisfy it, not the test.` Static line in the
+  project context; it names no operator, rule or story. It changes who is allowed to be wrong, which X3 and X4 never did (the model edited
+  other parts of its files and left the comparison alone; the `production code only` retries recovered 3 of 7).
+- **Run:** X3's plan (`plan-stated-case.yaml`), task `tickets-exclusive`, `--prompt lean`, n=10.
+- **Prediction:** at least 3 of 10 pass the hidden test (X3 and X4 0/10). **Falsified** at 1 or fewer. Also read: does the comparison line
+  change in any retry, and do any runs instead delete or weaken the exact-90 test (the failure mode a role statement could create)?
+- **Generality:** `none`; one story, one rule, one model. A prompt-side hint with a possible side effect on tests; not a harness change.
+- **Result X5 (`tickets-exclusive`, `lean`, n=10, X3 plus "the tests are the specification"):** hidden **0/10**; 0 runs completed, 10 of 10 step starts
+  failed at step 1 after 3 attempts, every one `testValidateAtExactly90Minutes ... nothing was thrown`. Prediction (at least 3 of 10): **falsified**
+  (falsifier 1 or fewer). The comparison line is `if (at.isAfter(issuedAt.plusMinutes(90)))` in all 30 attempts; 8 of 20 retries were identical
+  answers, 2 changed production code only (0 recovered), 10 changed both. No run weakened the failing test into passing (the same boundary test
+  fails in all 10; a first look counted tests that write the boundary as 11:30 instead of `plusMinutes(90)` as "dropped", which was wrong).
+- **Summary X1 to X5 and what they say (exclusive boundary, hidden pass 0 of 10 each, except T4's inclusive mirror 9/10):** a rule stated in the
+  prose (X2), the case in the test sentence (X3), a diagnostic fact (X4) and a role fact (X5) all left the comparison unchanged in every
+  attempt, 0 of 60 attempts across X3 to X5. Prompt-side levers are exhausted for this rule on this model: the plan can carry the case
+  (X3) and the gate can catch the disagreement, and the model cannot resolve it.
+- **Why the model writes a test that contradicts its own code:** the harness asks for the production code and its test in one answer. The
+  test is derived from the case, the code from the idiom, and nothing makes the code answer to the test; the retry sees the failure but
+  starts again from its previous answer, which contains both. This is a property of the one-answer protocol, not of the wording.
+- **A candidate that changes the protocol (a proposal, not implemented; it needs your go-ahead):** split the step into two calls: first the test
+  file from the case, then the production code with the test file as read-only context and the instruction to make it pass, with the
+  retry editing the production file only (the harness enforces it by restoring the test file, the "make the wrong answer unrepresentable"
+  rung). The legacy red/green TDD loop did this for TypeScript; the isolated Implementer does not. Prediction: X3 passes at least 5 of
+  10 (0/10 now); falsified at 2 or fewer, which would mean the idiom survives even a test it can see in a separate call. A cost to measure
+  at the same time: the number of calls and tokens per step (about 2x), and whether stories that pass today (order L1, stock, tickets T3)
+  still pass 10/10.
+- **Generality:** `one-story`, one rule, one model; but 60 attempts across three variants and an identical outcome.
+- **Status:** done. No harness change made.
