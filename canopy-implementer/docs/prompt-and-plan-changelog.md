@@ -1322,3 +1322,33 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   **Falsified** if the Planner reaches 5 or more on any story (then the plan shape is not what the hand-written plans add), or if fewer than 6 of 10 plans
   are valid on any story (then the baseline cannot be read).
 - **Generality:** `none` yet; five stories, one model, one Planner version, n=10 each; the API input is a human decision here.
+- **Result S0 (current Planner, `--api`, `lean` Implementer, n=10 plans per story, each plan run once through the Implementer):**
+
+  | Story | Valid plans | Hidden pass | Steps planned (mean) | Steps passed before the stop (mean) | Hand-written L2 / L1 |
+  |---|---|---|---|---|---|
+  | stock | 10/10 | **0/10** | 7.2 | 1.6 | 10 / (6 to 10) |
+  | tickets | 9/10 | **0/10** | 11.7 | 3.6 | 10 / 10 |
+  | order | 10/10 | **0/10** | 7.4 | 1.4 | 7 to 9 / 10 |
+  | shipping | 10/10 | **1/10** | 7.3 | 1.9 | 3 to 5 / 10 |
+  | loans | 10/10 | **0/10** | 10.3 | 2.1 | 0 / 10 |
+
+  Prediction (at least 8 of 10 valid on every story; hidden pass at most 2 of 10 on every story): held on both; the falsifiers (5 or more on any
+  story; fewer than 6 valid) did not occur. 1 of 50 plans passed; no plan finished more than 5 steps of its length unless it was the one that
+  scored. The Planner scores at the one-line (L3) level on every story, below the hand-written prose plan on stock, tickets and order, where the
+  prose plan passes 7 to 10 of 10.
+- **Where the Implementer stops (last failure of the 49 failed runs, rough classes from the failure text, one per run):** compile errors 14
+  (a step uses a class, method or constructor that no earlier step made or made differently: `cannot find symbol`, `invalid canonical
+  constructor`); the model's own test throwing an exception its code should not (`Unknown SKU` on a `receive`) 11; a wrong expected value in the
+  model's own test 12 (stock 1, tickets 1, order 5, shipping 5); other 11 (a repeated glob call, a stuck loop). These are the classes of the
+  hand-written one-line plans (G1, B-series), with one addition: steps that exist only because the Planner split the work finely (7 to 12 steps per
+  plan against the hand-written 2 or 3) so there are more places for a missing fact to hurt, and later steps depend on names an earlier step chose.
+- **What the Planner drafts, read in the pilot and in stock's run 01:** an instruction of one sentence per step ("Create a record class StockItem with
+  fields sku (String) and onHand (int)"), the scenarios the step helps with copied into the step's context, no rule text ("creating the item when
+  the sku is new", exact messages, ranges) and no cases with values in the instruction. The service step is planned before the methods that
+  give it behaviour, so its test is written against nothing. The API input did get used (all plans use the right class names), so the names were not what
+  failed.
+- **Reading:** the S0 gap between the Planner and the hand plans is the plan shape found in the B-series (rules in prose, an API line, every named
+  case as a call with its expected result) plus plan size (3 steps against 7 to 12), not names. The pieces are all computable or copyable from
+  the story, the feature and the API input: that is the Planner's work for the next increment, scored by this same driver.
+- **Generality:** `multi-story`, one model, one Planner version, the API a given input. n=10 per story, one run per plan.
+- **Status:** done. Baseline for S1 onward.
