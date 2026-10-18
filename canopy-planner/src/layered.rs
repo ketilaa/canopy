@@ -23,8 +23,11 @@ const MAX_ATTEMPTS: u32 = 2;
 /// One line of the API: the types it declares, in the order they appear.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unit {
+    /// The declarations (types, signatures, the exceptions they throw).
     pub line: String,
     pub types: Vec<String>,
+    /// What this unit owns, from the project's structural decisions (empty when the API does not say).
+    pub responsibility: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,12 +46,16 @@ pub fn parse_api(text: &str) -> Result<Api, String> {
         .filter(|p| !p.is_empty())
         .ok_or_else(|| format!("the first line must be `Package <name>.`, found `{first}`"))?;
     let mut units = Vec::new();
-    for line in lines {
+    for full in lines {
+        let (line, responsibility) = match full.split_once(" Responsibility:") {
+            Some((line, text)) => (line.trim(), text.trim().to_string()),
+            None => (full, String::new()),
+        };
         let types = types_of(line);
         if types.is_empty() {
             return Err(format!("no record, enum, class or interface in `{line}`"));
         }
-        units.push(Unit { line: line.to_string(), types });
+        units.push(Unit { line: line.to_string(), types, responsibility });
     }
     if units.is_empty() {
         return Err("the API declares no unit".into());
@@ -88,6 +95,9 @@ impl Unit {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Case {
+    /// The calls that set up the state the case starts from, on fresh objects; empty when it needs none.
+    #[serde(default)]
+    pub given: String,
     pub call: String,
     pub expected: String,
 }
@@ -114,8 +124,9 @@ pub fn schema(scenario_ids: &[String]) -> Value {
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["call", "expected"],
+                    "required": ["given", "call", "expected"],
                     "properties": {
+                        "given": {"type": "string", "maxLength": 300},
                         "call": {"type": "string", "minLength": 1, "maxLength": 240},
                         "expected": {"type": "string", "minLength": 1, "maxLength": 200}
                     }
@@ -129,20 +140,48 @@ pub fn schema(scenario_ids: &[String]) -> Value {
 const MUST: &str = "It MUST contain one test for each item of this checklist, and you must not leave any item out. \
 Before you submit, go through the list and check that every item has its test.";
 
+/// How many decimals the feature writes its decimal amounts with (the most), when it writes any.
+pub fn decimals_in(feature: &Feature) -> Option<usize> {
+    literals(feature)
+        .iter()
+        .filter_map(|l| {
+            let (whole, fraction) = l.split_once('.')?;
+            (!whole.is_empty() && whole.chars().all(|c| c.is_ascii_digit()) && !fraction.is_empty() && fraction.chars().all(|c| c.is_ascii_digit()))
+                .then_some(fraction.len())
+        })
+        .max()
+}
+
+/// A computed fact for a unit that returns or takes a `BigDecimal`: the scale the scenarios write amounts with.
+pub fn scale_fact(unit: &Unit, decimals: Option<usize>) -> Option<String> {
+    let n = decimals?;
+    unit.line.contains("BigDecimal").then(|| {
+        format!(
+            "Every BigDecimal amount has exactly {n} decimals: build and return it with setScale({n}, RoundingMode.HALF_UP), \
+             and write the expected value in a test with {n} decimals (new BigDecimal(\"{}\")).",
+            format!("{:.*}", n, 1.5)
+        )
+    })
+}
+
 /// The instruction the Implementer reads, written from the fields and nothing else.
-pub fn render_instruction(api: &Api, index: usize, draft: &Draft) -> String {
+pub fn render_instruction(api: &Api, index: usize, draft: &Draft, fact: Option<&str>) -> String {
     let unit = &api.units[index];
     let api_lines: Vec<&str> = api.units[..=index].iter().map(|u| u.line.as_str()).collect();
     let mut out = format!(
-        "Create the following in the package {}: {}\nRules: {}\nAPI the tests use: {}\nAdd {}Test. {MUST}\n",
+        "Create the following in the package {}: {}\nRules: {}\n",
         api.package,
         unit.line,
-        draft.rules.trim(),
-        api_lines.join(" "),
-        unit.primary()
+        draft.rules.trim()
     );
+    if let Some(fact) = fact {
+        out.push_str(&format!("Fact: {fact}\n"));
+    }
+    out.push_str(&format!("API the tests use: {}\nAdd {}Test. {MUST}\n", api_lines.join(" "), unit.primary()));
     for (i, case) in draft.cases.iter().enumerate() {
-        out.push_str(&format!("{}. {}: {}\n", i + 1, case.call.trim().trim_end_matches('.'), case.expected.trim()));
+        let given = case.given.trim().trim_end_matches(';');
+        let lead = if given.is_empty() { String::new() } else { format!("{given}; ") };
+        out.push_str(&format!("{}. {lead}{}: {}\n", i + 1, case.call.trim().trim_end_matches('.'), case.expected.trim()));
     }
     out.trim_end().to_string()
 }
@@ -216,8 +255,9 @@ fn system() -> String {
     "\
 You write one step of an implementation plan for a Java Maven project, from the story, the scenarios and the project's fixed API.
 ALWAYS state the rules of the unit as behaviour: every exception type, every exact message, every threshold and which side of it counts, every default.
-ALWAYS write each case as a call of the API with concrete values and its expected result, the way a test asserts it.
-ALWAYS write a case for every example row of every scenario that concerns this unit, and one case for each side of every threshold or step in the rules.
+ALWAYS write each case as a call of the API with concrete values and its expected result, the way a test asserts it. Each case starts from fresh objects: `given` lists the calls that set up its state (empty when it needs none), `call` is the one call under test, `expected` is its result.
+ALWAYS write only the cases for what this unit is responsible for; a case may use only the types of this unit and of the units before it.
+ALWAYS write a case for every example row of every scenario that concerns this unit, and one case for each side of every threshold or step in the rules, using the values the scenarios state.
 ALWAYS take every rule from the story and the scenarios; NEVER add a rule, a validation or a default that they do not state.
 NEVER restate the API signatures in the rules."
         .to_string()
@@ -227,6 +267,17 @@ fn messages(input: &Input, index: usize, previous: Option<(&str, &[String])>) ->
     let mut user = format!("## Story\n{}\n\n## API (fixed)\n", input.story.trim());
     for unit in &input.api.units {
         user.push_str(&format!("{}\n", unit.line));
+    }
+    let owned: Vec<String> = input
+        .api
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| !u.responsibility.is_empty())
+        .map(|(i, u)| format!("Unit {} ({}): {}", i + 1, u.primary(), u.responsibility))
+        .collect();
+    if !owned.is_empty() {
+        user.push_str(&format!("\n## Who is responsible for what\n{}\n", owned.join("\n")));
     }
     user.push_str("\n## Scenarios\n");
     for id in input.feature.scenario_ids() {
@@ -251,7 +302,7 @@ fn messages(input: &Input, index: usize, previous: Option<(&str, &[String])>) ->
     vec![Message::system(&system()), Message::user(&user)]
 }
 
-fn parse(raw: &str, scenario_ids: &[String]) -> Result<Draft, Vec<String>> {
+fn parse(raw: &str, scenario_ids: &[String], later_types: &[String], allowed: &BTreeSet<String>) -> Result<Draft, Vec<String>> {
     let draft: Draft = serde_json::from_str(raw).map_err(|e| vec![format!("the answer is not valid: {e}")])?;
     let mut problems = Vec::new();
     if draft.rules.trim().is_empty() {
@@ -263,6 +314,28 @@ fn parse(raw: &str, scenario_ids: &[String]) -> Result<Draft, Vec<String>> {
     for (i, case) in draft.cases.iter().enumerate() {
         if case.call.trim().is_empty() || case.expected.trim().is_empty() {
             problems.push(format!("case {} has an empty call or an empty expected result", i + 1));
+        }
+    }
+    for (i, case) in draft.cases.iter().enumerate() {
+        let text = format!("{} {} {}", case.given, case.call, case.expected);
+        for t in later_types {
+            if mentions(&text, t) {
+                problems.push(format!(
+                    "case {} uses {t}, which a later unit creates; use only the types of this unit and of the units before it, and leave out what this unit is not responsible for",
+                    i + 1
+                ));
+            }
+        }
+    }
+    for (i, case) in draft.cases.iter().enumerate() {
+        let text = format!("{} {} {}", case.given, case.call, case.expected);
+        let invented: Vec<String> = numbers_in(&text).into_iter().filter(|n| !allowed.contains(n)).collect();
+        if !invented.is_empty() {
+            problems.push(format!(
+                "case {} uses the number(s) {}, which the story, the scenarios and the API do not state; use only the values they give",
+                i + 1,
+                invented.join(", ")
+            ));
         }
     }
     for id in &draft.covers {
@@ -277,14 +350,66 @@ fn parse(raw: &str, scenario_ids: &[String]) -> Result<Draft, Vec<String>> {
     }
 }
 
+/// The numbers a text writes, by value: integers as themselves (so `03` and `3` are one) and decimals as written without trailing zeros.
+/// A date's year, month and day are three numbers.
+pub fn numbers_in(text: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    for token in text.split(|c: char| !(c.is_ascii_digit() || c == '.')) {
+        let token = token.trim_matches('.');
+        if token.is_empty() || !token.starts_with(|c: char| c.is_ascii_digit()) {
+            continue;
+        }
+        match token.split_once('.') {
+            Some((whole, fraction)) if whole.chars().all(|c| c.is_ascii_digit()) && fraction.chars().all(|c| c.is_ascii_digit()) => {
+                let whole: u64 = whole.parse().unwrap_or(0);
+                let fraction = fraction.trim_end_matches('0');
+                found.insert(if fraction.is_empty() { whole.to_string() } else { format!("{whole}.{fraction}") });
+            }
+            Some(_) => {}
+            None => {
+                if let Ok(n) = token.parse::<u64>() {
+                    found.insert(n.to_string());
+                }
+            }
+        }
+    }
+    found
+}
+
+/// What a case may write: the numbers of the story, the scenarios and the API, and 0 and 1.
+pub fn allowed_numbers(story: &str, feature: &Feature, api: &Api) -> BTreeSet<String> {
+    let mut allowed: BTreeSet<String> = ["0", "1"].iter().map(|s| s.to_string()).collect();
+    allowed.extend(numbers_in(story));
+    for id in feature.scenario_ids() {
+        allowed.extend(numbers_in(&feature.render_scenario(&id).unwrap_or_default()));
+    }
+    for unit in &api.units {
+        allowed.extend(numbers_in(&unit.line));
+        allowed.extend(numbers_in(&unit.responsibility));
+    }
+    allowed
+}
+
+/// Whether `text` contains `word` as a whole identifier.
+fn mentions(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        let before = text[..at].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        let after = text[at + word.len()..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        before && after
+    })
+}
+
 pub fn plan_layered(generator: &dyn Generator, input: &Input) -> Layered {
     let scenario_ids = input.feature.scenario_ids();
+    let decimals = decimals_in(input.feature);
+    let allowed = allowed_numbers(input.story, input.feature, input.api);
     let mut steps: Vec<PlanStep> = Vec::new();
     let mut notes = Notes::default();
     let mut earlier_main: Vec<String> = Vec::new();
     for (index, unit) in input.api.units.iter().enumerate() {
         let mut previous: Option<(String, Vec<String>)> = None;
         let mut drafted: Option<Draft> = None;
+        let later_types: Vec<String> = input.api.units[index + 1..].iter().flat_map(|u| u.types.clone()).collect();
         for attempt in 1..=MAX_ATTEMPTS {
             let request = StructuredRequest {
                 purpose: format!("layered-{}-{attempt}", index + 1),
@@ -301,7 +426,7 @@ pub fn plan_layered(generator: &dyn Generator, input: &Input) -> Layered {
                         vec!["The answer hit the token limit; write fewer or shorter cases.".to_string()],
                     ))
                 }
-                Ok(r) => match parse(&r.content, &scenario_ids) {
+                Ok(r) => match parse(&r.content, &scenario_ids, &later_types, &allowed) {
                     Ok(draft) => {
                         drafted = Some(draft);
                         break;
@@ -319,7 +444,7 @@ pub fn plan_layered(generator: &dyn Generator, input: &Input) -> Layered {
         create.push(unit.test_file(&input.api.package));
         steps.push(PlanStep {
             id: format!("{}-{}", index + 1, kebab(unit.primary())),
-            instruction: render_instruction(input.api, index, &draft),
+            instruction: render_instruction(input.api, index, &draft, scale_fact(unit, decimals).as_deref()),
             kind: StepKind::BehaviorChange,
             context: None,
             scope: Scope { modify: vec![], create, read_only: earlier_main.clone() },
@@ -380,7 +505,7 @@ class StockService, constructor StockService(StockRepository): int available(Str
     fn draft(rules: &str, cases: &[(&str, &str)], covers: &[&str]) -> Draft {
         Draft {
             rules: rules.into(),
-            cases: cases.iter().map(|(c, e)| Case { call: (*c).into(), expected: (*e).into() }).collect(),
+            cases: cases.iter().map(|(c, e)| Case { given: String::new(), call: (*c).into(), expected: (*e).into() }).collect(),
             covers: covers.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -389,7 +514,7 @@ class StockService, constructor StockService(StockRepository): int available(Str
     fn the_instruction_is_written_from_the_fields_with_the_api_so_far_and_numbered_cases() {
         let api = parse_api(STOCK_API).unwrap();
         let d = draft("receive adds to what is there.", &[("new StockItem(\"SKU-1\", 10).receive(5).onHand()", "is 15"), ("receive(0)", "throws IllegalArgumentException")], &[]);
-        let text = render_instruction(&api, 1, &d);
+        let text = render_instruction(&api, 1, &d, None);
         assert!(text.starts_with("Create the following in the package no.experis.stock: interface StockRepository"), "{text}");
         assert!(text.contains("\nRules: receive adds to what is there.\n"), "{text}");
         let api_line = text.lines().find(|l| l.starts_with("API the tests use:")).unwrap();
@@ -429,7 +554,7 @@ class StockService, constructor StockService(StockRepository): int available(Str
     }
 
     fn answer(rules: &str, cases: &[(&str, &str)], covers: &[&str]) -> Result<LlmResponse, LlmError> {
-        let cases: Vec<Value> = cases.iter().map(|(c, e)| json!({"call": c, "expected": e})).collect();
+        let cases: Vec<Value> = cases.iter().map(|(c, e)| json!({"given": "", "call": c, "expected": e})).collect();
         reply(&json!({"rules": rules, "cases": cases, "covers": covers}).to_string())
     }
 
@@ -480,5 +605,79 @@ class StockService, constructor StockService(StockRepository): int available(Str
         assert!(result.plan.is_none());
         assert_eq!(result.notes.failed_units, ["class A: void f()."]);
         assert_eq!(requests.lock().unwrap().len(), 2, "one retry and no more");
+    }
+
+    #[test]
+    fn a_unit_line_may_end_with_what_the_unit_is_responsible_for_and_that_text_is_not_part_of_its_declarations() {
+        let api = parse_api("Package a.b.\nrecord A(int x). Responsibility: the rules of A.\nclass B: void f(). Responsibility: storing As.\n").unwrap();
+        assert_eq!(api.units[0].line, "record A(int x).");
+        assert_eq!(api.units[0].responsibility, "the rules of A.");
+        assert_eq!(api.units[1].types, ["B"]);
+    }
+
+    #[test]
+    fn a_case_that_needs_state_says_so_in_front_of_its_call_and_a_computed_scale_fact_follows_the_rules() {
+        let api = parse_api("Package a.b.\nrecord Money(java.math.BigDecimal amount). BigDecimal total().\n").unwrap();
+        let d = Draft {
+            rules: "r".into(),
+            cases: vec![Case { given: "a.add(10); a.add(5);".into(), call: "a.total()".into(), expected: "is 15.00".into() }],
+            covers: vec![],
+        };
+        let text = render_instruction(&api, 0, &d, Some("Every BigDecimal amount has exactly 2 decimals"));
+        assert!(text.contains("\nRules: r\nFact: Every BigDecimal amount has exactly 2 decimals\nAPI the tests use:"), "{text}");
+        assert!(text.contains("\n1. a.add(10); a.add(5); a.total(): is 15.00"), "{text}");
+    }
+
+    #[test]
+    fn the_scale_fact_is_computed_from_the_feature_and_given_only_to_units_that_handle_a_big_decimal() {
+        let feature = Feature::parse("Feature: F\n  Scenario: S\n    When a total is asked\n    Then it is 486.00 not 5\n").unwrap();
+        assert_eq!(decimals_in(&feature), Some(2));
+        let money = Unit { line: "class C: BigDecimal total().".into(), types: vec!["C".into()], responsibility: String::new() };
+        let plain = Unit { line: "class D: int count().".into(), types: vec!["D".into()], responsibility: String::new() };
+        let fact = scale_fact(&money, Some(2)).unwrap();
+        assert!(fact.contains("exactly 2 decimals") && fact.contains("setScale(2, RoundingMode.HALF_UP)") && fact.contains("1.50"), "{fact}");
+        assert_eq!(scale_fact(&plain, Some(2)), None);
+        assert_eq!(scale_fact(&money, None), None);
+        let none = Feature::parse("Feature: F\n  Scenario: S\n    When x\n    Then 5 units\n").unwrap();
+        assert_eq!(decimals_in(&none), None);
+    }
+
+    #[test]
+    fn the_prompt_names_who_is_responsible_for_what_and_a_case_that_uses_a_later_unit_costs_a_retry() {
+        let api = parse_api("Package a.b.\nrecord A(int x). Responsibility: the rules of A.\nclass B: void f(A a). Responsibility: storing As.\n").unwrap();
+        let feature = Feature::parse(FEATURE).unwrap();
+        let (generator, requests) = script(vec![
+            answer("r", &[("new B().f(null)", "stores nothing")], &[]),
+            answer("r", &[("new A(1).x()", "is 1")], &[]),
+            answer("r2", &[("new B().f(new A(1))", "stores it")], &[]),
+        ]);
+        let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
+        assert!(result.plan.is_some());
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3, "unit 1 was retried once");
+        let first = &requests[0].messages[1].content;
+        assert!(first.contains("## Who is responsible for what\nUnit 1 (A): the rules of A.\nUnit 2 (B): storing As."), "{first}");
+        assert!(requests[1].messages[1].content.contains("uses B, which a later unit creates"), "{}", requests[1].messages[1].content);
+    }
+
+    #[test]
+    fn numbers_are_compared_by_value_and_a_case_with_a_number_nobody_stated_costs_a_retry() {
+        assert_eq!(numbers_in("LocalDate.of(2026, 03, 1) 0.50 5.0 7"), ["0.5", "1", "2026", "3", "5", "7"].iter().map(|s| s.to_string()).collect());
+        let api = parse_api("Package a.b.\nclass A: void f(int n).\n").unwrap();
+        let feature = Feature::parse("Feature: F\n  Scenario: S\n    When 10 units on 2026-03-01 cost 5.00\n    Then 15 are left\n").unwrap();
+        let allowed = allowed_numbers("a story with 99", &feature, &api);
+        for stated in ["0", "1", "10", "2026", "3", "5", "15", "99"] {
+            assert!(allowed.contains(stated), "{stated}: {allowed:?}");
+        }
+        assert!(!allowed.contains("11"));
+        let (generator, requests) = script(vec![
+            answer("r", &[("new A().f(11)", "is 11")], &["s"]),
+            answer("r", &[("new A().f(10)", "is 15")], &["s"]),
+        ]);
+        let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
+        assert!(result.plan.is_some(), "{:?}", result.notes);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].messages[1].content.contains("uses the number(s) 11"), "{}", requests[1].messages[1].content);
     }
 }

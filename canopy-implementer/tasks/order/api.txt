@@ -1,3 +1,3 @@
 Package no.experis.orders.
-record Order(UUID id, String customerId, String productId, int quantity, BigDecimal total); static Order Order.place(String customerId, String productId, BigDecimal unitPrice, int quantity) throws IllegalArgumentException.
-class OrderService, no-argument constructor: Order placeOrder(String customerId, String productId, BigDecimal unitPrice, int quantity); Optional<Order> findById(UUID id).
+record Order(UUID id, String customerId, String productId, int quantity, BigDecimal total); static Order Order.place(String customerId, String productId, BigDecimal unitPrice, int quantity) throws IllegalArgumentException when the quantity is zero or less. Responsibility: one order: its generated id, its total with the volume discount, and the rejected quantities.
+class OrderService, no-argument constructor: Order placeOrder(String customerId, String productId, BigDecimal unitPrice, int quantity); Optional<Order> findById(UUID id). Responsibility: placing orders through Order.place and finding a placed order by its id.

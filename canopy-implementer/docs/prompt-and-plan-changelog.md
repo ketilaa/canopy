@@ -1402,3 +1402,43 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Reading S0 and S1 together:** neither a one-line plan with scenarios in the context (S0) nor the same plan with designed signatures and cases (S1) comes near the
   hand-written prose plans; what differs is what S2 changes: the step structure, rules in the instruction, and every case as a call with its result in a checklist.
 - **Status:** done.
+- **Result S2 (layered Planner, `lean`, n=10 plans per story, 3 or 2 steps per plan; the API files as they were then: signatures and exception types, no responsibilities):**
+
+  | Story | Valid | Hidden pass | Plans that finished all steps | Mean steps passed | S0 | hand-written L2 |
+  |---|---|---|---|---|---|---|
+  | stock | 10/10 | **2/10** | 4 | 2.1 of 3 | 0 | 10 |
+  | tickets | 10/10 | **0/10** | 1 | 0.7 of 3 | 0 | 10 |
+  | order | 10/10 | **3/10** | 3 | 0.8 of 2 | 0 | 7 to 9 |
+  | shipping | 10/10 | **2/10** | 2 | 1.2 of 2 | 1 | 3 to 5 |
+  | loans | 10/10 | **0/10** | 0 | 0.5 of 2 | 0 | 0 |
+
+  7 of 50 (S0: 1 of 50). Prediction (at least 5 of 10 on stock, tickets and order, at least 3 on shipping): **falsified**, and the falsifier (stock, tickets or order at 2 or fewer)
+  holds for stock (2) and tickets (0). Notes: no plan lacks a literal of the feature or a scenario's coverage (the check the notes make), so the plans state every value the feature states.
+- **Why the plans fail (read from the 43 failed runs; the Implementer follows the plan, so these are the plan's errors):**
+  1. **Scale** (order 5 of 7 step-1 failures, shipping 6 of 8, loans 3 of 10): the rules never say that amounts have two decimals; the hand-written plans do
+     (`setScale(2, RoundingMode.HALF_UP)`). It is computable: the scenarios write `486.00`, `0.50`, `4.00`, and the API returns `BigDecimal`.
+  2. **A case that does not belong to the unit** (tickets, 5 of 7 step-1 failures): the model puts the service's "unknown ticket" rule into the record's cases
+     (`new Ticket("T-9", ...).validate(...)` expecting "Unknown ticket"); the Implementer's test for the record then cannot pass. Deciding which unit owns a scenario is a structural decision the
+     hand-written plans make by hand.
+  3. **The model's own expected values are wrong** (loans: `2026-04-02` for a due date that is `2026-03-29`, `activeLoans` expected 2 after returns; stock run 04: a numbered list that carries
+     state from item to item, so `reserve("SKU-1", 11)` is expected to fail at 11 on hand): date and sum arithmetic done in the head, and cases that are not independent.
+  4. **An exception type or condition the API does not decide** (stock: "Insufficient stock" as `IllegalArgumentException` in 3 of the service plans; "available returns null" for an `int`): the API said "throws X or Y"
+     without saying when.
+  The checklist shape itself works where the content is right: the 2 stock passes, 3 order passes and 2 shipping passes are plans whose cases were right.
+- **Status:** done.
+
+### S3. The layered Planner with a computed scale fact, responsibilities, fresh-state cases and value grounding (prediction first)
+- **Changes, each answering one class above (all in `layered.rs`, 12 unit tests; and the five `api.txt` files):**
+  1. (scale) a computed `Fact:` line, rendered after the rules, for units whose API line mentions `BigDecimal`: "Every BigDecimal amount has exactly N decimals: build and return it with
+     setScale(N, RoundingMode.HALF_UP), and write the expected value in a test with N decimals", N from the most decimals the scenarios write.
+  2. (ownership) each API line may end with `Responsibility: ...` (parsed off the declarations, shown to the model as "Who is responsible for what", and told to write only the cases of
+     its own unit); a verifier refuses a case that mentions a type of a later unit, with one retry naming it. The responsibilities are the structural decisions the hand-written plans encode
+     (for example "the record knows nothing about unknown ids"); they are an input here, as the API is.
+  3. (arithmetic and independence) a case is `given` (setup calls on fresh objects), `call`, `expected`, rendered "given; call: expected"; a verifier refuses a case containing a number that the
+     story, the scenarios and the API do not state (0 and 1 allowed; dates compared as numbers), with one retry. The cost is known: boundary items whose values the scenarios do not state (499.99
+     for order, the exact-boundary times) are now refused, so the C15-type coverage items are not available to the Planner in S3.
+  4. (exception contracts) `api.txt` states which exception goes with which condition (stock, loans, shipping, order), and two facts the stock hidden test relies on and the story does not
+     state (the service creates the item for a new sku; `available` is 0 for an unknown sku). That is information given to the Planner that S0 to S2 did not have for stock.
+- **Prediction (before the run):** hidden pass at least 5 of 10 on each of stock, tickets and order, at least 4 on shipping and at least 3 on loans. **Falsified** if stock, tickets or order is 3 or
+  fewer. Also read: refusals by the verifier (how often the model uses a number the check refuses) and whether the value check keeps useful items out.
+- **Generality:** `none`; five stories, one model; the API, the unit grouping and the responsibilities are all given.
