@@ -1278,3 +1278,14 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   costs N calls per failing step. (c) A different model, which this setup cannot test here.
 - **Generality:** `one-story`, one rule, one model; 100 attempts across X3 to X6.
 - **Status:** done. The flag remains, off by default.
+
+## 2026-10-18: P1-P3, the `current` system prompt on loans, shipping and stock (the deferred arms of G1)
+
+- **Why:** G1's prediction 1 (the lean system prompt is not worse than `current`) was compared only on order (L2: 9/10 lean, 8/10 current). The
+  arms for loans, shipping and stock were cut for time. The fresh `lean` L2 numbers are the reference: loans 0/10, shipping 3/10 (5/10 earlier),
+  stock 10/10 (n=10 each; same plans `plan-signatures.yaml`, same binary, same model).
+- **Run:** `--prompt current` on each story's L2 plan, n=10 each.
+- **Prediction (before the runs):** on each story `current` is within 2 runs of `lean` (loans 0 to 2, shipping 1 to 5, stock 8 to 10): the extra
+  system rules do not change the result, as on order and on every earlier comparison. **Falsified** if `current` beats `lean` by 3 or more
+  on any story (then the lean prompt loses something there), or if `current` is 3 or more below `lean` (then `current` hurts).
+- **Generality:** `none` yet; the first comparison on these three stories; one model.
