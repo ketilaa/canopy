@@ -1,3 +1,6 @@
+# Repair behaviour of the Implementer: for every failed attempt that has a retry, compares the retry's submitted files with the
+# failed attempt's and counts recoveries (a retry whose gate passed). usage: python3 repair_behaviour.py <batch dir>...
+# where a batch dir holds 2026-*/run-*/events.jsonl as written by run_step --out.
 import json,glob,sys,collections,re,hashlib
 def attempts(path):
     """per (step, attempt): submitted files {path: content}, outcome (failed stage/feedback or passed)"""
