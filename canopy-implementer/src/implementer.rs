@@ -139,6 +139,29 @@ impl RetryMode {
     }
 }
 
+/// How a step with both test files and production files to create is split into model calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Protocol {
+    /// One answer holds the production code and its tests (the default).
+    #[default]
+    OneAnswer,
+    /// Two calls: the test files first, from the step's task; then the production code, with the test files shown
+    /// read-only. The harness writes the test files itself on every attempt, and a retry redoes only the production
+    /// call, so the tests cannot be changed to fit the code. Measured against `OneAnswer` in
+    /// docs/prompt-and-plan-changelog.md (X6).
+    TestFirst,
+}
+
+impl Protocol {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "one-answer" | "one" => Some(Self::OneAnswer),
+            "test-first" => Some(Self::TestFirst),
+            _ => None,
+        }
+    }
+}
+
 pub struct Implementer {
     mode: Mode,
     build: Box<dyn Build>,
@@ -152,6 +175,8 @@ pub struct Implementer {
     prompt: prompt::PromptVariant,
     /// What a retry after a failed build shows.
     retry: RetryMode,
+    /// How a step's tests and production code are split into model calls.
+    protocol: Protocol,
     /// Whether a test failure that is the same number at two scales gets the BigDecimal scale hint.
     scale_hint: bool,
     /// With the scale hint: also say which value the code returned and which the test expected.
@@ -196,6 +221,11 @@ impl Implementer {
     }
 
     /// Chooses what a retry after a failed compile or test shows the model.
+    pub fn with_protocol(mut self, protocol: Protocol) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
     pub fn with_retry(mut self, retry: RetryMode) -> Self {
         self.retry = retry;
         self
@@ -216,6 +246,7 @@ impl Implementer {
             surfaces: None,
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
+            protocol: Protocol::default(),
             scale_hint: false,
             scale_hint_sides: false,
         }
@@ -238,6 +269,7 @@ impl Implementer {
             surfaces: None,
             prompt: prompt::PromptVariant::default(),
             retry: RetryMode::default(),
+            protocol: Protocol::default(),
             scale_hint: false,
             scale_hint_sides: false,
         }
@@ -253,13 +285,15 @@ impl Implementer {
         }));
 
         let mut previous: Option<Failure> = None;
+        // With `Protocol::TestFirst`: the test files once the first call has produced them.
+        let mut fixed_tests: Option<GeneratedFiles> = None;
         for attempt in 1..=self.max_attempts {
             self.observer.on(&RunEvent::AttemptStarted(AttemptStarted {
                 step_id: step.id.clone(),
                 attempt,
             }));
             let mut snapshot = Snapshot::new(root);
-            match self.attempt(root, step, attempt, previous.as_ref(), &mut snapshot) {
+            match self.attempt(root, step, attempt, previous.as_ref(), &mut snapshot, &mut fixed_tests) {
                 Ok(()) => {
                     self.finish(step, true, attempt, started);
                     return StepOutcome::Passed { attempts: attempt };
@@ -308,13 +342,103 @@ impl Implementer {
         attempt: u32,
         previous: Option<&Failure>,
         snapshot: &mut Snapshot,
+        fixed_tests: &mut Option<GeneratedFiles>,
     ) -> Result<(), Failure> {
+        if let (Protocol::TestFirst, Mode::Tools { generator, limits }) = (self.protocol, &self.mode) {
+            let (tests, production): (Vec<String>, Vec<String>) =
+                step.scope.create.iter().cloned().partition(|p| p.starts_with("src/test/"));
+            if !tests.is_empty() && !production.is_empty() {
+                return self.attempt_test_first(
+                    generator.as_ref(),
+                    limits,
+                    root,
+                    step,
+                    attempt,
+                    previous,
+                    snapshot,
+                    fixed_tests,
+                    (tests, production),
+                );
+            }
+        }
         let files = match &self.mode {
             Mode::Stateless(generator) => self.generate_stateless(generator.as_ref(), root, step, attempt, previous)?,
             Mode::Tools { generator, limits } => {
-                self.generate_with_tools(generator.as_ref(), limits, root, step, attempt, previous)?
+                self.generate_with_tools(generator.as_ref(), limits, root, step, attempt, previous, "")?
             }
         };
+        self.apply_and_check(root, step, attempt, files, snapshot)
+    }
+
+    /// `Protocol::TestFirst`. The first call writes the test files, which are kept for the rest of the step; each attempt
+    /// then writes them to disk itself and asks for the production code against them, so a retry can only change the
+    /// production code. The first call is repeated only while it has produced nothing usable.
+    #[allow(clippy::too_many_arguments)]
+    fn attempt_test_first(
+        &self,
+        generator: &dyn ToolGenerator,
+        limits: &ToolLimits,
+        root: &Path,
+        step: &StepRequest,
+        attempt: u32,
+        previous: Option<&Failure>,
+        snapshot: &mut Snapshot,
+        fixed_tests: &mut Option<GeneratedFiles>,
+        (test_paths, production_paths): (Vec<String>, Vec<String>),
+    ) -> Result<(), Failure> {
+        let had_tests = fixed_tests.is_some();
+        if !had_tests {
+            let tests_step = StepRequest {
+                instruction: format!(
+                    "{}\n\nIn this call write only the test file(s) listed under \"Files to create\". The production code is \
+                     written afterwards, in a separate call, against your tests.",
+                    step.instruction
+                ),
+                scope: Scope { create: test_paths.clone(), modify: vec![], read_only: step.scope.read_only.clone() },
+                ..step.clone()
+            };
+            *fixed_tests =
+                Some(self.generate_with_tools(generator, limits, root, &tests_step, attempt, previous, "-tests")?);
+        }
+        let tests = fixed_tests.clone().expect("the tests exist here");
+        tests
+            .validate_paths()
+            .map_err(|e| failure(Stage::Write, e.to_string(), Some(tests.clone())))?;
+        snapshot.capture(&tests.paths());
+        tests
+            .write_into(root)
+            .map_err(|e| failure(Stage::Write, e.to_string(), Some(tests.clone())))?;
+        self.observer.on(&RunEvent::FilesWritten(FilesWritten {
+            step_id: step.id.clone(),
+            attempt,
+            paths: tests.paths(),
+        }));
+        let production_step = StepRequest {
+            instruction: format!(
+                "{}\n\nThe test file(s) this task asks for already exist and are fixed: they are listed under \"Files for \
+                 reference\". Write only the production code listed under \"Files to create\", so that those tests pass. Do \
+                 not submit a test file.",
+                step.instruction
+            ),
+            // The tests were checked against the task in the first call; this call has no tests of its own to be checked.
+            kind: StepKind::Refactor,
+            scope: Scope {
+                create: production_paths,
+                modify: step.scope.modify.clone(),
+                read_only: step.scope.read_only.iter().cloned().chain(test_paths).collect(),
+            },
+            ..step.clone()
+        };
+        // A failure from an earlier attempt belongs to this call only when the tests were already there then.
+        let files = self.generate_with_tools(
+            generator,
+            limits,
+            root,
+            &production_step,
+            attempt,
+            previous.filter(|_| had_tests),
+            "",
+        )?;
         self.apply_and_check(root, step, attempt, files, snapshot)
     }
 
@@ -363,6 +487,7 @@ impl Implementer {
         step: &StepRequest,
         attempt: u32,
         previous: Option<&Failure>,
+        purpose_tag: &str,
     ) -> Result<GeneratedFiles, Failure> {
         let toolbox = ToolBox::new(root);
         let tools = ToolBox::specs_with(limits.declare_imports);
@@ -379,9 +504,9 @@ impl Implementer {
         let (system, task) = prompt::tool_messages_with(self.prompt, step, &shown, previous);
         let mut messages = vec![ChatMessage::System(system), ChatMessage::User(task)];
         let purpose = if attempt == 1 {
-            "navigate".to_string()
+            format!("navigate{purpose_tag}")
         } else {
-            format!("navigate-retry-{}", attempt - 1)
+            format!("navigate{purpose_tag}-retry-{}", attempt - 1)
         };
         let mut turns = 0;
         let mut tool_calls_made = 0;
@@ -1793,6 +1918,115 @@ mod tests {
             "the read set starts empty again: {}",
             tool_result(&rig, 3)
         );
+    }
+
+    const TICKET: &str = "src/main/java/com/example/Ticket.java";
+    const TICKET_TEST: &str = "src/test/java/com/example/TicketTest.java";
+    const TICKET_TEST_SRC: &str = "package com.example;\nclass TicketTest { void t() { new Ticket(); } }\n";
+    const TICKET_SRC: &str = "package com.example;\npublic class Ticket { }\n";
+    const TICKET_SRC_FIXED: &str = "package com.example;\npublic class Ticket { /* fixed */ }\n";
+
+    fn ticket_step() -> StepRequest {
+        StepRequest {
+            id: "ticket".into(),
+            instruction: "Create Ticket. Add TicketTest.".into(),
+            context: "Build: Maven".into(),
+            files: vec![],
+            kind: StepKind::BehaviorChange,
+            scope: Scope { create: vec![TICKET.into(), TICKET_TEST.into()], ..Scope::default() },
+        }
+    }
+
+    fn user_prompt(rig: &ToolRig, request: usize) -> String {
+        let ChatMessage::User(task) = &rig.requests.lock().unwrap()[request][1] else { panic!() };
+        task.clone()
+    }
+
+    #[test]
+    fn the_test_first_protocol_asks_for_the_tests_and_then_for_the_production_code_with_the_tests_shown_read_only() {
+        let mut rig = tool_rig(
+            vec![
+                calls(vec![submit(&[(TICKET_TEST, TICKET_TEST_SRC)])]),
+                calls(vec![submit(&[(TICKET, TICKET_SRC)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_protocol(Protocol::TestFirst);
+        assert_eq!(rig.implementer.run_step(rig.dir.path(), &ticket_step()), StepOutcome::Passed { attempts: 1 });
+        let first = user_prompt(&rig, 0);
+        assert!(first.contains("only the test file"), "{first}");
+        let creates = |prompt: &str| prompt[prompt.find("## Files to create").unwrap()..].to_string();
+        assert!(creates(&first).contains(TICKET_TEST) && !creates(&first).contains(TICKET), "{first}");
+        let second = user_prompt(&rig, 1);
+        assert!(creates(&second).contains(TICKET) && !creates(&second).contains(TICKET_TEST), "{second}");
+        let reference = &second[second.find("## Files for reference").unwrap()..second.find("## Files to create").unwrap()];
+        assert!(reference.contains(TICKET_TEST) && reference.contains("new Ticket()"), "{second}");
+        assert!(second.contains("fixed"), "{second}");
+        assert_eq!(on_disk(&rig, TICKET), TICKET_SRC);
+        assert_eq!(on_disk(&rig, TICKET_TEST), TICKET_TEST_SRC);
+    }
+
+    #[test]
+    fn a_failed_test_first_attempt_retries_only_the_production_code_and_the_tests_stay_as_written() {
+        let mut rig = tool_rig_with_tests(
+            vec![
+                calls(vec![submit(&[(TICKET_TEST, TICKET_TEST_SRC)])]),
+                calls(vec![submit(&[(TICKET, TICKET_SRC)])]),
+                calls(vec![submit(&[(TICKET, TICKET_SRC_FIXED)])]),
+            ],
+            vec![],
+            vec![outcome(BuildKind::Test, false, "TicketTest.t:3 boom")],
+            2,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_protocol(Protocol::TestFirst);
+        assert_eq!(rig.implementer.run_step(rig.dir.path(), &ticket_step()), StepOutcome::Passed { attempts: 2 });
+        assert_eq!(rig.requests.lock().unwrap().len(), 3, "the tests are not asked for again");
+        let retry = user_prompt(&rig, 2);
+        assert!(retry.contains("Your previous answer") && retry.contains("boom") && retry.contains(TICKET_SRC.trim()), "{retry}");
+        let reference = &retry[retry.find("## Files for reference").unwrap()..retry.find("## Files to create").unwrap()];
+        assert!(reference.contains("new Ticket()"), "the test file is rewritten from what the model wrote: {retry}");
+        assert_eq!(on_disk(&rig, TICKET), TICKET_SRC_FIXED);
+        assert_eq!(on_disk(&rig, TICKET_TEST), TICKET_TEST_SRC);
+    }
+
+    #[test]
+    fn in_the_production_call_a_submission_that_includes_the_test_file_is_refused() {
+        let mut rig = tool_rig(
+            vec![
+                calls(vec![submit(&[(TICKET_TEST, TICKET_TEST_SRC)])]),
+                calls(vec![submit(&[(TICKET, TICKET_SRC), (TICKET_TEST, "package com.example;\nclass TicketTest { }\n")])]),
+                calls(vec![submit(&[(TICKET, TICKET_SRC)])]),
+            ],
+            vec![],
+            1,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_protocol(Protocol::TestFirst);
+        assert_eq!(rig.implementer.run_step(rig.dir.path(), &ticket_step()), StepOutcome::Passed { attempts: 1 });
+        assert_eq!(tool_log(&rig).iter().filter(|(_, o)| *o == ToolOutcome::Refused).count(), 1);
+        assert_eq!(on_disk(&rig, TICKET_TEST), TICKET_TEST_SRC, "the test file is what the first call wrote");
+    }
+
+    #[test]
+    fn a_failed_test_first_attempt_is_undone_including_the_tests_and_the_first_call_is_repeated_when_it_never_succeeded() {
+        let mut rig = tool_rig(
+            vec![
+                prose("I will write the tests."),
+                prose("Still prose."),
+                prose("And more prose."),
+                calls(vec![submit(&[(TICKET_TEST, TICKET_TEST_SRC)])]),
+                calls(vec![submit(&[(TICKET, TICKET_SRC)])]),
+            ],
+            vec![],
+            2,
+            ToolLimits::default(),
+        );
+        rig.implementer = rig.implementer.with_protocol(Protocol::TestFirst);
+        assert_eq!(rig.implementer.run_step(rig.dir.path(), &ticket_step()), StepOutcome::Passed { attempts: 2 });
+        assert!(user_prompt(&rig, 3).contains("only the test file"), "attempt 2 asks for the tests again");
     }
 
     #[test]

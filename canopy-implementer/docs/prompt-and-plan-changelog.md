@@ -1217,3 +1217,40 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   still pass 10/10.
 - **Generality:** `one-story`, one rule, one model; but 60 attempts across three variants and an identical outcome.
 - **Status:** done. No harness change made.
+
+## 2026-10-18: the two-call protocol behind a flag (`--protocol test-first`; harness change, default unchanged)
+
+- **Where:** `Protocol::{OneAnswer, TestFirst}` and `Implementer::with_protocol` in `src/implementer.rs`; `run_step --protocol one-answer|test-first`.
+  `OneAnswer` is the default and is byte-for-byte the earlier behaviour (all earlier tests pass unchanged: 302 in the lib, workspace green).
+- **What `TestFirst` does, for a tool-mode step whose scope creates both a `src/test/` file and a production file (any other step runs as before):**
+  1. Call 1 (`navigate-tests`): the step's own task plus "In this call write only the test file(s) ... The production code is written
+     afterwards, in a separate call, against your tests."; scope create = the test files only; no build.
+  2. The harness keeps the test files for the rest of the step and writes them to disk itself at the start of every attempt (the snapshot
+     removes them when an attempt fails, and they are written again).
+  3. Call 2 (`navigate`, retries `navigate-retry-N`): the task plus "The test file(s) this task asks for already exist and are fixed ... Write
+     only the production code ... Do not submit a test file."; scope create = the production files; the test files are shown under "Files for
+     reference (read-only)"; gates run with `StepKind::Refactor` (the test-coverage gate would otherwise refuse a production-only submission; the
+     tests were gated in call 1). A submission that contains the test file is refused by the scope gate.
+  4. A retry after a failed build redoes call 2 only, with the previous production answer and the failure; call 1 is repeated only while it has
+     produced nothing (a process failure before any tests exist), and then it is shown that failure.
+  Four unit tests pin this (order of calls and what each prompt lists, the retry redoing only the production call with the tests rewritten from
+  what the model wrote, the refusal of a test file in call 2, the first call repeated when it never produced anything).
+- **Known costs and risks (to read in X6):** about twice the calls per step on a first attempt; a wrong test cannot be repaired any more (the
+  order L2 class where the model's own test is wrong would now fail instead of sometimes recovering); the task text still contains "Add
+  TicketTest ..." in call 2, followed by the sentence that the tests exist (a contradiction in the prompt that I could not remove without
+  parsing the instruction; watch for call 2 submissions that include tests); a test that does not compile cannot be corrected by call 2.
+- **Smoke test (1 run, `tickets-exclusive`, `plan-stated-case.yaml`, `lean`):** the mechanism behaves as designed (call 1 wrote the test file,
+  with `testValidateAtExactly90Minutes` asserting an exception at `plusMinutes(90)`; calls 2 to 6 wrote production code only; the harness rewrote the
+  test file before each retry, `restored 3 file(s)` then `wrote src/test/...`). The run failed all 3 attempts on the same boundary: the model
+  saw the exact-90 test as read-only context in the production call and still wrote `at.isAfter(issuedAt.plusMinutes(90))` three times. One
+  run is not a measurement, but it is the outcome the falsifier describes.
+
+### X6. The two-call protocol on X3 (prediction first; not run yet)
+- **Run:** X3's plan, task `tickets-exclusive`, `--prompt lean`, `--protocol test-first`, n=10.
+- **Prediction (written before the smoke test was read, unchanged):** at least 5 of 10 pass (X3 0/10). **Falsified** at 2 or fewer. After the
+  smoke test I expect the falsifier (the idiom survives a test the model can see in a separate call); this entry stays as written so the
+  result can be read against it.
+- **Also to measure with it:** calls and tokens per step (about 2x), and the regression check on stories that pass today (order L1,
+  tickets T3, stock L1+API, shipping B5), each n=10, `test-first` against their one-answer numbers; and order L2 (7/10), where the model's own
+  test is sometimes wrong, to see the cost of a test that cannot be repaired.
+- **Status:** queued.
