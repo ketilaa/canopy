@@ -1449,3 +1449,36 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   whole plan invalid (the 5 plans read: 4 refusals of `2`, 2 of `20`). A refusal after the one retry should not discard a unit: the recovery in the project's own escalation order is to verify,
   then recover deterministically, so after the retry the flagged cases are dropped when others remain and the notes record each dropped case and why (a unit whose every case is flagged still leaves no plan). 15 unit tests.
   `summary.json` and the console now report dropped cases. The prediction is unchanged for the third start; the number of dropped cases per plan is read alongside the hidden pass.
+- **Result S3 (third start; layered Planner with the scale fact, responsibilities, fresh-state cases, the number check with the drop-after-retry recovery; `lean`, n=10 plans per story):**
+
+  | Story | Valid | Hidden pass | Plans finishing all steps | Mean steps passed | S2 | S0 | hand-written L2 / L1 |
+  |---|---|---|---|---|---|---|---|
+  | stock | 10/10 | **7/10** | 8 | 2.8 | 2 | 0 | 10 / 6-10 |
+  | tickets | 10/10 | **0/10** | 2 | 1.9 | 0 | 0 | 10 / 10 |
+  | order | 10/10 | **6/10** | 7 | 1.7 | 3 | 0 | 7-9 / 10 |
+  | shipping | 10/10 | **7/10** | 7 | 1.7 | 2 | 1 | 3-5 / 10 |
+  | loans | 10/10 | **0/10** | 0 | 0.1 | 0 | 0 | 0 / 10 |
+
+  **20 of 50** (S2: 7, S0: 1). Prediction (at least 5 of 10 on stock, tickets and order; at least 4 on shipping; at least 3 on loans): held for stock (7), order (6) and shipping (7); **falsified for
+  tickets (0) and loans (0)**, and the falsifier (stock, tickets or order at 3 or fewer) holds for tickets. Stock, order and shipping now score at or above the hand-written prose plan (stock 7 against 10,
+  order 6 against 7 to 9, shipping 7 against 3 to 5). Every plan is valid; the number check dropped 1.3 cases per stock plan and none elsewhere.
+- **Remaining failure classes (the Implementer follows the plan, so these are about the plan's text and the model's tests):**
+  1. **Tickets, loans: the step's own tests do not check what the plan's items list, and the gate cannot see it.** Tickets: the Planner's cases state the exact messages
+     (`IllegalStateException("Ticket is cancelled")`), the Implementer's TicketTest in the two plans that finished all steps never calls `getMessage` (0 occurrences in the two I read), and its
+     production code uses its own messages (`Ticket is not issued`, `Ticket is already in a different state`), so the step passes its gate and the hidden test fails on the message. The hand-written
+     plans word these items `throws X with the message "Y"`; the Planner wrote `X("Y")`, `X: Y` and other forms.
+  2. **Loans: scale in the Implementer** (8 of 10 plans fail step 1 with `expected 0.00 but was 0`): the Planner's items are right and the computed Fact line is present, and the code still returns
+     `BigDecimal.ZERO` for an on-time return in all three attempts; the hand-written loans checklist writes each expected amount as `new BigDecimal("0.00")`, the Planner a bare `0.00`.
+  3. **Infrastructure:** 2 loans runs lost a call to a server timeout (read as failures here).
+- **Status:** done.
+
+### S4. S3 plus deterministic wording of exception and decimal expectations (prediction first)
+- **Changes (layered.rs, 18 tests):** every exception expectation in a case is rendered `throws <Type> with the message "<message>"` (the form of the passing plans; the model's forms
+  `X("Y")`, `X: Y`, `X is thrown with message 'Y'` are rewritten, an expectation without a message is left); a bare decimal expectation of a unit that handles `BigDecimal` is rendered
+  `new BigDecimal("0.50")`; the system rule asks for the exception form. Nothing else changes.
+- **Prediction:** tickets at least 3 of 10 and loans at least 4 of 10 (both 0 now), stock, order and shipping within 2 of their S3 numbers (7, 6, 7). **Falsified** if tickets or loans stay at 1 or fewer: then
+  the wording of the items is not what the Implementer's tests lose, and the proposal below (a gate that requires the checklist's quoted messages in the step's tests) is the next lever.
+- **A proposal, not built (it is gated Implementer code, so it needs a go-ahead):** after a step's tests pass, check that every double-quoted string in the step's numbered items appears in a test file
+  the step wrote; if not, fail the attempt with feedback naming the missing strings. It is the mechanical form of "It MUST contain one test for each item"; the evidence is tickets S3 above and the
+  earlier tickets/order runs where the model's own tests dropped messages.
+- **Generality:** `none`; five stories; the Planner's inputs (API, responsibilities) are given.

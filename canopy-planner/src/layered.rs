@@ -140,6 +140,54 @@ pub fn schema(scenario_ids: &[String]) -> Value {
 const MUST: &str = "It MUST contain one test for each item of this checklist, and you must not leave any item out. \
 Before you submit, go through the list and check that every item has its test.";
 
+/// Writes an exception expectation the way the plans that pass write it: `throws <Type> with the message "<message>"`.
+/// The model words it many ways (`IllegalStateException("X")`, `IllegalStateException: X`, `... with message 'X'`); a test the
+/// Implementer writes from the looser forms often checks only the type. Text without an exception, or without a message, is left as it is.
+pub fn normalise_expected(expected: &str) -> String {
+    let text = expected.trim();
+    let Some(at) = text.find("Exception") else { return text.to_string() };
+    let start = text[..at].rfind(|c: char| !c.is_alphanumeric()).map_or(0, |i| i + 1);
+    let end = at + "Exception".len();
+    let kind = &text[start..end];
+    let tail = &text[end..];
+    let message = quoted(tail, '"').or_else(|| quoted(tail, '\'')).or_else(|| {
+        let rest = tail.trim_start_matches(|c: char| c == ':' || c == '(' || c.is_whitespace());
+        let rest = rest.strip_prefix("with the message").or_else(|| rest.strip_prefix("with message")).unwrap_or(rest);
+        let rest = rest.trim().trim_end_matches(|c: char| c == ')' || c == '.' || c.is_whitespace());
+        (!rest.is_empty() && !rest.contains(" is thrown") && !rest.starts_with("is ") && !rest.starts_with("thrown")).then(|| rest.to_string())
+    });
+    match message {
+        Some(m) if !m.is_empty() => format!("throws {kind} with the message \"{m}\""),
+        _ => text.to_string(),
+    }
+}
+
+fn quoted(text: &str, quote: char) -> Option<String> {
+    let first = text.find(quote)?;
+    let len = text[first + 1..].find(quote)?;
+    let inner = &text[first + 1..first + 1 + len];
+    (!inner.is_empty()).then(|| inner.to_string())
+}
+
+/// A bare decimal expectation (`0.50`, `is 5.00`) written as the BigDecimal a test compares with: `new BigDecimal("0.50")`.
+/// The plans that pass write it that way; a bare `0.00` leaves the scale to the model's code, which returns `BigDecimal.ZERO`.
+pub fn bigdecimal_expected(expected: &str) -> String {
+    let text = expected.trim().trim_end_matches('.').trim();
+    let bare = ["is ", "== ", "equals ", "="].iter().find_map(|p| text.strip_prefix(p)).unwrap_or(text).trim();
+    let number = bare.strip_prefix('-').unwrap_or(bare);
+    match number.split_once('.') {
+        Some((whole, fraction))
+            if !whole.is_empty()
+                && !fraction.is_empty()
+                && whole.chars().all(|c| c.is_ascii_digit())
+                && fraction.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            format!("new BigDecimal(\"{bare}\")")
+        }
+        _ => expected.trim().to_string(),
+    }
+}
+
 /// How many decimals the feature writes its decimal amounts with (the most), when it writes any.
 pub fn decimals_in(feature: &Feature) -> Option<usize> {
     literals(feature)
@@ -164,6 +212,15 @@ pub fn scale_fact(unit: &Unit, decimals: Option<usize>) -> Option<String> {
     })
 }
 
+fn expected_text(unit: &Unit, expected: &str) -> String {
+    let text = normalise_expected(expected);
+    if unit.line.contains("BigDecimal") {
+        bigdecimal_expected(&text)
+    } else {
+        text
+    }
+}
+
 /// The instruction the Implementer reads, written from the fields and nothing else.
 pub fn render_instruction(api: &Api, index: usize, draft: &Draft, fact: Option<&str>) -> String {
     let unit = &api.units[index];
@@ -181,7 +238,7 @@ pub fn render_instruction(api: &Api, index: usize, draft: &Draft, fact: Option<&
     for (i, case) in draft.cases.iter().enumerate() {
         let given = case.given.trim().trim_end_matches(';');
         let lead = if given.is_empty() { String::new() } else { format!("{given}; ") };
-        out.push_str(&format!("{}. {lead}{}: {}\n", i + 1, case.call.trim().trim_end_matches('.'), case.expected.trim()));
+        out.push_str(&format!("{}. {lead}{}: {}\n", i + 1, case.call.trim().trim_end_matches('.'), expected_text(unit, &case.expected)));
     }
     out.trim_end().to_string()
 }
@@ -257,7 +314,7 @@ fn system() -> String {
     "\
 You write one step of an implementation plan for a Java Maven project, from the story, the scenarios and the project's fixed API.
 ALWAYS state the rules of the unit as behaviour: every exception type, every exact message, every threshold and which side of it counts, every default.
-ALWAYS write each case as a call of the API with concrete values and its expected result, the way a test asserts it. Each case starts from fresh objects: `given` lists the calls that set up its state (empty when it needs none), `call` is the one call under test, `expected` is its result.
+ALWAYS write each case as a call of the API with concrete values and its expected result, the way a test asserts it. Write an exception as: throws <Type> with the message \"<exact message>\". Each case starts from fresh objects: `given` lists the calls that set up its state (empty when it needs none), `call` is the one call under test, `expected` is its result.
 ALWAYS write only the cases for what this unit is responsible for; a case may use only the types of this unit and of the units before it.
 ALWAYS write a case for every example row of every scenario that concerns this unit, and one case for each side of every threshold or step in the rules, using the values the scenarios state.
 ALWAYS take every rule from the story and the scenarios; NEVER add a rule, a validation or a default that they do not state.
@@ -665,7 +722,7 @@ class StockService, constructor StockService(StockRepository): int available(Str
         };
         let text = render_instruction(&api, 0, &d, Some("Every BigDecimal amount has exactly 2 decimals"));
         assert!(text.contains("\nRules: r\nFact: Every BigDecimal amount has exactly 2 decimals\nAPI the tests use:"), "{text}");
-        assert!(text.contains("\n1. a.add(10); a.add(5); a.total(): is 15.00"), "{text}");
+        assert!(text.contains("\n1. a.add(10); a.add(5); a.total(): new BigDecimal(\"15.00\")"), "{text}");
     }
 
     #[test]
@@ -755,5 +812,42 @@ class StockService, constructor StockService(StockRepository): int available(Str
         let result = plan_layered(&generator, &Input { id: "x", story: "s", feature_path: None, feature: &feature, api: &api });
         assert!(result.plan.is_none());
         assert_eq!(result.notes.failed_units.len(), 1);
+    }
+
+    #[test]
+    fn exception_expectations_are_written_the_way_the_passing_plans_write_them() {
+        for (given, wanted) in [
+            ("IllegalStateException(\"Ticket is cancelled\")", "throws IllegalStateException with the message \"Ticket is cancelled\""),
+            ("IllegalStateException: Insufficient stock", "throws IllegalStateException with the message \"Insufficient stock\""),
+            ("IllegalArgumentException is thrown with message 'Quantity must be positive'", "throws IllegalArgumentException with the message \"Quantity must be positive\""),
+            ("throws IllegalStateException with message \"A validated ticket cannot be cancelled\"", "throws IllegalStateException with the message \"A validated ticket cannot be cancelled\""),
+            ("java.lang.IllegalStateException with the message \"X\".", "throws IllegalStateException with the message \"X\""),
+        ] {
+            assert_eq!(normalise_expected(given), wanted, "{given}");
+        }
+        for untouched in ["is 15", "IllegalArgumentException is thrown", "StockItem with onHand 6", "an empty Optional"] {
+            assert_eq!(normalise_expected(untouched), untouched);
+        }
+    }
+
+    #[test]
+    fn the_rendered_checklist_uses_the_normalised_exception_wording() {
+        let api = parse_api("Package a.b.\nclass A: void f().\n").unwrap();
+        let d = draft("r", &[("new A().f()", "IllegalStateException(\"Too late\")")], &[]);
+        assert!(render_instruction(&api, 0, &d, None).contains("1. new A().f(): throws IllegalStateException with the message \"Too late\""));
+    }
+
+    #[test]
+    fn a_bare_decimal_expectation_of_a_unit_that_handles_big_decimals_is_written_as_the_literal_a_test_compares_with() {
+        for (given, wanted) in [("0.00", "new BigDecimal(\"0.00\")"), ("is 5.00.", "new BigDecimal(\"5.00\")"), ("-1.50", "new BigDecimal(\"-1.50\")")] {
+            assert_eq!(bigdecimal_expected(given), wanted, "{given}");
+        }
+        for untouched in ["15", "is 15", "a Loan with dueOn 2026-03-15", "new BigDecimal(\"1.00\")", "5.00 euros"] {
+            assert_eq!(bigdecimal_expected(untouched), untouched);
+        }
+        let api = parse_api("Package a.b.\nclass A: BigDecimal fee().\nclass B: int count().\n").unwrap();
+        let d = draft("r", &[("a.fee()", "0.50")], &[]);
+        assert!(render_instruction(&api, 0, &d, None).contains("1. a.fee(): new BigDecimal(\"0.50\")"));
+        assert!(render_instruction(&api, 1, &d, None).contains("1. a.fee(): 0.50"), "a unit without BigDecimal keeps the text");
     }
 }
