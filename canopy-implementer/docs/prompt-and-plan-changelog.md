@@ -1478,7 +1478,33 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   `new BigDecimal("0.50")`; the system rule asks for the exception form. Nothing else changes.
 - **Prediction:** tickets at least 3 of 10 and loans at least 4 of 10 (both 0 now), stock, order and shipping within 2 of their S3 numbers (7, 6, 7). **Falsified** if tickets or loans stay at 1 or fewer: then
   the wording of the items is not what the Implementer's tests lose, and the proposal below (a gate that requires the checklist's quoted messages in the step's tests) is the next lever.
-- **A proposal, not built (it is gated Implementer code, so it needs a go-ahead):** after a step's tests pass, check that every double-quoted string in the step's numbered items appears in a test file
+- **A proposal (built afterwards, see S5; the audit is within the project's gate-and-retry tier):** after a step's tests pass, check that every double-quoted string in the step's numbered items appears in a test file
   the step wrote; if not, fail the attempt with feedback naming the missing strings. It is the mechanical form of "It MUST contain one test for each item"; the evidence is tickets S3 above and the
   earlier tickets/order runs where the model's own tests dropped messages.
 - **Generality:** `none`; five stories; the Planner's inputs (API, responsibilities) are given.
+- **Result S4 (layered Planner with exception and decimal expectations rendered in the passing plans' forms; `lean`, n=10 plans per story):**
+
+  | Story | Valid | Hidden pass | Plans finishing all steps | Mean steps passed | S3 | S2 |
+  |---|---|---|---|---|---|---|
+  | stock | 10/10 | **8/10** | 8 | 2.7 | 7 | 2 |
+  | tickets | 10/10 | **0/10** | 5 | 1.5 | 0 | 0 |
+  | order | 10/10 | **5/10** | 5 | 1.5 | 6 | 3 |
+  | shipping | 10/10 | **5/10** | 5 | 1.5 | 7 | 2 |
+  | loans | 10/10 | **6/10** | 6 | 1.4 | 0 | 0 |
+
+  **24 of 50** (S3: 20, S2: 7, S0: 1). Prediction: tickets at least 3 (**falsified**: 0), loans at least 4 (**held**: 6, from 0), stock, order and shipping within 2 of S3 (held: 8, 5, 5 against 7, 6, 7).
+  The falsifier (tickets or loans at 1 or fewer) holds for tickets only. Loans moved from 0 to 6 with the `new BigDecimal("0.00")` rendering and nothing else changed, which supports the
+  explanation that the form of the expected literal, not the scale fact, decided it (the hand-written plans that pass write it that way too).
+- **Tickets (5 of 10 plans finish all three steps now, S3: 2; all 5 fail the hidden test):** the Planner's items are right (the exact messages in the form `throws IllegalStateException with the message "Ticket is cancelled"`),
+  and in the two plans I read the Implementer's `TicketTest` contains no `getMessage` and none of the four messages (0 occurrences), while its `Ticket.validate` throws its own message for every status other than ISSUED ("Ticket is already validated").
+  The step passes its gate and fails the hidden test on a message the plan stated. In the 5 plans that fail step 1 the tests do assert a message and the code throws another one (`expected <A validated ticket cannot be cancelled> but was <Ticket is not in ISSUED state>`), three attempts in a row.
+- **Status:** done.
+
+### S5. Tickets with the checklist audit on (paired, same plans; prediction first)
+- **What was built (an audit of the kind the existing gates are, with deterministic feedback; off by default; 3 unit tests):** `gates::check_checklist_strings`, `Implementer::with_checklist_audit`,
+  `run_step --checklist-audit`: a submission whose test files lack any double-quoted string of the step's numbered items (lines starting `1. `, `2. ` ...) is refused in the tool conversation, naming the strings and
+  saying to check an exception's message with `assertEquals` on `getMessage()`; a submission without test files, or an instruction without numbered items, passes.
+- **Run:** the ten S4 tickets plans (each already scored without the audit: 0 of 10 hidden passes), each run once through the Implementer with `--checklist-audit`; same binary otherwise, `lean`.
+- **Prediction (before the run):** at least 4 of 10 pass the hidden test (0 without). **Falsified** at 1 or fewer: then the model does not turn a named missing string into a message assertion that fixes its code, and the failing mechanism is
+  the Implementer's behaviour at the first attempt (its code and test disagree with the plan) rather than something a gate can name.
+- **Generality:** `none`; one story's plans (paired); one model.
