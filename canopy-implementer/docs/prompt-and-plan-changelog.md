@@ -1577,3 +1577,13 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   noise or the commit and the field is cleared; if S4 stays at 17 or more and S6c at 14 or fewer, the drop belongs to the plans. (B) Only if A keeps the drop with the plans: render the Throws block only in units whose API line has a `throws` clause
   (removes the loans leak; Rust derivation of a model field, needs approval).
 - **Status:** S6c done; the field stays in the Planner for now; no change made.
+
+### A1. Re-score the stored S4 and S6c plans of stock, shipping and loans through the current Implementer (prediction first)
+- **Run:** the 30 stored S4 plans and the 30 stored S6c plans (stock, shipping, loans; 10 each), each run once through `run_step` (`lean`, current harness commit `83e5207`), no Planner calls. One process per story (a story's repository is
+  checked out in place, so its runs are sequential), the three stories side by side against `ai-lab:8080`. Plans: S4 `scratchpad/s4/<story>/plans/*/run-NN/plan.yaml`, S6c `scratchpad/s6c/<story>/plans/*/run-NN/plan.yaml` of the sessions that made them.
+- **What it separates:** the Implementer's own run-to-run spread on identical plans, and a change in the harness between S4 (`0f10acd`, dirty tree) and S6c, from a real effect of the `exceptions` field on the plans.
+- **Original scores of the same plans:** S4 stock 8, shipping 5, loans 6 = 19 of 30; S6c stock 5, shipping 2, loans 3 = 10 of 30.
+- **Prediction (before the run):** the drop belongs to the plans: S4 plans re-score at 15 or more of 30 and S6c plans at 14 or fewer, with S4 above S6c by at least 3. I give it about even odds: the pooled p of 0.02 favours it, the leak in the loans plans is a
+  real defect, and a single run per plan is a noisy meter. **Falsified** if the S4 plans re-score at 13 or fewer of 30, or the S6c plans at 17 or more: then the two sets sit in one range and the `exceptions` field is cleared of the stock, shipping and loans drop.
+  In between (14 to 16 / 15 to 16) the result is inconclusive and the spread is the finding.
+- **Generality:** `three-story`, one model, one run per plan, so the totals carry roughly +-3 of sampling noise by themselves.
