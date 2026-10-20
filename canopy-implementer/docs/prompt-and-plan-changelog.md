@@ -1554,3 +1554,10 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Next (option 1, the regression on the other four stories, runs first; the case audit below is a candidate S7):** an audit in the Planner that refuses an item whose setup equals another item's with `Optional.empty()` against a non-empty result, or that contains `now()`,
   through the existing retry-then-drop path. It compares, it does not rewrite. Prediction for S7 on tickets: at least 7 of 10 (S6a: 5). Falsifier: 5 or fewer with no such item left.
 
+
+### S6c. The `exceptions` field on the other four stories (regression check against S4; prediction first)
+- **Run:** stock, order, shipping, loans, 10 new plans each with the current layered Planner (S6, the `exceptions` field), no audit, scored once each through the Implementer, `lean`, one story at a time. Same command shape as S4
+  (`score_planner.py --layered --task <story> --runs 10`). Server `ai-lab:8080`, `Qwen3-14B Q4_K_M`.
+- **Prediction (before the run):** no story is more than 2 below its S4 value (stock 8, order 5, shipping 5, loans 6), so the total of the four is at least 18 of 40 (S4: 24). The field only adds a Throws block where the unit has
+  exceptions; stock and loans have few, so I expect those two to move least. **Falsified** at any story 3 or more below S4, or a total of 17 or fewer: then the field hurts where the exceptions are few or the messages are listed wrongly.
+- **Generality:** `four-story` (the same stories as S4); one model; n=10 plans each, one Implementer run per plan, so a difference of 2 is inside the noise.
