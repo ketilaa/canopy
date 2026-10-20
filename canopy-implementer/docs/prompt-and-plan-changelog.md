@@ -1523,8 +1523,8 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Prediction (before the run):** S6a at least 4 of 10 (S4: 0), because the production code is now told which message goes with which condition, as in the hand-written plans that pass 10/10. **Falsified** at 1 or fewer: then the
   list in the instruction does not reach the code as the prose did, or the model's list is wrong, and the mechanism is elsewhere. S6b: no prediction beyond not below S6a.
 - **Generality:** `none`; one story; the responsibilities and API are given.
-- **Result S6a (tickets, layered Planner with the `exceptions` field, no audit, `lean`, n=10 plans):** 10/10 valid, hidden **5/10** (S4: 0; S5, the audit on S4's plans: 1), 6 plans finish all three steps (S4: 5),
-  mean steps passed 2.1. Prediction (at least 4 of 10): **held**; the falsifier (1 or fewer) did not occur. The hand-written prose plan for tickets scores 10/10, so the gap that remains is 5 plans that stop at
+- **Result S6a (tickets, layered Planner with the `exceptions` field, no audit, `lean`, n=10 plans):** 10/10 valid, hidden **5/10** (S4: 0; S5, the audit on S4's plans: 1), 5 plans finish all three steps (S4: 5),
+  mean steps passed 2.2 (corrected 2026-10-20 from "6 plans, 2.1": results.csv has 5 plans at 3 steps and 22 steps in all). Prediction (at least 4 of 10): **held**; the falsifier (1 or fewer) did not occur. The hand-written prose plan for tickets scores 10/10, so the gap that remains is 5 plans that stop at
   step 1 to 3 (not read yet). The one change since S4 is the rendered "Throws" list: the mechanism the hand plans have (condition, type and message next to the production code's task) now exists in the Planner's output, and tickets
   moved from 0 to 5 with it. Not yet done: S6b (the audit on these plans), S6 on the other four stories (a regression check against S4: stock 8, order 5, shipping 5, loans 6), and the read of the 5 failing plans.
 - **State of the Planner scoring after S0 to S6 (hidden passes of 10; same five stories, same Implementer, plans scored once each):** S0 current Planner 0/0/0/1/0 (1 of 50); S1 + design pass 0 of 50; S2 layered 7 of 50; S3 20 of 50; S4 24 of 50
@@ -1532,4 +1532,25 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   (names, signatures, exception types), the grouping of types into steps and each unit's responsibility are inputs; the rules, the cases (with values from the feature) and the exceptions are the model's, rendered by the harness
   in the measured plan shape, with computed facts (decimal scale), deterministic wording (exception and BigDecimal forms), and checks (a case may only use the unit's own types, numbers the story states, and listed messages).
 - **Status:** S6a done; paused here at the maintainer's request.
+
+### S6a-read. The 5 failing S6a tickets plans, and the assembled prompts of the failing steps (2026-10-20; no model runs)
+- **Method:** run-analyst read of the logs and events of runs 3, 4, 5, 6, 8, then a read of the prompts as sent (system rule, task, retry text) for contradictions, as the principle
+  `docs/principles/read-the-prompt-for-contradictions-first.md` says. Data: the session scratchpad of the S6 batch (not in the repo); the plans are `plans/<batch>/run-NN/plan.yaml`.
+- **The Throws lists were right in all 5 failures.** The remaining failures are not the exceptions mechanism.
+- **Class 1, a plan that contradicts itself or is nondeterministic (runs 3, 4, 5; step 2, the in-memory repository; production code correct in all three):** checklist items 1 and 2 of runs 3 and 5 have the same setup
+  (`repository.save(T-1 ...)`; `findById("T-1")`) and the expected results `Optional.empty()` and `Optional.of(Ticket ...)`. The task text says the test MUST contain one test for each item, so the model writes both, the first can never pass
+  (`expected: <Optional.empty> but was: <Optional[Ticket[id=T-1 ...`), and the same assertion fails on all 3 attempts: the retry shows the failure but the MUST rule forbids the repair. Run 5 also uses an undefined `ticket`. Run 4's cases use
+  `LocalDateTime.now()` four times and compare two tickets built from different `now()` calls. This is the principle's pattern in the Planner's output: two instructions that cannot both hold, plus a "must not leave any item out" that makes
+  the contradiction unrepairable. `planner.log` says "dropped cases: 0" for all ten plans, so no existing check sees it.
+- **Class 2, a wrong case that stops a later step (run 8):** step 1 has the case `validate(10:30)` expecting a ticket whose `issuedAt` is 10:30; the feature says no such thing. Step 1 passes (the test matches the case), step 3's test expects `issuedAt`
+  10:00, and the read-only `Ticket` cannot be fixed. The origin is step 1, the stop is step 3.
+- **Class 3, a stub service (run 6, step 3):** `TicketService` does not use the repository and none of the Throws are implemented; the model's test covers 3 of 9 items. Its Rules say "The service performs the validation and cancellation logic", where
+  passing plan 1 says it relies on the `Ticket` class. One instance; the wording is a hypothesis.
+- **Prompt contradictions found in the assembled prompts:** (1) checklist items against each other, above (runs 3, 5); (2) "MUST contain a test for every item" against a gate that fails on an impossible item (runs 3, 4, 5); (3) in the service step, the Rules
+  and the Throws put the checks in `TicketService` while the read-only `Ticket` (API: "Ticket validate(...) ... throw IllegalStateException") already has them: two owners for one behaviour. None of the system or retry rules contradict each other any more
+  (the retry pair of C1 is gone).
+- **Check on all ten plans (a script over the checklist items, not yet in the Planner):** "same setup, `Optional.empty()` against `Optional.of(...)`" flags plans 3 and 5 and nothing else; "`now()` in an item" flags plan 4 and nothing else. Plans 1 and 7 repeat
+  a setup with two prose expectations ("is stored" and "is updated") and are not flagged by the narrow rule (they pass). Together the two narrow checks name 3 of the 5 failures and no passing plan.
+- **Next (option 1, the regression on the other four stories, runs first; the case audit below is a candidate S7):** an audit in the Planner that refuses an item whose setup equals another item's with `Optional.empty()` against a non-empty result, or that contains `now()`,
+  through the existing retry-then-drop path. It compares, it does not rewrite. Prediction for S7 on tickets: at least 7 of 10 (S6a: 5). Falsifier: 5 or fewer with no such item left.
 
