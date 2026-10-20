@@ -103,8 +103,8 @@ inside a step; number of steps (1, 2, 3, 6) for the same story; whether scenario
 - Not changed on purpose, left for the maintainer to decide: the escalation order and the "propose and stop
   for human approval" rule for code-level changes in `CLAUDE.md` (Principles and Diagnosing Dogfooding
   Runs). They still read as defaults and could narrow the solution space.
-- Knowledge-capture items due from `CLAUDE.md`'s cadence and not yet done: a principle from the retry bug
-  ("a rule that contradicts another injected instruction") and, when step 1 closes, a retrospective.
+- Knowledge-capture items due from `CLAUDE.md`'s cadence and not yet done: a retrospective when step 1 closes. (The principle from
+  the retry bug is written: `docs/principles/read-the-prompt-for-contradictions-first.md`, 2026-10-20.)
 
 ## Update 2026-10-17 (end of day): where the course stands
 
