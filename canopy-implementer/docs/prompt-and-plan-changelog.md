@@ -1587,3 +1587,21 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   real defect, and a single run per plan is a noisy meter. **Falsified** if the S4 plans re-score at 13 or fewer of 30, or the S6c plans at 17 or more: then the two sets sit in one range and the `exceptions` field is cleared of the stock, shipping and loans drop.
   In between (14 to 16 / 15 to 16) the result is inconclusive and the spread is the finding.
 - **Generality:** `three-story`, one model, one run per plan, so the totals carry roughly +-3 of sampling noise by themselves.
+- **Result A1 (the 60 stored plans, one `run_step` each, `lean`, harness `83e5207`, no Planner calls; hidden passes of 10):**
+
+  | Story | S4 plans: original → re-score | S6c plans: original → re-score |
+  |---|---|---|
+  | stock | 8 → 8 | 5 → 6 |
+  | shipping | 5 → 2 | 2 → 5 |
+  | loans | 6 → 7 | 3 → 3 |
+  | total of 30 | 19 → **17** | 10 → **14** |
+
+  Prediction (S4 plans at 15 or more, S6c plans at 14 or fewer, S4 above S6c by at least 3): **held, on the thresholds**, and the falsifier (S4 at 13 or fewer, or S6c at 17 or more) did not occur. The margin is exactly 3 and I do not count it as a finding.
+- **Reading:** the original gap of 9 (24 against 15 on the four stories, 19 against 10 on these three) shrank to 3 (17 against 14) when the same plans were run again. Most of S4 against S6c was Implementer sampling. A difference of 3 in 30 is about
+  one standard error (one-sided p roughly 0.2 to 0.3), so the data are compatible with no effect of the `exceptions` field on these three stories.
+- **The spread on identical plans is large:** shipping's S4 plans scored 5 and then 2, its S6c plans 2 and then 5, a swing of 3 in either direction on one story with the plans unchanged. The same plan can pass or fail between runs; one Implementer run per plan, n=10,
+  cannot resolve a difference of 3 on a single story, which is what S0 to S6 mostly compared. Stock (8 against 6) and loans (7 against 3) keep the direction of the original drop; shipping reverses it.
+- **What this does to earlier numbers:** S3 (20), S4 (24) and S6 (about 20 of 50) are not separable from each other at this noise; the "S-series plateau" stands, and S2 (7) against S3 or S4 (20 to 24) and S0 (1) against everything else remain well outside it.
+  Tickets 0 to 5 (S4 to S6a) was a story with a mechanism (the messages in the plan), and its count is one run per plan too. The loans leak (service exceptions in a unit that throws nothing) is still a defect, not a measured cost.
+- **Consequence for method:** a Planner comparison needs several Implementer runs per plan (3 per plan would put a story's noise near +-1.5 of 10) or n much larger than 10; a single-run total is read as +-3 per story, +-5 per 50.
+- **Status:** A1 done. The `exceptions` field stays; B (render Throws only in units with a `throws` clause) is not justified by this result; S7 and the S-series stay paused as the 2026-10-20 note says.
