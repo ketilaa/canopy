@@ -1561,3 +1561,19 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
 - **Prediction (before the run):** no story is more than 2 below its S4 value (stock 8, order 5, shipping 5, loans 6), so the total of the four is at least 18 of 40 (S4: 24). The field only adds a Throws block where the unit has
   exceptions; stock and loans have few, so I expect those two to move least. **Falsified** at any story 3 or more below S4, or a total of 17 or fewer: then the field hurts where the exceptions are few or the messages are listed wrongly.
 - **Generality:** `four-story` (the same stories as S4); one model; n=10 plans each, one Implementer run per plan, so a difference of 2 is inside the noise.
+- **Result S6c (stock, order, shipping, loans; layered Planner with `exceptions`, no audit, `lean`, n=10 plans each, one Implementer run per plan):** hidden **stock 5, order 5, shipping 2, loans 3 = 15 of 40** (S4: 8, 5, 5, 6 = 24).
+  Prediction (no story more than 2 below S4, total at least 18): **falsified**, and the falsifier holds (three stories 3 below, total 15). Tickets, the story the field was built for, went 0 to 5.
+- **Diagnosis (run-analyst, 2026-10-20; cause not established):**
+  - *Not the content of the Throws blocks:* the messages in every S6c block are the story's own (no invented ones); dropped cases fell on stock (17 to 13) and are unchanged on the others.
+  - *A leak I confirmed in the plan file:* the Throws block lists every exception of the story in each unit, including units that throw nothing. Loans step 1 (`Loan`, which throws nothing) gets the service's three exceptions in 6 of 10 plans,
+    and loans run 06 says in its Rules "The late fee is calculated with no exceptions for any returnedOn date" directly above `Throws: - borrow: throws IllegalStateException ...`: two parts of one instruction that disagree (the contradiction pattern of
+    `docs/principles/read-the-prompt-for-contradictions-first.md`). It does not separate pass from fail on loans (2 of 6 leaking plans passed, 2 of 4 clean ones), so it is a defect, not yet shown to be the cause.
+  - *Failure classes are the same as in S4, somewhat more frequent:* stock, a Mockito import in step 3 (4 runs; mock-style checklist items in 5 of 10 S6c step-3 plans against 2 of 10 in S4; the Implementer's classpath has no Mockito); shipping, step-2 arithmetic (5 runs) and
+    decimal scale (3); loans, scale `0` against `0.00` (5) and one truncation. The loans and shipping checklists are correct, the code is wrong, so the Planner is not the origin there.
+  - *Noise:* one story dropping 3 or more by chance is about 0.11 to 0.13; the three drops pooled give a one-sided Fisher p of about 0.02 (19 against 10 of 30), pooled over all four 0.036. Probably not pure sampling, not decisive.
+  - *Confound:* S4 ran at harness commit `0f10acd` with a dirty tree, S6c at a later commit; the commits between are said to leave defaults unchanged (not verified).
+- **Count of the readings that stay open:** whether the field raises the mock-style share in stock step 3 (2 of 10 to 5 of 10, no mechanism found); whether the S4 plans still score 24 on the current Implementer.
+- **Next candidates:** (A) re-score the stored S4 and S6c plans of stock, shipping and loans through the current Implementer, no Planner calls (about 1 hour, no code change): if the S4 plans re-score at 13 or fewer of 30 or the S6c plans at 17 or more, the drop is Implementer
+  noise or the commit and the field is cleared; if S4 stays at 17 or more and S6c at 14 or fewer, the drop belongs to the plans. (B) Only if A keeps the drop with the plans: render the Throws block only in units whose API line has a `throws` clause
+  (removes the loans leak; Rust derivation of a model field, needs approval).
+- **Status:** S6c done; the field stays in the Planner for now; no change made.
