@@ -137,8 +137,9 @@ pub enum Rule {
     /// Two examples share the same `setup` and `call` but disagree on `expect` — the plan asks for two
     /// outcomes from one action, and no retry can satisfy both. S6a run 3 and run 5.
     DuplicateSetupConflictingExpect,
-    /// An example's `setup`, `call` or `expect` reads the wall clock (`now()` or `LocalDateTime.now`),
-    /// so two "fixed" examples can silently disagree with each other. S6a run 4.
+    /// An example's `setup`, `call` or `expect`, or a method's own `throws[].condition`, reads the
+    /// wall clock (`now()` or `LocalDateTime.now`) instead of a literal or the method's own parameter.
+    /// S6a run 4 (an example); a drafted plan, 2026-10-21 (a throws condition).
     WallClockCall,
     /// A unit that owns no rule (`owns_rules` empty) still has a method that throws — an exception that
     /// belongs to another unit has leaked into this one. S6c's loans `Loan` unit.
@@ -293,6 +294,27 @@ fn wall_clock_call(plan: &StructuredPlan) -> Vec<Issue> {
                         example.id
                     ),
                 });
+            }
+        }
+        // A throws condition is exactly as load-bearing as an example and the same mistake is
+        // possible there: a drafted tickets plan (2026-10-21) wrote the expiry check as
+        // `LocalDateTime.now().isAfter(issuedAt.plusMinutes(90))` instead of comparing against the
+        // method's own `at` parameter — reading the wall clock makes the condition non-deterministic
+        // against a fixed-time hidden test, and no example-level check caught it since the text lives
+        // on the method, not on an example.
+        for method in &unit.methods {
+            for throw in &method.throws {
+                if throw.condition.contains("now()") || throw.condition.contains(".now") {
+                    issues.push(Issue {
+                        rule: Rule::WallClockCall,
+                        unit: Some(unit.id.clone()),
+                        message: format!(
+                            "{}'s condition \"{}\" reads the wall clock; every time must be the method's own parameter",
+                            throws_label(&method.signature),
+                            throw.condition
+                        ),
+                    });
+                }
             }
         }
     }
@@ -732,6 +754,10 @@ in `expect` on every example that calls it.
 ALWAYS list every exception of a method in `throws`, one entry per condition, in the order the method checks \
 them, with the exact message the rules or the decisions give; a method the rules do not say throws anything \
 gets an empty list, never a borrowed exception from elsewhere in the plan.
+ALWAYS write `condition` as a plain clause that reads naturally after \"when\" (\"the ticket is cancelled\", \
+\"at is more than 90 minutes after issuedAt\"), comparing only the method's own parameters and the receiver's \
+fields — never as Java code (`status == CANCELLED`), never wrapped in `if (...)`, and never by reading the \
+system clock.
 NEVER invent a rule, a value or an exception that the rules, the decisions or the scenarios do not state."
         .to_string()
 }
@@ -892,6 +918,18 @@ fn draft_unit(
             ));
             continue;
         }
+        // The schema declares `minItems: 1` on `examples`, but a live run against the real server
+        // showed that constraint is not actually enforced (the model answered `"examples": []` on a
+        // retry — likely dropping every example that the previous attempt's feedback flagged, rather
+        // than fixing them — and got it back unchallenged). A schema fixes shape, not truth: this is
+        // the deterministic check that was missing, found by reading a real run before trusting it.
+        if answer.examples.is_empty() {
+            previous = Some((
+                response.content,
+                vec!["examples must not be empty: give at least one setup/call/expect example".to_string()],
+            ));
+            continue;
+        }
         let candidate = apply_answer(unit, answer);
         let mut candidate_plan = plan.clone();
         candidate_plan.units[index] = candidate.clone();
@@ -1021,6 +1059,43 @@ units:
     #[test]
     fn does_not_flag_a_literal_time() {
         let plan = StructuredPlan::from_yaml(RUN1_CLEAN_REPOSITORY).unwrap();
+        assert_eq!(verify(&plan), vec![]);
+    }
+
+    // --- WallClockCall on a throws condition: a drafted tickets plan, 2026-10-21 ----------------------
+
+    const DRAFTED_2026_10_21_WALL_CLOCK_CONDITION: &str = r#"
+id: tickets
+units:
+  - id: ticket
+    owns_rules: [validation-window]
+    methods:
+      - signature: "Ticket.validate(LocalDateTime at)"
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "Ticket has expired", condition: "if (LocalDateTime.now().isAfter(issuedAt.plusMinutes(90)))"}
+"#;
+
+    #[test]
+    fn flags_a_wall_clock_read_in_a_throws_condition() {
+        let plan = StructuredPlan::from_yaml(DRAFTED_2026_10_21_WALL_CLOCK_CONDITION).unwrap();
+        assert_eq!(only_rule(&verify(&plan)), Rule::WallClockCall);
+    }
+
+    #[test]
+    fn does_not_flag_a_condition_that_compares_the_methods_own_parameter() {
+        let plan = StructuredPlan::from_yaml(
+            r#"
+id: tickets
+units:
+  - id: ticket
+    owns_rules: [validation-window]
+    methods:
+      - signature: "Ticket.validate(LocalDateTime at)"
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "Ticket has expired", condition: "at is more than 90 minutes after issuedAt"}
+"#,
+        )
+        .unwrap();
         assert_eq!(verify(&plan), vec![]);
     }
 
