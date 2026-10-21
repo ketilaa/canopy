@@ -384,12 +384,55 @@ fn preserved_field_contradicted(plan: &StructuredPlan) -> Vec<Issue> {
     issues
 }
 
+/// Identifiers a Java-style local declaration in `setup` introduces (`Ticket ticket = new Ticket(...)`
+/// or `Ticket ticket = new Ticket(...).cancel()`): a type-looking word (starts uppercase) immediately
+/// followed by a value-looking word (starts lowercase) immediately followed by `=` (not `==`).
+///
+/// Added after a live drafting run (2026-10-21): the model consistently wrote this declaration in
+/// `setup` but did not also restate the name in the separate `defines` field — a fact the declaration
+/// already states, which the model should not have to repeat. `defines` stays as a supplementary,
+/// explicit override for a `setup` that introduces a name without this declaration shape (uncommon;
+/// every case in this file's own fixtures so far fits the declaration pattern).
+fn declared_in_setup(setup: &str) -> Vec<String> {
+    let mut words: Vec<(&str, usize)> = Vec::new(); // (word, index right after the word)
+    let bytes = setup.as_bytes();
+    let is_ident = |c: u8| (c as char).is_alphanumeric() || c == b'_';
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_ident(bytes[i]) {
+            let start = i;
+            while i < bytes.len() && is_ident(bytes[i]) {
+                i += 1;
+            }
+            words.push((&setup[start..i], i));
+        } else {
+            i += 1;
+        }
+    }
+    let mut declared = Vec::new();
+    for pair in words.windows(2) {
+        let (type_word, _) = pair[0];
+        let (name_word, name_end) = pair[1];
+        if type_word.starts_with(|c: char| c.is_ascii_uppercase())
+            && name_word.starts_with(|c: char| c.is_ascii_lowercase())
+        {
+            let after = setup[name_end..].trim_start();
+            if after.starts_with('=') && !after.starts_with("==") {
+                declared.push(name_word.to_string());
+            }
+        }
+    }
+    declared
+}
+
 fn undefined_identifier(plan: &StructuredPlan) -> Vec<Issue> {
     let mut issues = Vec::new();
     for unit in &plan.units {
         for example in &unit.examples {
             let mut known: Vec<&str> = KNOWN_RECEIVERS.to_vec();
             known.extend(example.defines.iter().map(|s| s.as_str()));
+            let declared = declared_in_setup(&example.setup);
+            known.extend(declared.iter().map(|s| s.as_str()));
             // `setup` is scanned too: the real failure (S6a run 5) is an identifier used inside
             // `setup` itself (`repository.save(ticket)`) that nothing ever constructs.
             let mut values = identifiers_as_values(&example.setup);
@@ -1248,6 +1291,44 @@ units:
     fn does_not_flag_an_identifier_setup_defines() {
         let plan = StructuredPlan::from_yaml(TICKET_DEFINED_BEFORE_USE).unwrap();
         assert_eq!(verify(&plan), vec![]);
+    }
+
+    /// A live drafting run, 2026-10-21: `setup` declares `Ticket ticket = new Ticket(...)` (a real
+    /// declaration, the same shape `TICKET_DEFINED_BEFORE_USE` above states through `defines`), but
+    /// the model's answer never populated the separate `defines` field at all. Before
+    /// `declared_in_setup` existed, every example in the unit was flagged, and recovery then emptied
+    /// the whole list (the bug `examples_named_in_collapses_a_reused_id_to_one_entry` pins a different
+    /// angle of). The declaration in `setup` is read directly now, without needing `defines` at all.
+    #[test]
+    fn does_not_flag_an_identifier_a_java_declaration_introduces_even_without_defines() {
+        let plan = StructuredPlan::from_yaml(
+            r#"
+id: tickets
+units:
+  - id: ticket
+    examples:
+      - id: valid-at-boundary
+        setup: 'Ticket ticket = new Ticket("T-1", LocalDateTime.of(2026, 3, 1, 10, 0), TicketStatus.ISSUED);'
+        call: 'ticket.validate(LocalDateTime.of(2026, 3, 1, 11, 30))'
+        expect: {status: VALIDATED}
+"#,
+        )
+        .unwrap();
+        assert_eq!(verify(&plan), vec![]);
+    }
+
+    #[test]
+    fn declared_in_setup_finds_the_declared_name_and_nothing_else() {
+        assert_eq!(
+            declared_in_setup("Ticket ticket = new Ticket(\"T-1\", LocalDateTime.of(2026, 3, 1, 10, 0), TicketStatus.ISSUED)"),
+            vec!["ticket".to_string()]
+        );
+        assert_eq!(declared_in_setup("repository.save(ticket)"), Vec::<String>::new(), "no declaration, no match");
+        assert_eq!(
+            declared_in_setup("Ticket ticket = other.ticket()"),
+            vec!["ticket".to_string()],
+            "the declared name, regardless of what the right-hand side is"
+        );
     }
 
     // --- RuleOwnershipCollision: the tickets service plan duplicating Ticket's own rule ---------------
