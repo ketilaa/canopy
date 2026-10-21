@@ -1605,3 +1605,21 @@ feature's example values, L2 = prose rules, L3 = one line per step. `cur` = `--p
   Tickets 0 to 5 (S4 to S6a) was a story with a mechanism (the messages in the plan), and its count is one run per plan too. The loans leak (service exceptions in a unit that throws nothing) is still a defect, not a measured cost.
 - **Consequence for method:** a Planner comparison needs several Implementer runs per plan (3 per plan would put a story's noise near +-1.5 of 10) or n much larger than 10; a single-run total is read as +-3 per story, +-5 per 50.
 - **Status:** A1 done. The `exceptions` field stays; B (render Throws only in units with a `throws` clause) is not justified by this result; S7 and the S-series stay paused as the 2026-10-20 note says.
+
+### Phase 2 (structured plan schema). E1 on tickets, measured with 3 Implementer runs per plan (prediction first)
+- **Build:** `canopy-planner/src/structured.rs` Phase 0 (audits) and Phase 1 (`to_legacy_plan`, committed 2026-10-21), then Phase 2's `draft_structured` (the model drafts only `examples` and `methods[].throws`
+  per unit; everything else — API, `owns_rules`, `depends_on`, `covers`, `rules` prose, `decisions`, `non_goals` — fixed from `tasks/tickets/plan.structured.yaml`), `run_structured` and `render_fixed` (examples),
+  `score_structured.py`. Three bugs found and fixed by reading real model output before trusting a green test suite, each with its own regression test (see the commits of 2026-10-21): an empty `examples` list
+  accepted because the schema's `minItems: 1` was not enforced by the server; the same failure reachable a second way because the model reused one literal `id` across every example, collapsing the recovery
+  guard's deduplicated set; and a unit failing outright because the model wrote a real Java declaration in `setup` but never restated the name in the separate `defines` field, fixed by reading the declaration
+  directly (`declared_in_setup`) instead of asking the model to repeat a fact its own text already states.
+- **Smoke (n=2, no score, `--runs 1` Implementer, read by hand):** both plans valid, 3 steps each. One (run 1) added an exception to `cancel()` ("Ticket is cancelled" when re-cancelling) that neither the feature nor
+  the fixed fixture state — an invented, ungrounded case, let through because nothing caps how many exceptions a method may have. Not patched before the real run: this is exactly the kind of drafting-quality
+  question Phase 2 exists to measure, not a harness defect, and a single instance is not yet a pattern.
+- **Run (A1, A2, A3; tickets only; n=10 plans for A1, A2 and A3 each one fixed plan; 3 Implementer runs per plan, `lean`):** `score_structured.py --url http://ai-lab:8080 --out <dir> --plans 10 --implementer-runs 3`.
+- **Prediction (before the run, carried from `docs/open-questions/planner-input-human-facts.md`, corrected from 1 to 3 Implementer runs per plan per the A1/2026-10-20 noise finding):**
+  - A2 (sanity ceiling, same content as the existing 10/10 hand plan, rendered without a model): mean pass rate at least 0.8 (24 of 30 Implementer runs). Falsified at 0.6 or below — the renderer or the Implementer
+    would be the limit, not the schema.
+  - A1 (the real arm): mean pass rate at least 0.7 (21 of 30). Falsified at 0.5 or below.
+  - A3 (A2 with `decisions` stripped): at least 0.2 below A2's rate (a falling test if the gaps the decisions answer do not matter after all).
+- **Status:** running.
