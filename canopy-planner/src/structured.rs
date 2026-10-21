@@ -18,10 +18,14 @@
 //! from one real run in `canopy-implementer/docs/prompt-and-plan-changelog.md`'s S6a/S6c entries, not a
 //! hypothetical case; the test module cites the run each fixture is drawn from.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 
+use canopy_implementer::implementer::{Scope, StepKind};
+use canopy_implementer::plan::{Plan, PlanStep};
 use serde::Deserialize;
+
+use crate::layered;
 
 /// One exception a method throws, checked in `order`.
 #[derive(Debug, Clone, Deserialize)]
@@ -77,12 +81,47 @@ pub struct Unit {
     pub methods: Vec<Method>,
     #[serde(default)]
     pub examples: Vec<Example>,
+    // --- Phase 1 additions (`to_legacy_plan`); not used by Phase 0's audits. ---
+    /// Ids of other units this one's step may read (their main files become its `read_only`), and
+    /// which also fixes this unit's position in the rendered plan's step order (a topological sort,
+    /// never model-authored): a unit is only rendered once everything it depends on already is.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Scenario ids this unit's step helps make pass, copied verbatim into the rendered step's `covers`.
+    #[serde(default)]
+    pub covers: Vec<String>,
+    /// Free-text Rules prose for this unit (today hand- or model-authored, like the existing layered
+    /// Planner's `Draft.rules`; composing this automatically from `owns_rules`/`methods` is not
+    /// attempted here — writing the rule in English is the part that stays a model or human job).
+    #[serde(default)]
+    pub rules: String,
 }
 
-/// The structured plan, as far as Phase 0's audits need it.
+/// A question only a human could resolve, with the answer and who resolved it. Folded into every
+/// rendered step's instruction (a per-unit relevance filter is not attempted here; on a five-unit story
+/// this has not yet been a problem, and splitting it is a straightforward later change).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Decision {
+    pub id: String,
+    pub question: String,
+    pub answer: String,
+    #[serde(default)]
+    pub resolved_by: String,
+}
+
+/// The structured plan. `api`, when present, is the existing layered Planner's own API text
+/// (`Package a.b.c.` then one unit per line, `layered::parse_api`'s format) — reused rather than
+/// reinvented, and required only by `to_legacy_plan`; Phase 0's audits never read it. Its lines must
+/// align 1:1, in order, with `units`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StructuredPlan {
     pub id: String,
+    #[serde(default)]
+    pub api: Option<String>,
+    #[serde(default)]
+    pub decisions: Vec<Decision>,
+    #[serde(default)]
+    pub non_goals: Vec<String>,
     pub units: Vec<Unit>,
 }
 
@@ -383,6 +422,180 @@ pub fn verify(plan: &StructuredPlan) -> Vec<Issue> {
     issues
 }
 
+// --- Phase 1: a renderer from the structured plan down to the existing `plan.yaml` shape. No model
+// call; `canopy_implementer::plan::Plan` and its contract are untouched. ---
+
+/// Unit indices in dependency order (Kahn's algorithm over `depends_on`): a unit is only placed once
+/// every unit it depends on already is. Ties keep declaration order, so the order is deterministic.
+/// Steps are never model-authored — they follow from `depends_on` alone.
+fn topological_order(plan: &StructuredPlan) -> Result<Vec<usize>, String> {
+    let index_of: BTreeMap<&str, usize> =
+        plan.units.iter().enumerate().map(|(i, u)| (u.id.as_str(), i)).collect();
+    let n = plan.units.len();
+    let mut indegree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, unit) in plan.units.iter().enumerate() {
+        for dep in &unit.depends_on {
+            let &j = index_of
+                .get(dep.as_str())
+                .ok_or_else(|| format!("unit `{}` depends on unknown unit `{dep}`", unit.id))?;
+            dependents[j].push(i);
+            indegree[i] += 1;
+        }
+    }
+    let mut queue: VecDeque<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
+    let mut order = Vec::new();
+    while let Some(i) = queue.pop_front() {
+        order.push(i);
+        for &dependent in &dependents[i] {
+            indegree[dependent] -= 1;
+            if indegree[dependent] == 0 {
+                queue.push_back(dependent);
+            }
+        }
+    }
+    if order.len() != n {
+        return Err("depends_on has a cycle".to_string());
+    }
+    Ok(order)
+}
+
+/// `Ticket.validate(LocalDateTime at)` or `Ticket validate(LocalDateTime at)` -> `validate(LocalDateTime at)`:
+/// the bare method name and its parameters, stripped of any leading type qualifier, matching the way the
+/// hand-written plans and the existing layered Planner's Throws lines name a method.
+fn throws_label(signature: &str) -> String {
+    let paren = signature.find('(').unwrap_or(signature.len());
+    let (head, rest) = signature.split_at(paren);
+    let name = head.rsplit(|c: char| c == '.' || c == ' ').next().unwrap_or(head);
+    format!("{name}{rest}")
+}
+
+/// `expect` is a flat map of named facts, not a sentence (`docs/design/structured-plan-schema.md`'s
+/// design principle 3). Rendered mechanically here, not as polished English — Phase 1's job is to prove
+/// the renderer produces a valid, auditable plan; whether model-drafted `examples` read naturally is a
+/// Phase 2 question, scored against the Implementer, not decided by how this function words it.
+fn render_expect(expect: &BTreeMap<String, String>) -> String {
+    if let Some(exception_type) = expect.get("throws") {
+        let message = expect
+            .get("message")
+            .map(|m| format!(" with the message \"{m}\""))
+            .unwrap_or_default();
+        return format!("throws {exception_type}{message}");
+    }
+    expect
+        .iter()
+        .map(|(field, value)| format!("{field} is {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_instruction(
+    plan: &StructuredPlan,
+    api: &layered::Api,
+    index: usize,
+    unit: &Unit,
+) -> String {
+    let api_unit = &api.units[index];
+    let api_lines: Vec<&str> = api.units[..=index].iter().map(|u| u.line.as_str()).collect();
+    let mut out = format!(
+        "Create the following in the package {}: {}\nRules: {}\n",
+        api.package,
+        api_unit.line,
+        unit.rules.trim()
+    );
+    // `order` ranks a method's own conditions against each other ("a method checks its conditions in
+    // the order listed") — it is not comparable across methods. Methods render in their declared
+    // order; only within one method are its throws sorted by `order`.
+    let throws: Vec<(&Method, &Throw)> = unit
+        .methods
+        .iter()
+        .flat_map(|m| {
+            let mut own: Vec<&Throw> = m.throws.iter().collect();
+            own.sort_by_key(|t| t.order);
+            own.into_iter().map(move |t| (m, t))
+        })
+        .collect();
+    if !throws.is_empty() {
+        out.push_str("Throws (a method checks its conditions in the order listed):\n");
+        for (method, throw) in throws {
+            out.push_str(&format!(
+                "- {}: throws {} with the message \"{}\" when {}\n",
+                throws_label(&method.signature),
+                throw.exception_type.trim(),
+                throw.message.trim(),
+                throw.condition.trim().trim_end_matches('.')
+            ));
+        }
+    }
+    if !plan.non_goals.is_empty() {
+        out.push_str(&format!("Non-goals: {}.\n", plan.non_goals.join("; ")));
+    }
+    if !plan.decisions.is_empty() {
+        let decided: Vec<String> = plan
+            .decisions
+            .iter()
+            .map(|d| format!("{} {}", d.question.trim().trim_end_matches('?'), d.answer.trim()))
+            .collect();
+        out.push_str(&format!("Decided: {}\n", decided.join(" ")));
+    }
+    out.push_str(&format!(
+        "API the tests use: {}\nAdd {}Test. {}\n",
+        api_lines.join(" "),
+        api_unit.primary(),
+        layered::MUST
+    ));
+    for (i, example) in unit.examples.iter().enumerate() {
+        let setup = example.setup.trim().trim_end_matches(';');
+        let lead = if setup.is_empty() { String::new() } else { format!("{setup}; ") };
+        out.push_str(&format!(
+            "{}. {lead}{}: {}\n",
+            i + 1,
+            example.call.trim().trim_end_matches('.'),
+            render_expect(&example.expect)
+        ));
+    }
+    out.trim_end().to_string()
+}
+
+/// Renders the structured plan down to the shape `canopy_implementer::plan::Plan::from_yaml` reads —
+/// the only format the Implementer's orchestrator, gates and hints know about. Nothing here changes
+/// that contract; this function is the sole place the two shapes meet.
+pub fn to_legacy_plan(plan: &StructuredPlan) -> Result<Plan, String> {
+    let api_text = plan.api.as_deref().ok_or("the structured plan has no `api` text to render from")?;
+    let api = layered::parse_api(api_text).map_err(|e| format!("api: {e}"))?;
+    if api.units.len() != plan.units.len() {
+        return Err(format!(
+            "the api declares {} unit(s) but the structured plan has {} — `units` must align 1:1, in \
+             order, with the api's lines",
+            api.units.len(),
+            plan.units.len()
+        ));
+    }
+    let order = topological_order(plan)?;
+    let mut steps = Vec::with_capacity(order.len());
+    for &i in &order {
+        let unit = &plan.units[i];
+        let api_unit = &api.units[i];
+        let mut create = api_unit.main_files(&api.package);
+        create.push(api_unit.test_file(&api.package));
+        let read_only: Vec<String> = unit
+            .depends_on
+            .iter()
+            .filter_map(|dep| plan.units.iter().position(|u| &u.id == dep))
+            .flat_map(|j| api.units[j].main_files(&api.package))
+            .collect();
+        steps.push(PlanStep {
+            id: format!("{}-{}-{}", plan.id, steps.len() + 1, unit.id),
+            instruction: render_instruction(plan, &api, i, unit),
+            kind: StepKind::default(),
+            context: None,
+            scope: Scope { modify: Vec::new(), create, read_only },
+            covers: unit.covers.clone(),
+        });
+    }
+    Ok(Plan { id: plan.id.clone(), story: None, feature: None, steps })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,5 +835,83 @@ units:
     fn does_not_flag_disjoint_ownership() {
         let plan = StructuredPlan::from_yaml(SERVICE_DELEGATES_INSTEAD_OF_OWNING).unwrap();
         assert_eq!(verify(&plan), vec![]);
+    }
+
+    // --- Phase 1: the golden tickets fixture, exactly as docs/design/structured-plan-schema.md's -----
+    // --- example, hand-authored from the same facts as the existing 10/10 hand plan. -----------------
+
+    const TICKETS_STRUCTURED: &str =
+        include_str!("../../canopy-implementer/tasks/tickets/plan.structured.yaml");
+
+    #[test]
+    fn the_tickets_fixture_has_no_contradictions() {
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        assert_eq!(verify(&plan), vec![], "the golden fixture must not trip its own audits");
+    }
+
+    #[test]
+    fn renders_down_to_a_plan_yaml_accepted_by_from_yaml() {
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        let legacy = to_legacy_plan(&plan).unwrap();
+        // The real contract boundary: canopy-implementer's own parser, not just a type that happens to
+        // share a name, must accept exactly what the renderer produced.
+        let reparsed = Plan::from_yaml(&legacy.to_yaml()).unwrap();
+        assert_eq!(reparsed.steps.len(), 3);
+        assert_eq!(reparsed.steps[0].id, "tickets-1-ticket");
+        assert_eq!(reparsed.steps[1].id, "tickets-2-ticket-repository");
+        assert_eq!(reparsed.steps[2].id, "tickets-3-ticket-service");
+        // depends_on put the repository after the model, and the service after both, by construction
+        // of the topological sort, not because the fixture happened to list them in that order.
+        assert_eq!(
+            reparsed.steps[1].scope.read_only,
+            vec![
+                "src/main/java/no/experis/tickets/TicketStatus.java",
+                "src/main/java/no/experis/tickets/Ticket.java",
+            ]
+        );
+        assert_eq!(
+            reparsed.steps[2].scope.read_only,
+            vec![
+                "src/main/java/no/experis/tickets/TicketStatus.java",
+                "src/main/java/no/experis/tickets/Ticket.java",
+                "src/main/java/no/experis/tickets/TicketRepository.java",
+                "src/main/java/no/experis/tickets/InMemoryTicketRepository.java",
+            ]
+        );
+    }
+
+    /// The S6c regression this renderer exists to make structurally impossible: a unit that throws
+    /// nothing must never have a Throws block, regardless of what another unit in the same plan throws.
+    #[test]
+    fn the_repository_step_has_no_throws_block() {
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        let legacy = to_legacy_plan(&plan).unwrap();
+        let repository_step = &legacy.steps[1];
+        assert!(
+            !repository_step.instruction.contains("Throws"),
+            "the repository unit throws nothing, but its instruction reads:\n{}",
+            repository_step.instruction
+        );
+    }
+
+    #[test]
+    fn the_ticket_step_has_its_four_throws_rendered_in_order_grouped_by_method() {
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        let legacy = to_legacy_plan(&plan).unwrap();
+        let text = &legacy.steps[0].instruction;
+        let block_start = text.find("Throws (").expect("a Throws block");
+        let block_end = text.find("Non-goals:").expect("the block ends before Non-goals");
+        let block = &text[block_start..block_end];
+        // `order` ranks a method's own conditions, not the unit's: `validate`'s three throws (its own
+        // declared order) must stay adjacent and in order, and `cancel`'s one throw must not be
+        // interleaved between them just because its `order: 1` collides numerically with validate's.
+        assert_eq!(
+            block.trim(),
+            "Throws (a method checks its conditions in the order listed):\n\
+             - validate(LocalDateTime at): throws IllegalStateException with the message \"Ticket is cancelled\" when the ticket is cancelled\n\
+             - validate(LocalDateTime at): throws IllegalStateException with the message \"Ticket is already validated\" when the ticket is already validated\n\
+             - validate(LocalDateTime at): throws IllegalStateException with the message \"Ticket has expired\" when at is more than 90 minutes after issuedAt\n\
+             - cancel(): throws IllegalStateException with the message \"A validated ticket cannot be cancelled\" when the ticket is validated",
+        );
     }
 }

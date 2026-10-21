@@ -164,7 +164,9 @@ pub fn schema(scenario_ids: &[String]) -> Value {
     })
 }
 
-const MUST: &str = "It MUST contain one test for each item of this checklist, and you must not leave any item out. \
+/// Reused by `structured::render_instruction` so both renderers ask for the same compliance, in the
+/// same words — not duplicated prose that could drift.
+pub(crate) const MUST: &str = "It MUST contain one test for each item of this checklist, and you must not leave any item out. \
 Before you submit, go through the list and check that every item has its test.";
 
 /// Writes an exception expectation the way the plans that pass write it: `throws <Type> with the message "<message>"`.
