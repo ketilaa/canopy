@@ -23,12 +23,12 @@ use std::fmt;
 
 use canopy_implementer::implementer::{Scope, StepKind};
 use canopy_implementer::plan::{Plan, PlanStep};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::layered;
 
 /// One exception a method throws, checked in `order`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Throw {
     pub order: u32,
     pub exception_type: String,
@@ -37,7 +37,7 @@ pub struct Throw {
 }
 
 /// One method of a unit's API.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Method {
     pub signature: String,
     /// Fields of the receiver that are unchanged by this call (e.g. `id`, `issuedAt` on `validate`).
@@ -49,7 +49,7 @@ pub struct Method {
 
 /// One executable example: a setup, a call, and the expected outcome, as literal strings (never a
 /// prose sentence) so two examples can be compared for contradiction without parsing Java.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Example {
     pub id: String,
     pub setup: String,
@@ -69,7 +69,7 @@ pub struct Example {
 }
 
 /// One unit (a class, record or interface) of the plan.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit {
     pub id: String,
     /// Rule ids this unit is the sole authority for. Empty means the unit asserts no domain rule of its
@@ -100,7 +100,7 @@ pub struct Unit {
 /// A question only a human could resolve, with the answer and who resolved it. Folded into every
 /// rendered step's instruction (a per-unit relevance filter is not attempted here; on a five-unit story
 /// this has not yet been a problem, and splitting it is a straightforward later change).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
     pub id: String,
     pub question: String,
@@ -113,7 +113,7 @@ pub struct Decision {
 /// (`Package a.b.c.` then one unit per line, `layered::parse_api`'s format) — reused rather than
 /// reinvented, and required only by `to_legacy_plan`; Phase 0's audits never read it. Its lines must
 /// align 1:1, in order, with `units`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredPlan {
     pub id: String,
     #[serde(default)]
@@ -596,6 +596,351 @@ pub fn to_legacy_plan(plan: &StructuredPlan) -> Result<Plan, String> {
     Ok(Plan { id: plan.id.clone(), story: None, feature: None, steps })
 }
 
+// --- Phase 2 arm A1 (`docs/design/structured-plan-schema-introduction-plan.md`): the model drafts each
+// unit's `examples` and `methods[].throws` only. Everything else — signatures, `preserves`,
+// `owns_rules`, `depends_on`, `covers`, `rules` prose, `api`, `decisions`, `non_goals` — is held fixed,
+// taken from a plan whose `examples`/`throws` have been cleared (`skeleton`). This isolates "can the
+// model draft contradiction-free content" from "can the model draft the facts a human must supply,"
+// which stays answered by `decisions`. No audit here rewrites anything the model wrote; a hit is
+// retried with the audit's own issues as feedback, then recovered by dropping only the examples an
+// issue actually names — the same shape `layered::plan_layered` already uses for its cases, applied to
+// Phase 0's audits instead of hand-written ones.
+
+use canopy_implementer::llm::{Generator, Message, StructuredRequest};
+use serde_json::{json, Value};
+
+use crate::gherkin::Feature;
+
+const DRAFT_MAX_ATTEMPTS: u32 = 2;
+
+/// `plan` with every unit's `examples` and every method's `throws` cleared — what `draft_structured`
+/// fills back in, one unit at a time.
+pub fn skeleton(plan: &StructuredPlan) -> StructuredPlan {
+    let mut out = plan.clone();
+    for unit in &mut out.units {
+        unit.examples.clear();
+        for method in &mut unit.methods {
+            method.throws.clear();
+        }
+    }
+    out
+}
+
+#[derive(Debug, Deserialize)]
+struct ThrowAnswer {
+    order: u32,
+    exception_type: String,
+    message: String,
+    condition: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct MethodAnswer {
+    #[serde(default)]
+    throws: Vec<ThrowAnswer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExampleAnswer {
+    id: String,
+    #[serde(default)]
+    setup: String,
+    #[serde(default)]
+    setup_values: BTreeMap<String, String>,
+    #[serde(default)]
+    defines: Vec<String>,
+    call: String,
+    #[serde(default)]
+    expect: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UnitAnswer {
+    methods: Vec<MethodAnswer>,
+    examples: Vec<ExampleAnswer>,
+}
+
+fn draft_schema(method_count: usize) -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["methods", "examples"],
+        "properties": {
+            "methods": {
+                "type": "array",
+                "minItems": method_count,
+                "maxItems": method_count,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["throws"],
+                    "properties": {
+                        "throws": {
+                            "type": "array",
+                            "maxItems": 6,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["order", "exception_type", "message", "condition"],
+                                "properties": {
+                                    "order": {"type": "integer", "minimum": 1, "maximum": 10},
+                                    "exception_type": {"type": "string", "pattern": "^[A-Za-z]+Exception$"},
+                                    "message": {"type": "string", "minLength": 1, "maxLength": 120},
+                                    "condition": {"type": "string", "minLength": 1, "maxLength": 200}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "examples": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "setup", "call", "expect"],
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1, "maxLength": 60},
+                        "setup": {"type": "string", "maxLength": 240},
+                        "setup_values": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 60}},
+                        "defines": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 40}},
+                        "call": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "expect": {
+                            "type": "object",
+                            "minProperties": 1,
+                            "additionalProperties": {"type": "string", "maxLength": 80}
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn draft_system() -> String {
+    "\
+You write the examples and exceptions of one unit of a Java plan, from its fixed API line, its fixed rules, and \
+facts a human has already decided.
+ALWAYS write every example as setup, call and expect, with literal values only: never read the system clock (no \
+now()), and never use an identifier the setup does not introduce (when setup builds one, list it in `defines`).
+NEVER write two examples whose setup and call are the same but whose expect differs — that is a contradiction \
+between two of your own answers, not two tests.
+ALWAYS state, for a method the rules say preserves a field, the same value for that field in `setup_values` and \
+in `expect` on every example that calls it.
+ALWAYS list every exception of a method in `throws`, one entry per condition, in the order the method checks \
+them, with the exact message the rules or the decisions give; a method the rules do not say throws anything \
+gets an empty list, never a borrowed exception from elsewhere in the plan.
+NEVER invent a rule, a value or an exception that the rules, the decisions or the scenarios do not state."
+        .to_string()
+}
+
+fn draft_messages(
+    plan: &StructuredPlan,
+    api: &layered::Api,
+    feature: &Feature,
+    index: usize,
+    previous: Option<(&str, &[String])>,
+) -> Vec<Message> {
+    let unit = &plan.units[index];
+    let api_unit = &api.units[index];
+    let mut user = format!("## Unit\n{}\nRules: {}\n", api_unit.line, unit.rules.trim());
+    if !unit.methods.is_empty() {
+        user.push_str("\nMethods (answer `throws` for each, in this order; [] when it throws nothing):\n");
+        for method in &unit.methods {
+            let preserves = if method.preserves.is_empty() {
+                String::new()
+            } else {
+                format!(" (preserves {})", method.preserves.join(", "))
+            };
+            user.push_str(&format!("- {}{}\n", method.signature, preserves));
+        }
+    }
+    if !plan.decisions.is_empty() {
+        user.push_str("\n## Decided\n");
+        for decision in &plan.decisions {
+            user.push_str(&format!("- {} {}\n", decision.question.trim(), decision.answer.trim()));
+        }
+    }
+    if !plan.non_goals.is_empty() {
+        user.push_str(&format!("\n## Non-goals\n{}\n", plan.non_goals.join("\n")));
+    }
+    if !unit.covers.is_empty() {
+        user.push_str("\n## Scenarios this unit covers\n");
+        for id in &unit.covers {
+            if let Some(text) = feature.render_scenario(id) {
+                user.push_str(&format!("### {id}\n{text}\n"));
+            }
+        }
+    }
+    if let Some((raw, problems)) = previous {
+        user.push_str(&format!("\n## Your previous answer\n```json\n{raw}\n```\n\n## Problems\n"));
+        for problem in problems {
+            user.push_str(&format!("- {problem}\n"));
+        }
+        user.push_str("\nReturn the complete corrected answer.\n");
+    }
+    vec![Message::system(&draft_system()), Message::user(&user)]
+}
+
+/// Issues `verify` finds that name this unit (cross-unit rules like `RuleOwnershipCollision` cannot be
+/// newly caused here, since `owns_rules` is never model-drafted).
+fn issues_for_unit(plan: &StructuredPlan, unit_id: &str) -> Vec<Issue> {
+    verify(plan).into_iter().filter(|i| i.unit.as_deref() == Some(unit_id)).collect()
+}
+
+/// Which example ids a set of issues names, by matching each candidate example's own id anywhere in
+/// the issue's message text — used only for recovery-by-subtraction, mirroring
+/// `layered::plan_layered`'s "drop flawed cases" rather than trusting the model's own retry.
+///
+/// A plain substring match, not a word-boundary one: `duplicate_setup_conflicting_expect`'s message
+/// names its *second* id straight after "and" (`"examples e1 and e2 both do..."`), not after the word
+/// "example", so matching only `"example <id>"`/`"examples <id>"` missed it in exactly this case — the
+/// bug the test below was written to catch. The remaining risk is an id that is itself a substring of
+/// another id (e.g. `find-missing` inside `find-missing-is-empty`), which would over-match; acceptable
+/// for Phase 2's scope, not yet a problem any real fixture has produced.
+fn examples_named_in(issues: &[Issue], examples: &[Example]) -> std::collections::BTreeSet<String> {
+    let mut named = std::collections::BTreeSet::new();
+    for issue in issues {
+        for example in examples {
+            if issue.message.contains(example.id.as_str()) {
+                named.insert(example.id.clone());
+            }
+        }
+    }
+    named
+}
+
+fn apply_answer(unit: &Unit, answer: UnitAnswer) -> Unit {
+    let mut out = unit.clone();
+    for (method, answered) in out.methods.iter_mut().zip(answer.methods) {
+        method.throws = answered
+            .throws
+            .into_iter()
+            .map(|t| Throw {
+                order: t.order,
+                exception_type: t.exception_type,
+                message: t.message,
+                condition: t.condition,
+            })
+            .collect();
+    }
+    out.examples = answer
+        .examples
+        .into_iter()
+        .map(|e| Example {
+            id: e.id,
+            setup: e.setup,
+            setup_values: e.setup_values,
+            defines: e.defines,
+            call: e.call,
+            expect: e.expect,
+        })
+        .collect();
+    out
+}
+
+/// Drafts one unit's `examples` and `throws`, retrying with the audits' own issues as feedback, then
+/// recovering by dropping only the examples an issue names, when some still remain usable.
+fn draft_unit(
+    generator: &dyn Generator,
+    plan: &StructuredPlan,
+    api: &layered::Api,
+    feature: &Feature,
+    index: usize,
+) -> Result<Unit, String> {
+    let unit = &plan.units[index];
+    let schema = draft_schema(unit.methods.len());
+    let mut previous: Option<(String, Vec<String>)> = None;
+    let mut flawed: Option<(Unit, Vec<Issue>)> = None;
+    for attempt in 1..=DRAFT_MAX_ATTEMPTS {
+        let request = StructuredRequest {
+            purpose: format!("structured-{}-{attempt}", index + 1),
+            messages: draft_messages(plan, api, feature, index, previous.as_ref().map(|(r, p)| (r.as_str(), p.as_slice()))),
+            schema_name: "unit".into(),
+            schema: schema.clone(),
+            thinking: false,
+        };
+        let response = match generator.complete_structured(&request) {
+            Err(e) => {
+                previous = Some((String::new(), vec![format!("the model call failed: {e}")]));
+                continue;
+            }
+            Ok(r) if r.finish_reason == "length" => {
+                previous =
+                    Some((r.content, vec!["The answer hit the token limit; write fewer or shorter examples.".to_string()]));
+                continue;
+            }
+            Ok(r) => r,
+        };
+        let answer: UnitAnswer = match serde_json::from_str(&response.content) {
+            Ok(a) => a,
+            Err(e) => {
+                previous = Some((response.content, vec![format!("the answer is not valid: {e}")]));
+                continue;
+            }
+        };
+        if answer.methods.len() != unit.methods.len() {
+            previous = Some((
+                response.content,
+                vec![format!(
+                    "methods must have exactly {} entries, one per listed method, in order; got {}",
+                    unit.methods.len(),
+                    answer.methods.len()
+                )],
+            ));
+            continue;
+        }
+        let candidate = apply_answer(unit, answer);
+        let mut candidate_plan = plan.clone();
+        candidate_plan.units[index] = candidate.clone();
+        let issues = issues_for_unit(&candidate_plan, &candidate.id);
+        if issues.is_empty() {
+            return Ok(candidate);
+        }
+        previous = Some((response.content, issues.iter().map(|i| i.message.clone()).collect()));
+        flawed = Some((candidate, issues));
+    }
+    if let Some((mut candidate, issues)) = flawed {
+        let named = examples_named_in(&issues, &candidate.examples);
+        if !named.is_empty() && named.len() < candidate.examples.len() {
+            candidate.examples.retain(|e| !named.contains(&e.id));
+            let mut candidate_plan = plan.clone();
+            candidate_plan.units[index] = candidate.clone();
+            if issues_for_unit(&candidate_plan, &candidate.id).is_empty() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(format!("unit `{}` never got a usable answer", unit.id))
+}
+
+/// Drafts every unit's `examples` and `throws` in turn, starting from `skeleton(plan)`. `Err` names the
+/// first unit that never got a usable answer; there is no partial plan worth returning, since Phase 1's
+/// renderer needs every unit complete.
+pub fn draft_structured(
+    generator: &dyn Generator,
+    plan: &StructuredPlan,
+    feature: &Feature,
+) -> Result<StructuredPlan, String> {
+    let api_text = plan.api.as_deref().ok_or("the structured plan has no `api` text to draft against")?;
+    let api = layered::parse_api(api_text).map_err(|e| format!("api: {e}"))?;
+    if api.units.len() != plan.units.len() {
+        return Err(format!(
+            "the api declares {} unit(s) but the structured plan has {}",
+            api.units.len(),
+            plan.units.len()
+        ));
+    }
+    let mut out = skeleton(plan);
+    for index in 0..out.units.len() {
+        let drafted = draft_unit(generator, &out, &api, feature, index)?;
+        out.units[index] = drafted;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -913,5 +1258,163 @@ units:
              - validate(LocalDateTime at): throws IllegalStateException with the message \"Ticket has expired\" when at is more than 90 minutes after issuedAt\n\
              - cancel(): throws IllegalStateException with the message \"A validated ticket cannot be cancelled\" when the ticket is validated",
         );
+    }
+
+    // --- Phase 2 arm A1: drafting, against a scripted model, no network. --------------------------
+
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    use canopy_implementer::llm::{LlmError, LlmResponse};
+
+    struct Script {
+        replies: Mutex<VecDeque<Result<LlmResponse, LlmError>>>,
+        requests: Arc<Mutex<Vec<StructuredRequest>>>,
+    }
+
+    impl Generator for Script {
+        fn complete_structured(&self, request: &StructuredRequest) -> Result<LlmResponse, LlmError> {
+            self.requests.lock().unwrap().push(request.clone());
+            self.replies.lock().unwrap().pop_front().expect("the script ran out of replies")
+        }
+    }
+
+    fn script(replies: Vec<Result<LlmResponse, LlmError>>) -> (Script, Arc<Mutex<Vec<StructuredRequest>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        (Script { replies: Mutex::new(replies.into()), requests: requests.clone() }, requests)
+    }
+
+    fn reply(content: &serde_json::Value) -> Result<LlmResponse, LlmError> {
+        Ok(LlmResponse {
+            call_id: 1,
+            content: content.to_string(),
+            finish_reason: "stop".into(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+        })
+    }
+
+    fn draft_fixture() -> StructuredPlan {
+        StructuredPlan::from_yaml(
+            r#"
+id: things
+api: "Package p.\nrecord Thing(int value). Thing bump(int by) returns a new thing and throws IllegalArgumentException."
+units:
+  - id: thing
+    owns_rules: [bump-rule]
+    rules: "bump adds `by` to value; by must be positive."
+    methods:
+      - signature: "Thing.bump(int by)"
+"#,
+        )
+        .unwrap()
+    }
+
+    const BLANK_FEATURE: &str = "Feature: F\n  Scenario: First\n    When x\n";
+
+    #[test]
+    fn drafts_examples_and_throws_from_a_clean_first_answer() {
+        let plan = draft_fixture();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&answer)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 1, "a clean first answer needs no retry");
+        assert_eq!(drafted.units[0].methods[0].throws.len(), 1);
+        assert_eq!(drafted.units[0].examples.len(), 1);
+        // The rendered plan must be free of every Phase 0 contradiction, same as the hand-written fixture.
+        assert_eq!(verify(&drafted), vec![]);
+    }
+
+    #[test]
+    fn retries_with_the_audits_own_issue_text_on_a_contradiction() {
+        let plan = draft_fixture();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let contradicting = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "e1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}},
+                {"id": "e2", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "4"}}
+            ]
+        });
+        let clean = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "e1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&contradicting), reply(&clean)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        assert_eq!(drafted.units[0].examples.len(), 1);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2, "one retry");
+        let retry_user = &requests[1].messages[1].content;
+        assert!(retry_user.contains("e1") && retry_user.contains("e2"), "{retry_user}");
+        assert!(retry_user.contains("expect"), "the retry must carry the audit's own issue text:\n{retry_user}");
+    }
+
+    #[test]
+    fn drops_only_the_examples_an_issue_names_when_others_still_pass() {
+        let plan = draft_fixture();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        // e1/e2 contradict each other on every attempt (the model never reconsiders); e3 is clean
+        // throughout. Recovery must keep e3 and drop only e1 and e2 — not fail the whole unit.
+        let persistent = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "e1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}},
+                {"id": "e2", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "4"}},
+                {"id": "e3", "setup": "Thing t = new Thing(5)", "defines": ["t"], "call": "t.bump(1)", "expect": {"value": "6"}}
+            ]
+        });
+        let (generator, _) = script(vec![reply(&persistent), reply(&persistent)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        let ids: Vec<&str> = drafted.units[0].examples.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e3"], "only the contradicting pair should be dropped");
+        assert_eq!(verify(&drafted), vec![]);
+    }
+
+    #[test]
+    fn fails_the_unit_when_every_example_stays_flawed() {
+        let plan = draft_fixture();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let wall_clock = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "e1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(LocalDateTime.now().getMinute())", "expect": {"value": "3"}}
+            ]
+        });
+        let (generator, _) = script(vec![reply(&wall_clock), reply(&wall_clock)]);
+        let err = draft_structured(&generator, &plan, &feature).unwrap_err();
+        assert!(err.contains("thing"), "{err}");
+    }
+
+    #[test]
+    fn a_wrong_method_count_is_a_shape_problem_not_a_panic() {
+        let plan = draft_fixture();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let too_many_methods = json!({
+            "methods": [{"throws": []}, {"throws": []}],
+            "examples": [
+                {"id": "e1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let clean = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "e1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&too_many_methods), reply(&clean)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        assert_eq!(drafted.units[0].examples.len(), 1);
+        assert_eq!(requests.lock().unwrap().len(), 2);
     }
 }
