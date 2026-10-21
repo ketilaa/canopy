@@ -747,6 +747,8 @@ You write the examples and exceptions of one unit of a Java plan, from its fixed
 facts a human has already decided.
 ALWAYS write every example as setup, call and expect, with literal values only: never read the system clock (no \
 now()), and never use an identifier the setup does not introduce (when setup builds one, list it in `defines`).
+ALWAYS give every example its own distinct `id` that names the example itself (\"valid-at-boundary\", not the \
+domain value it happens to use, such as a ticket id repeated across several examples).
 NEVER write two examples whose setup and call are the same but whose expect differs — that is a contradiction \
 between two of your own answers, not two tests.
 ALWAYS state, for a method the rules say preserves a field, the same value for that field in `setup_values` and \
@@ -930,6 +932,21 @@ fn draft_unit(
             ));
             continue;
         }
+        // A live run (2026-10-21) gave every example of a unit the same literal `id` ("T-1", the
+        // ticket's own domain id, instead of a distinct name for the example itself). Beyond being
+        // confusing on its own, it broke recovery: `examples_named_in` matches by id, so one issue
+        // naming that id could no longer tell "all of them" apart from "one of them" — fixed above
+        // too, but the real fix is not letting this answer through in the first place.
+        let mut ids: Vec<&str> = answer.examples.iter().map(|e| e.id.as_str()).collect();
+        ids.sort_unstable();
+        let unique = ids.iter().collect::<std::collections::BTreeSet<_>>().len();
+        if unique < ids.len() {
+            previous = Some((
+                response.content,
+                vec!["every example needs its own distinct id (name the example, not the domain value it uses)".to_string()],
+            ));
+            continue;
+        }
         let candidate = apply_answer(unit, answer);
         let mut candidate_plan = plan.clone();
         candidate_plan.units[index] = candidate.clone();
@@ -942,12 +959,20 @@ fn draft_unit(
     }
     if let Some((mut candidate, issues)) = flawed {
         let named = examples_named_in(&issues, &candidate.examples);
-        if !named.is_empty() && named.len() < candidate.examples.len() {
+        // `named` is deduplicated (a model that reused one `id` across several examples — a live run,
+        // 2026-10-21, gave every example of a unit the literal id "T-1" — collapses to one string in
+        // the set even though it names every example). Comparing `named.len()` against the raw example
+        // count let that run strip every example and still pass the "some remain" guard. Comparing
+        // against the actual count removed is correct regardless of duplicate ids.
+        if !named.is_empty() {
+            let before = candidate.examples.len();
             candidate.examples.retain(|e| !named.contains(&e.id));
-            let mut candidate_plan = plan.clone();
-            candidate_plan.units[index] = candidate.clone();
-            if issues_for_unit(&candidate_plan, &candidate.id).is_empty() {
-                return Ok(candidate);
+            if candidate.examples.len() < before && !candidate.examples.is_empty() {
+                let mut candidate_plan = plan.clone();
+                candidate_plan.units[index] = candidate.clone();
+                if issues_for_unit(&candidate_plan, &candidate.id).is_empty() {
+                    return Ok(candidate);
+                }
             }
         }
     }
@@ -1491,5 +1516,73 @@ units:
         let drafted = draft_structured(&generator, &plan, &feature).unwrap();
         assert_eq!(drafted.units[0].examples.len(), 1);
         assert_eq!(requests.lock().unwrap().len(), 2);
+    }
+
+    /// A live run, 2026-10-21: every example of a unit came back with the same literal `id` ("T-1",
+    /// the domain value, not a name for the example). Rejected at acceptance time now, before it can
+    /// reach the recovery path at all.
+    #[test]
+    fn a_reused_example_id_is_a_shape_problem_not_a_silent_accept() {
+        let plan = draft_fixture();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let duplicate_ids = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "T-1", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}},
+                {"id": "T-1", "setup": "Thing t = new Thing(5)", "defines": ["t"], "call": "t.bump(1)", "expect": {"value": "6"}}
+            ]
+        });
+        let clean = json!({
+            "methods": [{"throws": []}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}},
+                {"id": "bump-by-one", "setup": "Thing t = new Thing(5)", "defines": ["t"], "call": "t.bump(1)", "expect": {"value": "6"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&duplicate_ids), reply(&clean)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        assert_eq!(drafted.units[0].examples.len(), 2);
+        let retry_user = &requests.lock().unwrap()[1].messages[1].content;
+        assert!(retry_user.contains("distinct id"), "{retry_user}");
+    }
+
+    /// Direct test of the mechanism that actually broke on the live run: `examples_named_in` returns a
+    /// *set* of names, so three examples sharing one id collapse to a set of size 1 — which is why
+    /// comparing `named.len()` against the raw example count (the original recovery guard) read "only
+    /// one example is in trouble" when every example was about to be removed. The guard was changed to
+    /// compare the actual count removed instead; this test pins the set's own collapsing behaviour so
+    /// a future change to `examples_named_in` cannot silently reintroduce the mismatch.
+    #[test]
+    fn examples_named_in_collapses_a_reused_id_to_one_entry() {
+        let examples = vec![
+            Example {
+                id: "dup".into(),
+                setup: "Thing t = new Thing(1)".into(),
+                setup_values: BTreeMap::new(),
+                defines: vec!["t".into()],
+                call: "t.bump(2)".into(),
+                expect: BTreeMap::new(),
+            },
+            Example {
+                id: "dup".into(),
+                setup: "Thing t = new Thing(1)".into(),
+                setup_values: BTreeMap::new(),
+                defines: vec!["t".into()],
+                call: "t.bump(2)".into(),
+                expect: BTreeMap::new(),
+            },
+        ];
+        let issues = vec![Issue {
+            rule: Rule::WallClockCall,
+            unit: Some("thing".into()),
+            message: "example dup reads the wall clock".into(),
+        }];
+        let named = examples_named_in(&issues, &examples);
+        // Three examples share the id; the set still has one entry. A caller that only compares
+        // `named.len()` (1) against `examples.len()` (2) would wrongly conclude "not all of them,"
+        // even though removing every example whose id is in `named` removes all of them.
+        assert_eq!(named.len(), 1);
+        let remaining: Vec<&Example> = examples.iter().filter(|e| !named.contains(&e.id)).collect();
+        assert!(remaining.is_empty(), "every example shares the named id, so none should remain");
     }
 }
