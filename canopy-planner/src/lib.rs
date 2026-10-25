@@ -13,6 +13,7 @@ pub mod layered;
 pub mod planner;
 pub mod prompt;
 pub mod render;
+pub mod structured;
 pub mod verify;
 
 #[cfg(test)]
