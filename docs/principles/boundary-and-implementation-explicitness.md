@@ -6,6 +6,12 @@ confidence: medium
 
 maturity: emerging
 
+update_2026_10_25: "X11 tested negation's generality on a second adversarial boundary (order-exclusive, the \
+500.00 discount threshold reversed) and found the second boundary was not actually hard for the model even \
+stated plainly (baseline 10/10, not the predicted <=3/10) — the predicted mechanism did not reproduce, because \
+the training-prior conflict behind X7/X8 is specific to which idiom is being fought, not a general property of \
+\"reverse any boundary.\" Confidence held at medium rather than raised; see Counter-Evidence."
+
 themes:
   - prompt-design
   - implementer
@@ -77,15 +83,19 @@ change to any value, message or exception.
 
 - **Every result above is one model (Qwen3-14B), one story each.** No cross-model or cross-story replication
   has been run yet.
-- **The boundary-negation fix has only been shown on a deliberately adversarial case.** `tickets-exclusive`
-  reverses the boundary against the model's likely default on purpose. Checking the other four established
-  stories (`docs/design/...` — see the 2026-10-25 search) found none has a comparable adversarial boundary:
-  `order`'s 500.00 discount threshold and `loans`' due-date boundary both already match the common idiom
-  (`>=`, "on or before is not late"), and `order`'s case was already partly addressed by a *different*,
-  earlier technique (B7/B8, 2026-10-17: concrete values stated positively on both sides, not negation — a
-  7/10 to 8/10 gain, smaller than X7/X8's). Testing negation's generality on a non-adversarial boundary would
-  be a weaker claim than what's measured here, and testing it on a second genuinely adversarial case would
-  need new hidden-test infrastructure comparable to what `tickets-exclusive` already required — not yet built.
+- **The boundary-negation fix has only been shown on one deliberately adversarial case, and the one attempt
+  to build a second one did not replicate the mechanism it was built to test.** `order-exclusive` (X11,
+  2026-10-25) reverses `order`'s 500.00 discount threshold the same way `tickets-exclusive` reverses the
+  90-minute window — built with its own hidden test, validated against two hand-written references before
+  use (passes the reversed rule 7/7, fails exactly the boundary case against the real rule). The baseline
+  (positive statement, worked values, no negation — the same shape as X3, which scored 0/10 on the other
+  case) scored **10/10** here. Negation scored 10/10 too: no regression, but no generality claim survives
+  either, because there was no failure for negation to fix. **Reading:** the training-prior conflict behind
+  X7/X8 is specific to which idiom is fought (inclusive-vs-exclusive on a time window), not a general property
+  of "reverse any boundary direction" (here, "X or more" reversed to "strictly more than X"). `order`'s
+  non-adversarial boundary was also separately improved by a *different*, earlier technique (B7/B8,
+  2026-10-17: concrete values stated positively, not negation — a 7/10 to 8/10 gain, smaller than X7/X8's),
+  which is consistent with this model finding `order`'s boundary comparatively easy either way.
 - **The implementation-constraint fix needs a specific architecture to even arise.** Of the five established
   stories, only `tickets` and `stock` have a service constructed with an injected repository — the shape that
   makes "mock the collaborator" a plausible choice in the first place. `order` and `loans` hold their state
@@ -115,9 +125,14 @@ only available second case for the architecture X9 needs) replicates X9's shape.
 
 # Future Validation
 
-- Run X9's exact technique on `tickets` (its service step already has a repository to inject); that's the
-  cheap, available next step.
-- Decide whether to build a second adversarial boundary case (new hidden test, mirroring the investment
-  `tickets-exclusive` already represents) to test negation's generality properly, or to accept the weaker
-  within-story generality check against `order`'s non-adversarial boundary as a lower bar.
+- **Done, X10 (2026-10-25):** X9's exact technique on `tickets` — 0/10 to 10/10, replicating X9's mechanism
+  on the only other story with the required architecture. The implementation-constraint fix is now `two-story`.
+  - **Done, X11 (2026-10-25):** built a second adversarial boundary case (`order-exclusive`, new hidden test,
+    validated against two references) rather than the cheap non-adversarial option, per the maintainer's
+    stated preference. It did not replicate X7/X8's mechanism — baseline was already 10/10 — so the
+    boundary-negation fix is still effectively `one-story` for a confirmed gain, now with one documented case
+    (a different kind of reversal) where the predicted difficulty did not appear at all.
+- **Still open:** a boundary reversal that *does* reproduce a training-prior conflict on a second story, to
+  actually test negation's generality with a real gain to measure (order's "or more" reversal wasn't one;
+  `loans`' due-date boundary is confounded by that story's own unrelated 0/10 ceiling and was not attempted).
 - Try either fix against a second model, since every result so far is Qwen3-14B only.
