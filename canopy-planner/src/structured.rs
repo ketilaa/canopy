@@ -160,6 +160,13 @@ pub enum Rule {
     /// says must throw. Phase 2's real A1 run (2026-10-25): 10 of 10 drafted plans, dominantly
     /// `cancel()` on an already-`VALIDATED` ticket expecting `CANCELLED` instead of the stated exception.
     ExampleContradictsThrows,
+    /// A unit's own `throws` entry has the same `(exception_type, message)` as an entry already drafted
+    /// for a unit it `depends_on` — the dependency's own exception, re-declared rather than left to
+    /// propagate. `draft_messages` shows a dependent exactly what its dependency already throws and
+    /// `draft_system()` says never to redeclare it; the A1 re-run (2026-10-26) found the model copying
+    /// the dependency's exceptions verbatim anyway in 4 of 5 fresh drafts, with no audit catching it —
+    /// this is that audit.
+    ExceptionBorrowedFromDependency,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -459,6 +466,56 @@ fn example_contradicts_own_throws(plan: &StructuredPlan) -> Vec<Issue> {
     issues
 }
 
+/// A unit's own `throws` entry that exactly repeats a `(exception_type, message)` pair already present
+/// on a unit it `depends_on` — the dependency's own exception, re-declared instead of left to propagate.
+/// `draft_messages` shows a dependent exactly what its dependency already throws, worded as a fact to
+/// exclude, and `draft_system()` says never to redeclare it; checked directly against a real run
+/// (2026-10-26), the model copied the dependency's exceptions verbatim anyway in 4 of 5 fresh drafts of
+/// `ticket-service`, correctly typed and worded (the fact injection already fixed the wrong-type mistake
+/// `ExampleContradictsThrows` targeted) but still not this unit's to throw, and dropped its own
+/// legitimate `Unknown ticket` exception to make room for them. An exact-pair match, not a text-contains
+/// heuristic: the fact is already shown to the model as this literal pair, so a model that ignores the
+/// instruction copies it byte-for-byte, and matching anything looser would risk flagging two unrelated
+/// units that simply happen to use the same exception type.
+fn exception_borrowed_from_dependency(plan: &StructuredPlan) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    for unit in &plan.units {
+        let dependency_throws: Vec<(&str, (&str, &str))> = unit
+            .depends_on
+            .iter()
+            .filter_map(|dep_id| plan.units.iter().find(|u| &u.id == dep_id))
+            .flat_map(|dep| {
+                dep.methods
+                    .iter()
+                    .flat_map(|m| m.throws.iter())
+                    .map(move |t| (dep.id.as_str(), (t.exception_type.as_str(), t.message.as_str())))
+            })
+            .collect();
+        if dependency_throws.is_empty() {
+            continue;
+        }
+        for method in &unit.methods {
+            for throw in &method.throws {
+                let pair = (throw.exception_type.as_str(), throw.message.as_str());
+                if let Some((dep_id, _)) = dependency_throws.iter().find(|(_, p)| *p == pair) {
+                    issues.push(Issue {
+                        rule: Rule::ExceptionBorrowedFromDependency,
+                        unit: Some(unit.id.clone()),
+                        message: format!(
+                            "{} throws {} \"{}\", but that is already `{dep_id}`'s own exception — call \
+                             `{dep_id}`'s method and let it propagate instead of redeclaring it here",
+                            throws_label(&method.signature),
+                            throw.exception_type,
+                            throw.message
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    issues
+}
+
 /// Identifiers a Java-style local declaration in `setup` introduces (`Ticket ticket = new Ticket(...)`
 /// or `Ticket ticket = new Ticket(...).cancel()`): a type-looking word (starts uppercase) immediately
 /// followed by a value-looking word (starts lowercase) immediately followed by `=` (not `==`).
@@ -560,6 +617,7 @@ pub fn verify(plan: &StructuredPlan) -> Vec<Issue> {
     issues.extend(undefined_identifier(plan));
     issues.extend(rule_ownership_collisions(plan));
     issues.extend(example_contradicts_own_throws(plan));
+    issues.extend(exception_borrowed_from_dependency(plan));
     issues
 }
 
@@ -1438,6 +1496,56 @@ units:
             ..plan
         });
         assert_eq!(issues, vec![]);
+    }
+
+    // --- ExceptionBorrowedFromDependency: the A1 re-run (2026-10-26), 4 of 5 fresh drafts, byte-for---
+    // --- byte (`canopy-planner/runs/phase2-draft-check2/2026-10-26T21-56-46/run-01`) -----------------
+
+    const PHASE2_A1_RERUN_SERVICE_BORROWS_TICKETS_EXCEPTIONS: &str = r#"
+id: tickets
+units:
+  - id: ticket
+    owns_rules: [validation-window, validation-precedence, cancellation-rule]
+    methods:
+      - signature: "Ticket.validate(LocalDateTime at)"
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "Ticket is already validated", condition: "the ticket is already validated"}
+          - {order: 2, exception_type: IllegalStateException, message: "Ticket is cancelled", condition: "the ticket is cancelled"}
+          - {order: 3, exception_type: IllegalStateException, message: "Ticket has expired", condition: "at is more than 90 minutes after issuedAt"}
+      - signature: "Ticket.cancel()"
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "A validated ticket cannot be cancelled", condition: "the ticket is already validated"}
+  - id: ticket-service
+    owns_rules: [unknown-ticket-rejection]
+    depends_on: [ticket]
+    methods:
+      - signature: "TicketService.validate(String id, LocalDateTime at)"
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "Ticket is already validated", condition: "the ticket is already validated"}
+          - {order: 2, exception_type: IllegalStateException, message: "Ticket is cancelled", condition: "the ticket is cancelled"}
+          - {order: 3, exception_type: IllegalStateException, message: "Ticket has expired", condition: "at is more than 90 minutes after issuedAt"}
+      - signature: "TicketService.cancel(String id)"
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "A validated ticket cannot be cancelled", condition: "the ticket is already validated"}
+"#;
+
+    #[test]
+    fn flags_the_services_borrowed_validation_exceptions() {
+        let plan = StructuredPlan::from_yaml(PHASE2_A1_RERUN_SERVICE_BORROWS_TICKETS_EXCEPTIONS).unwrap();
+        let issues = verify(&plan);
+        assert_eq!(only_rule(&issues), Rule::ExceptionBorrowedFromDependency);
+        // Exactly the 4 borrowed entries, one per redeclared throw — not the dependency's own, which
+        // must never be flagged for simply having the exceptions it legitimately owns.
+        assert_eq!(issues.len(), 4, "{issues:?}");
+        assert!(issues.iter().all(|i| i.unit.as_deref() == Some("ticket-service")));
+    }
+
+    #[test]
+    fn does_not_flag_a_service_that_only_throws_what_it_owns() {
+        // The golden fixture's own `ticket-service`: `validate`/`cancel` throw only "Unknown ticket"
+        // (IllegalArgumentException), never any of `ticket`'s own IllegalStateException entries.
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        assert_eq!(exception_borrowed_from_dependency(&plan), vec![]);
     }
 
     // --- UndefinedIdentifier: S6a run 5 (tickets, step 2, `ticket` never defined) ---------------------
