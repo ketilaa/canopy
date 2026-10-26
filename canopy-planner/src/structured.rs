@@ -1106,6 +1106,32 @@ fn apply_answer(unit: &Unit, answer: UnitAnswer) -> Unit {
     out
 }
 
+/// Removes any `throws` entry from `unit` whose `(exception_type, message)` exactly matches one already
+/// drafted for a unit it `depends_on` — in Rust, not by asking the model to redo it. The pair is already
+/// exactly known (the same computation `exception_borrowed_from_dependency` uses to flag it), so there
+/// is no judgment call left for a retry to get wrong. Checked against a real run (2026-10-26): asking
+/// the model to remove only the flagged entries via retry feedback instead emptied `throws` entirely in
+/// 5 of 5 fresh drafts — including the method's own legitimate, unflagged exception — even after both
+/// `draft_system()` and the dependency-throws fact block were reworded to say the exclusion list is
+/// partial, not exhaustive. Wording the prompt harder did not fix it twice in a row; removing the
+/// judgment call from the model's hands entirely does.
+fn strip_borrowed_throws(plan: &StructuredPlan, unit: &mut Unit) {
+    let borrowed: std::collections::BTreeSet<(String, String)> = unit
+        .depends_on
+        .iter()
+        .filter_map(|dep_id| plan.units.iter().find(|u| &u.id == dep_id))
+        .flat_map(|dep| dep.methods.iter())
+        .flat_map(|m| m.throws.iter())
+        .map(|t| (t.exception_type.clone(), t.message.clone()))
+        .collect();
+    if borrowed.is_empty() {
+        return;
+    }
+    for method in &mut unit.methods {
+        method.throws.retain(|t| !borrowed.contains(&(t.exception_type.clone(), t.message.clone())));
+    }
+}
+
 /// Drafts one unit's `examples` and `throws`, retrying with the audits' own issues as feedback, then
 /// recovering by dropping only the examples an issue names, when some still remain usable.
 fn draft_unit(
@@ -1184,7 +1210,8 @@ fn draft_unit(
             ));
             continue;
         }
-        let candidate = apply_answer(unit, answer);
+        let mut candidate = apply_answer(unit, answer);
+        strip_borrowed_throws(plan, &mut candidate);
         let mut candidate_plan = plan.clone();
         candidate_plan.units[index] = candidate.clone();
         let issues = issues_for_unit(&candidate_plan, &candidate.id);
@@ -1899,6 +1926,42 @@ units:
             service_user.contains("by must be positive") && service_user.contains("IllegalArgumentException"),
             "{service_user}"
         );
+    }
+
+    #[test]
+    fn a_borrowed_throw_is_stripped_without_a_retry_and_without_losing_the_units_own_exception() {
+        // The real failure (2026-10-26): the model duplicates `thing`'s own exception onto
+        // `thing-service` (same real run shape as `ticket-service` copying `ticket`'s). Asking it to
+        // redo this via a retry emptied `throws` entirely in 5 of 5 fresh drafts, including the unit's
+        // own legitimate exception. `strip_borrowed_throws` must remove only the borrowed entry, in
+        // Rust, in a single LLM call — no retry, and the service's own "Unknown thing" stays.
+        let plan = draft_fixture_with_dependent_service();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let thing_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let service_answer_with_borrowed_throw = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "Unknown thing", "condition": "the thing is unknown"},
+                {"order": 2, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "unknown-thing", "setup": "ThingService s = new ThingService(repo)", "defines": ["s"], "call": "s.bump(\"T-9\", 2)", "expect": {"throws": "IllegalArgumentException", "message": "Unknown thing"}}
+            ]
+        });
+        let (generator, requests) =
+            script(vec![reply(&thing_answer), reply(&service_answer_with_borrowed_throw)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 2, "no retry needed — the fix is deterministic");
+        let service = &drafted.units[1];
+        assert_eq!(service.methods[0].throws.len(), 1, "{:?}", service.methods[0].throws);
+        assert_eq!(service.methods[0].throws[0].message, "Unknown thing");
+        assert_eq!(verify(&drafted), vec![]);
     }
 
     #[test]
