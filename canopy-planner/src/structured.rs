@@ -671,6 +671,20 @@ fn render_instruction(
     if !plan.non_goals.is_empty() {
         out.push_str(&format!("Non-goals: {}.\n", plan.non_goals.join("; ")));
     }
+    // X9/X10 (`canopy-implementer/docs/prompt-and-plan-changelog.md`, 2026-10-25): a unit built as a
+    // service over an injected repository (the `Service(Repository)` shape) is exactly what tempts the
+    // model to reach for a mocking framework when writing that unit's test — stock and tickets went
+    // from 3/10 and 0/10 to 10/10 each on this one sentence, with the behavioural content unchanged. A
+    // unit that only reads one other unit's type to compile against (`ticket-repository` depends on
+    // `ticket` to know the entity it stores, but constructs no collaborator of its own) never had this
+    // failure mode in either arm — depending on two or more units is the structural signal that this
+    // unit actually holds a constructed collaborator, not just a type it reads.
+    if unit.depends_on.len() >= 2 {
+        out.push_str(
+            "No mocking framework (Mockito or any other) is on this project's classpath: write every \
+             test against a real instance of each dependency, never a mock.\n",
+        );
+    }
     if !plan.decisions.is_empty() {
         let decided: Vec<String> = plan
             .decisions
@@ -1552,6 +1566,36 @@ units:
             "the repository unit throws nothing, but its instruction reads:\n{}",
             repository_step.instruction
         );
+    }
+
+    // --- The X9/X10 no-mocking-framework line: only on a step with a collaborator -------------------
+
+    #[test]
+    fn the_service_step_states_no_mocking_framework_is_available() {
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        let legacy = to_legacy_plan(&plan).unwrap();
+        let service_step = &legacy.steps[2]; // tickets-3-ticket-service, depends_on [ticket, ticket-repository]
+        assert!(
+            service_step.instruction.contains("No mocking framework"),
+            "the service unit has a constructed collaborator, but its instruction reads:\n{}",
+            service_step.instruction
+        );
+    }
+
+    #[test]
+    fn a_unit_that_only_reads_a_types_shape_gets_no_mocking_line() {
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        let legacy = to_legacy_plan(&plan).unwrap();
+        // tickets-1-ticket (no depends_on) and tickets-2-ticket-repository (depends_on: [ticket], one
+        // type it reads, not a collaborator it constructs) must not carry a line answering a question
+        // their own step never raises.
+        for step in &legacy.steps[..2] {
+            assert!(
+                !step.instruction.contains("No mocking framework"),
+                "step {} constructs no collaborator, but its instruction reads:\n{}",
+                step.id, step.instruction
+            );
+        }
     }
 
     #[test]
