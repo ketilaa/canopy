@@ -154,6 +154,12 @@ pub enum Rule {
     /// The same rule id appears in more than one unit's `owns_rules` — two units claim the same rule,
     /// which is exactly how the tickets service plan duplicated `Ticket`'s own validation logic.
     RuleOwnershipCollision,
+    /// An example's `setup_values` names (as a whole word, case-insensitively) a state that method's
+    /// own `throws[].condition` also names, the example calls that method, and `expect` does not state
+    /// `throws` — the example asks for a normal return from exactly the state the unit's own answer
+    /// says must throw. Phase 2's real A1 run (2026-10-25): 10 of 10 drafted plans, dominantly
+    /// `cancel()` on an already-`VALIDATED` ticket expecting `CANCELLED` instead of the stated exception.
+    ExampleContradictsThrows,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -384,6 +390,75 @@ fn preserved_field_contradicted(plan: &StructuredPlan) -> Vec<Issue> {
     issues
 }
 
+/// True when `needle` (already lowercase) occurs in `haystack` (already lowercase) with a word
+/// boundary on both sides — `"validated"` must match inside `"the ticket is already validated"` but
+/// `"issued"` must not match inside `"issuedAt"`. A plain scan, not a regex, matching this file's other
+/// string heuristics (`wall_clock_call`, `declared_in_setup`).
+fn word_in(haystack: &str, needle: &str) -> bool {
+    let is_word = |c: u8| (c as char).is_alphanumeric() || c == b'_';
+    let (hb, nb) = (haystack.as_bytes(), needle.as_bytes());
+    if nb.is_empty() || nb.len() > hb.len() {
+        return false;
+    }
+    (0..=(hb.len() - nb.len())).any(|start| {
+        hb[start..start + nb.len()] == *nb
+            && (start == 0 || !is_word(hb[start - 1]))
+            && (start + nb.len() == hb.len() || !is_word(hb[start + nb.len()]))
+    })
+}
+
+/// An example's `setup_values` describe the receiver's state before `call`; a method's own `throws`
+/// list describes, in prose, the preconditions under which it must throw instead of returning
+/// normally. When one of an example's `setup_values` names (as a whole word) a state that one of the
+/// called method's own `throws[].condition` sentences also names, and that example's `expect` does not
+/// itself state `throws`, the example asks for a normal return from exactly the state the same unit's
+/// own `throws` answer says must throw instead — a contradiction between the model's `examples` answer
+/// and its own `throws` answer for the same unit, not a hypothetical: Phase 2's real A1 run
+/// (`canopy-implementer/docs/prompt-and-plan-changelog.md`, 2026-10-25) found this in 10 of 10 drafted
+/// plans, dominantly an example with `setup_values: {status: VALIDATED}` calling `cancel()` and
+/// expecting `status: CANCELLED`, while the same unit's own `cancel()` throws entry reads "when the
+/// ticket is already validated".
+fn example_contradicts_own_throws(plan: &StructuredPlan) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    for unit in &plan.units {
+        for method in &unit.methods {
+            if method.throws.is_empty() {
+                continue;
+            }
+            let before_paren = method.signature.split('(').next().unwrap_or(&method.signature);
+            let method_name = before_paren
+                .rsplit(|c: char| c == '.' || c == ' ')
+                .next()
+                .unwrap_or(before_paren);
+            for example in &unit.examples {
+                if !example.call.contains(method_name) || example.expect.contains_key("throws") {
+                    continue;
+                }
+                for throw in &method.throws {
+                    let condition_lower = throw.condition.to_lowercase();
+                    for value in example.setup_values.values() {
+                        // Shorter than 4 chars risks matching a generic token (an id, a flag) rather
+                        // than a state name the condition prose actually names.
+                        if value.len() >= 4 && word_in(&condition_lower, &value.to_lowercase()) {
+                            issues.push(Issue {
+                                rule: Rule::ExampleContradictsThrows,
+                                unit: Some(unit.id.clone()),
+                                message: format!(
+                                    "example {} calls {method_name} from a state matching its own \
+                                     throws condition (\"{}\"), but expects a normal return instead of \
+                                     {} \"{}\"",
+                                    example.id, throw.condition, throw.exception_type, throw.message
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    issues
+}
+
 /// Identifiers a Java-style local declaration in `setup` introduces (`Ticket ticket = new Ticket(...)`
 /// or `Ticket ticket = new Ticket(...).cancel()`): a type-looking word (starts uppercase) immediately
 /// followed by a value-looking word (starts lowercase) immediately followed by `=` (not `==`).
@@ -484,6 +559,7 @@ pub fn verify(plan: &StructuredPlan) -> Vec<Issue> {
     issues.extend(preserved_field_contradicted(plan));
     issues.extend(undefined_identifier(plan));
     issues.extend(rule_ownership_collisions(plan));
+    issues.extend(example_contradicts_own_throws(plan));
     issues
 }
 
@@ -803,6 +879,9 @@ ALWAYS write `condition` as a plain clause that reads naturally after \"when\" (
 \"at is more than 90 minutes after issuedAt\"), comparing only the method's own parameters and the receiver's \
 fields — never as Java code (`status == CANCELLED`), never wrapped in `if (...)`, and never by reading the \
 system clock.
+NEVER write an example whose `setup_values` puts the receiver in a state one of this same method's own \
+`throws` conditions names, unless that example's `expect` also states `throws` — a normal `expect` from a \
+state your own `throws` answer says must throw is a contradiction between your two answers, not two tests.
 NEVER invent a rule, a value or an exception that the rules, the decisions or the scenarios do not state."
         .to_string()
 }
@@ -1254,6 +1333,61 @@ units:
     fn does_not_flag_a_preserved_field_that_matches() {
         let plan = StructuredPlan::from_yaml(VALIDATE_PRESERVES_ISSUED_AT).unwrap();
         assert_eq!(verify(&plan), vec![]);
+    }
+
+    // --- ExampleContradictsThrows: Phase 2's real A1 run (2026-10-25), run-01 of 10, byte-for-byte --
+    // (`canopy-planner/runs/phase2-a1a2a3-20261025T223616/a1/plans/2026-10-25T21-42-37/run-01`). The
+    // same contradiction (an example with `setup_values: {status: VALIDATED}` calling `cancel()` and
+    // expecting a normal `CANCELLED` return) recurred in 8 of the 10 drafted plans that batch.
+
+    const PHASE2_A1_RUN01_CANCEL_VALIDATED: &str = r#"
+id: tickets
+units:
+  - id: ticket
+    owns_rules: [validation-window, validation-precedence, cancellation-rule]
+    methods:
+      - signature: "Ticket.cancel()"
+        preserves: [id, issuedAt]
+        throws:
+          - {order: 1, exception_type: IllegalStateException, message: "A validated ticket cannot be cancelled", condition: "the ticket is already validated"}
+    examples:
+      - id: cancel-issued
+        setup: 'Ticket ticket = new Ticket("T-1", LocalDateTime.of(2026, 3, 1, 10, 0), TicketStatus.ISSUED);'
+        setup_values: {id: "T-1", issuedAt: "2026-03-01T10:00", status: ISSUED}
+        call: 'Ticket.cancel()'
+        expect: {id: "T-1", issuedAt: "2026-03-01T10:00", status: CANCELLED}
+      - id: cancel-validated
+        setup: 'Ticket ticket = new Ticket("T-1", LocalDateTime.of(2026, 3, 1, 10, 0), TicketStatus.VALIDATED);'
+        setup_values: {id: "T-1", issuedAt: "2026-03-01T10:00", status: VALIDATED}
+        call: 'Ticket.cancel()'
+        expect: {id: "T-1", issuedAt: "2026-03-01T10:00", status: CANCELLED}
+"#;
+
+    #[test]
+    fn flags_the_phase2_a1_cancel_validated_contradiction() {
+        let plan = StructuredPlan::from_yaml(PHASE2_A1_RUN01_CANCEL_VALIDATED).unwrap();
+        let issues = verify(&plan);
+        assert_eq!(only_rule(&issues), Rule::ExampleContradictsThrows);
+        // `cancel-issued` is the correct, non-contradicting example (ISSUED does not match cancel()'s
+        // own throws condition) and must not be swept up by a looser match.
+        assert!(issues.iter().all(|i| i.message.contains("cancel-validated")));
+        assert!(!issues.iter().any(|i| i.message.contains("cancel-issued")));
+    }
+
+    #[test]
+    fn does_not_flag_the_golden_fixtures_setup_by_chained_call_examples() {
+        // The real golden fixture (`canopy-implementer/tasks/tickets/plan.structured.yaml`) reaches the
+        // same preconditions through a chained `setup` (`new Ticket(...).validate(...)`) rather than a
+        // literal `setup_values: {status: VALIDATED}`, and its `expect` always states `throws` when the
+        // precondition demands it — already covered by `the_tickets_fixture_has_no_contradictions`, but
+        // this isolates the one unit the new rule touches.
+        let plan = StructuredPlan::from_yaml(TICKETS_STRUCTURED).unwrap();
+        let ticket_unit = plan.units.iter().find(|u| u.id == "ticket").unwrap();
+        let issues = example_contradicts_own_throws(&StructuredPlan {
+            units: vec![ticket_unit.clone()],
+            ..plan
+        });
+        assert_eq!(issues, vec![]);
     }
 
     // --- UndefinedIdentifier: S6a run 5 (tickets, step 2, `ticket` never defined) ---------------------
