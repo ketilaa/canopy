@@ -1142,6 +1142,7 @@ fn draft_unit(
     index: usize,
 ) -> Result<Unit, String> {
     let unit = &plan.units[index];
+    let api_unit = &api.units[index];
     let schema = draft_schema(unit.methods.len());
     let mut previous: Option<(String, Vec<String>)> = None;
     let mut flawed: Option<(Unit, Vec<Issue>)> = None;
@@ -1211,14 +1212,38 @@ fn draft_unit(
             continue;
         }
         let mut candidate = apply_answer(unit, answer);
+        let before_strip: Vec<usize> = candidate.methods.iter().map(|m| m.throws.len()).collect();
         strip_borrowed_throws(plan, &mut candidate);
+        // Checked against a real run (2026-10-26): once the model sees the dependency's own throws, it
+        // sometimes stops answering this method's *own* exception too, not just the borrowed ones —
+        // first-attempt `throws: []` on a method whose stripping actually removed something, even
+        // though the unit's own, unrelated API line still states it throws. That emptiness is not
+        // ambiguous (stripping removing everything that was ever there is the one case worth a nudge),
+        // and the method's own API line is quoted back verbatim rather than paraphrased, so the retry
+        // names the exact fact the model already had and apparently discarded.
+        let wiped_a_method_with_its_own_exception_still_to_state = candidate
+            .methods
+            .iter()
+            .zip(&before_strip)
+            .any(|(m, &before)| before > 0 && m.throws.is_empty())
+            && api_unit.line.contains("throws");
         let mut candidate_plan = plan.clone();
         candidate_plan.units[index] = candidate.clone();
         let issues = issues_for_unit(&candidate_plan, &candidate.id);
-        if issues.is_empty() {
+        if issues.is_empty() && !wiped_a_method_with_its_own_exception_still_to_state {
             return Ok(candidate);
         }
-        previous = Some((response.content, issues.iter().map(|i| i.message.clone()).collect()));
+        let mut problems: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
+        if wiped_a_method_with_its_own_exception_still_to_state {
+            problems.push(format!(
+                "removing the dependency's own exceptions left at least one method's `throws` empty. \
+                 This unit's own API line still states what it throws on its own: \"{}\". Answer \
+                 `throws` again with that exception kept — excluding the dependency's list must never \
+                 also exclude this unit's own.",
+                api_unit.line.trim()
+            ));
+        }
+        previous = Some((response.content, problems));
         flawed = Some((candidate, issues));
     }
     if let Some((mut candidate, issues)) = flawed {
@@ -1962,6 +1987,54 @@ units:
         assert_eq!(service.methods[0].throws.len(), 1, "{:?}", service.methods[0].throws);
         assert_eq!(service.methods[0].throws[0].message, "Unknown thing");
         assert_eq!(verify(&drafted), vec![]);
+    }
+
+    #[test]
+    fn a_full_wipe_gets_one_retry_quoting_the_units_own_api_line() {
+        // The real failure (2026-10-26): once the dependency's throws are shown, the model sometimes
+        // stops answering this unit's *own* exception too — a first attempt with only the borrowed
+        // entry, nothing else. Stripping it then leaves `throws: []`, which is indistinguishable from a
+        // method that legitimately throws nothing unless something forces one more look. The unit's own
+        // API line here ("...throws IllegalArgumentException") is the signal that it is not legitimate.
+        let plan = draft_fixture_with_dependent_service();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let thing_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let service_only_borrowed = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "valid-bump", "setup": "ThingService s = new ThingService(repo)", "defines": ["s"], "call": "s.bump(\"T-1\", 2)", "expect": {"value": "3"}}
+            ]
+        });
+        let service_corrected = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "Unknown thing", "condition": "the thing is unknown"}
+            ]}],
+            "examples": [
+                {"id": "unknown-thing", "setup": "ThingService s = new ThingService(repo)", "defines": ["s"], "call": "s.bump(\"T-9\", 2)", "expect": {"throws": "IllegalArgumentException", "message": "Unknown thing"}}
+            ]
+        });
+        let (generator, requests) =
+            script(vec![reply(&thing_answer), reply(&service_only_borrowed), reply(&service_corrected)]);
+        let drafted = draft_structured(&generator, &plan, &feature).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3, "the full wipe must force exactly one retry");
+        let retry_user = &requests[2].messages[1].content;
+        assert!(
+            retry_user.contains("throws IllegalArgumentException"),
+            "the retry must quote the unit's own API line verbatim:\n{retry_user}"
+        );
+        let service = &drafted.units[1];
+        assert_eq!(service.methods[0].throws.len(), 1, "{:?}", service.methods[0].throws);
+        assert_eq!(service.methods[0].throws[0].message, "Unknown thing");
     }
 
     #[test]
