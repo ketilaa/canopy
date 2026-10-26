@@ -958,6 +958,11 @@ NEVER give a method a `throws` entry for a condition already listed under \"Alre
 even with a different exception type or message — that condition belongs to the dependency; call its own \
 method and let its exception propagate unchanged, instead of catching it or re-checking the same condition \
 yourself.
+ALWAYS still answer `throws` with every exception this method's own API line or rules give it — the \
+\"Already thrown by a dependency\" list only says which entries to leave out; it is not the complete list for \
+this method, and removing an entry that matches it must never become removing every entry. A method whose \
+API line states it throws on some condition unrelated to the dependency (for instance, an id the dependency \
+cannot find) keeps that entry even when the dependency throws other things entirely.
 NEVER invent a rule, a value or an exception that the rules, the decisions or the scenarios do not state."
         .to_string()
 }
@@ -1011,7 +1016,9 @@ fn draft_messages(
     if !dep_throws.is_empty() {
         user.push_str(
             "\n## Already thrown by a dependency (your own `throws` must have no entry for any of \
-             these conditions — call the dependency's own method and let its exception propagate)\n",
+             these conditions — call the dependency's own method and let its exception propagate; this \
+             list only says what to leave out, it is not the complete list for your own method, so keep \
+             every exception your own API line or rules still give it)\n",
         );
         user.push_str(&dep_throws);
     }
