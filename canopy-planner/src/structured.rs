@@ -896,6 +896,10 @@ system clock.
 NEVER write an example whose `setup_values` puts the receiver in a state one of this same method's own \
 `throws` conditions names, unless that example's `expect` also states `throws` — a normal `expect` from a \
 state your own `throws` answer says must throw is a contradiction between your two answers, not two tests.
+NEVER give a method a `throws` entry for a condition already listed under \"Already thrown by a dependency\", \
+even with a different exception type or message — that condition belongs to the dependency; call its own \
+method and let its exception propagate unchanged, instead of catching it or re-checking the same condition \
+yourself.
 NEVER invent a rule, a value or an exception that the rules, the decisions or the scenarios do not state."
         .to_string()
 }
@@ -920,6 +924,38 @@ fn draft_messages(
             };
             user.push_str(&format!("- {}{}\n", method.signature, preserves));
         }
+    }
+    // The dependency's own throws, already drafted earlier in this same pass (`draft_structured`
+    // visits units in `depends_on` order, writing each one back into `plan` before the next is
+    // drafted): the gap this closes is not a missing instruction (`draft_system()` already says never
+    // to borrow an exception from elsewhere, and this unit's own `rules` text, fixed from the golden
+    // fixture, already says the dependency owns these rules) — it is that the model was never actually
+    // shown what the dependency throws, only told in prose not to duplicate it. A1's real run
+    // (2026-10-26, `canopy-implementer/docs/prompt-and-plan-changelog.md`) found the model routinely
+    // re-declaring `ticket`'s own validation/cancellation exceptions on `ticket-service`, almost always
+    // with the wrong exception type, because nothing in its prompt ever stated what those were.
+    let dep_throws: String = unit
+        .depends_on
+        .iter()
+        .filter_map(|dep_id| plan.units.iter().find(|u| &u.id == dep_id))
+        .flat_map(|dep| dep.methods.iter())
+        .flat_map(|m| m.throws.iter().map(move |t| (m, t)))
+        .map(|(method, throw)| {
+            format!(
+                "- {}: throws {} with the message \"{}\" when {}\n",
+                throws_label(&method.signature),
+                throw.exception_type.trim(),
+                throw.message.trim(),
+                throw.condition.trim().trim_end_matches('.')
+            )
+        })
+        .collect();
+    if !dep_throws.is_empty() {
+        user.push_str(
+            "\n## Already thrown by a dependency (your own `throws` must have no entry for any of \
+             these conditions — call the dependency's own method and let its exception propagate)\n",
+        );
+        user.push_str(&dep_throws);
     }
     if !plan.decisions.is_empty() {
         user.push_str("\n## Decided\n");
@@ -1690,6 +1726,64 @@ units:
         assert_eq!(drafted.units[0].examples.len(), 1);
         // The rendered plan must be free of every Phase 0 contradiction, same as the hand-written fixture.
         assert_eq!(verify(&drafted), vec![]);
+    }
+
+    fn draft_fixture_with_dependent_service() -> StructuredPlan {
+        StructuredPlan::from_yaml(
+            r#"
+id: things
+api: "Package p.\nrecord Thing(int value). Thing bump(int by) returns a new thing and throws IllegalArgumentException.\nclass ThingService, constructor ThingService(ThingRepository): Thing bump(String id, int by) returns a new thing and throws IllegalArgumentException."
+units:
+  - id: thing
+    owns_rules: [bump-rule]
+    rules: "bump adds `by` to value; by must be positive."
+    methods:
+      - signature: "Thing.bump(int by)"
+  - id: thing-service
+    owns_rules: [unknown-thing-rejection]
+    depends_on: [thing]
+    rules: "ThingService loads a thing and calls bump on it. Thing owns the bump rule; the service only loads, calls and saves."
+    methods:
+      - signature: "ThingService.bump(String id, int by)"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_dependents_prompt_states_what_its_dependency_already_throws() {
+        let plan = draft_fixture_with_dependent_service();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let thing_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let service_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "Unknown thing", "condition": "the thing is unknown"}
+            ]}],
+            "examples": [
+                {"id": "unknown-thing", "setup": "ThingService s = new ThingService(repo)", "defines": ["s"], "call": "s.bump(\"T-9\", 2)", "expect": {"throws": "IllegalArgumentException", "message": "Unknown thing"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&thing_answer), reply(&service_answer)]);
+        draft_structured(&generator, &plan, &feature).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // `thing` has no dependency of its own, so its prompt states nothing.
+        assert!(!requests[0].messages[1].content.contains("Already thrown by a dependency"));
+        // `thing-service` depends on `thing`, which was drafted first in this same pass — its own
+        // prompt must show the exact exception `thing` already throws, not just a prose reminder.
+        let service_user = &requests[1].messages[1].content;
+        assert!(service_user.contains("Already thrown by a dependency"), "{service_user}");
+        assert!(
+            service_user.contains("by must be positive") && service_user.contains("IllegalArgumentException"),
+            "{service_user}"
+        );
     }
 
     #[test]
