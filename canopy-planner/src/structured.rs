@@ -1021,6 +1021,41 @@ fn draft_messages(
         );
         user.push_str(&dep_rules);
     }
+    // Finding B, the full A1 re-run with all four prior fixes (2026-10-27,
+    // `canopy-implementer/docs/prompt-and-plan-changelog.md`): `ticket-service`'s own drafted example
+    // got the 90-minute boundary backwards (treating the inclusive instant as its own "expired" case)
+    // while `ticket` — drafted earlier in this same pass — already got the identical boundary right in
+    // its own examples, shown one line above as prose rules but never as the dependency's actual worked
+    // cases. X7/X8 (2026-10-25) already found that a concrete worked value moves this model more than a
+    // prose restatement of the same fact; this renders the dependency's own examples (already fixed
+    // answers, never model-drafted again at this stage) in the identical "setup; call: expect" sentence
+    // shape `render_instruction` uses for the plan itself, so a dependent sees its dependency's boundary
+    // cases stated the same way it will later see its own.
+    let dep_examples: String = unit
+        .depends_on
+        .iter()
+        .filter_map(|dep_id| plan.units.iter().find(|u| &u.id == dep_id))
+        .flat_map(|dep| dep.examples.iter().map(move |e| (dep, e)))
+        .map(|(dep, example)| {
+            let setup = example.setup.trim().trim_end_matches(';');
+            let lead = if setup.is_empty() { String::new() } else { format!("{setup}; ") };
+            format!(
+                "- {} ({}): {lead}{}: {}\n",
+                dep.id,
+                example.id,
+                example.call.trim().trim_end_matches('.'),
+                render_expect(&example.expect)
+            )
+        })
+        .collect();
+    if !dep_examples.is_empty() {
+        user.push_str(
+            "\n## What a dependency's own examples already establish (already fixed answers for its own \
+             cases, including any boundary; an example of yours for the identical case must agree with \
+             these, not restate the boundary your own way)\n",
+        );
+        user.push_str(&dep_examples);
+    }
     let dep_throws: String = unit
         .depends_on
         .iter()
@@ -2014,6 +2049,50 @@ units:
         assert!(service_user.contains("What a dependency already does"), "{service_user}");
         assert!(
             service_user.contains("bump adds `by` to value; by must be positive."),
+            "{service_user}"
+        );
+    }
+
+    #[test]
+    fn the_dependents_prompt_states_its_dependencys_own_worked_examples() {
+        // Finding B (2026-10-27 full A1 re-run): a prose rule restating a boundary was not enough —
+        // `ticket-service` still drafted the inclusive 90-minute instant as its own "expired" example
+        // even with `ticket`'s rules text shown one line above. The dependent's prompt must also state
+        // the dependency's own already-drafted worked example, not only its rules in prose.
+        let plan = draft_fixture_with_dependent_service();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let thing_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let service_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "Unknown thing", "condition": "the thing is unknown"}
+            ]}],
+            "examples": [
+                {"id": "unknown-thing", "setup": "ThingService s = new ThingService(repo)", "defines": ["s"], "call": "s.bump(\"T-9\", 2)", "expect": {"throws": "IllegalArgumentException", "message": "Unknown thing"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&thing_answer), reply(&service_answer)]);
+        draft_structured(&generator, &plan, &feature).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // `thing` has no dependency of its own, so its prompt states nothing.
+        assert!(!requests[0].messages[1].content.contains("What a dependency's own examples already establish"));
+        // `thing-service` depends on `thing`, which was drafted first in this same pass — its own
+        // prompt must state `thing`'s own worked example (`bump-by-two`: `t.bump(2)` giving `value: 3`),
+        // not only its rules in prose.
+        let service_user = &requests[1].messages[1].content;
+        assert!(
+            service_user.contains("What a dependency's own examples already establish"),
+            "{service_user}"
+        );
+        assert!(
+            service_user.contains("bump-by-two") && service_user.contains("t.bump(2)") && service_user.contains("value is 3"),
             "{service_user}"
         );
     }
