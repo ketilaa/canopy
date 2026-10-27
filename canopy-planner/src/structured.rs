@@ -997,6 +997,30 @@ fn draft_messages(
     // (2026-10-26, `canopy-implementer/docs/prompt-and-plan-changelog.md`) found the model routinely
     // re-declaring `ticket`'s own validation/cancellation exceptions on `ticket-service`, almost always
     // with the wrong exception type, because nothing in its prompt ever stated what those were.
+    // The dependency's own fixed `rules` text — a gap found while following up the 2026-10-26
+    // exception-ownership fix above: a dependent unit's example predicting the *outcome* of a
+    // successful call into its dependency (not an exception) had no stated fact to draw on, only
+    // the dependency's exceptions. `verify-01`'s check of `tickets-3-ticket-service` (2026-10-26)
+    // found the model writing an example where `TicketService.validate()` succeeds but `expect`
+    // states `status: ISSUED` instead of `VALIDATED` — `ticket`'s own rules text ("validate returns
+    // a new ticket with the status VALIDATED") was never shown to the unit drafting the dependent's
+    // examples. Reproduced in 3 of 4 fresh sibling drafts from the same batch, not a one-off.
+    // Rendering the dependency's `rules` text verbatim is safe: it is a fixed field, never
+    // model-drafted at this stage, the same trust level as the unit's own `rules` shown above.
+    let dep_rules: String = unit
+        .depends_on
+        .iter()
+        .filter_map(|dep_id| plan.units.iter().find(|u| &u.id == dep_id))
+        .filter(|dep| !dep.rules.trim().is_empty())
+        .map(|dep| format!("- {}: {}\n", dep.id, dep.rules.trim()))
+        .collect();
+    if !dep_rules.is_empty() {
+        user.push_str(
+            "\n## What a dependency already does (its own rules — any example of yours that calls \
+             into it, directly or through your own method, must predict the outcome these state)\n",
+        );
+        user.push_str(&dep_rules);
+    }
     let dep_throws: String = unit
         .depends_on
         .iter()
@@ -1949,6 +1973,47 @@ units:
         assert!(service_user.contains("Already thrown by a dependency"), "{service_user}");
         assert!(
             service_user.contains("by must be positive") && service_user.contains("IllegalArgumentException"),
+            "{service_user}"
+        );
+    }
+
+    #[test]
+    fn the_dependents_prompt_states_what_its_dependency_already_does() {
+        // The real failure (2026-10-26, found following up the exception-ownership fix): the model
+        // drafting `ticket-service`'s examples had no stated fact about what a successful call to
+        // `ticket.validate()` actually does, only what it throws, and wrote `expect: {status: ISSUED}`
+        // for a call that should produce `VALIDATED`. The dependency's own `rules` text must now reach
+        // the dependent's prompt, the same way its `throws` already do.
+        let plan = draft_fixture_with_dependent_service();
+        let feature = Feature::parse(BLANK_FEATURE).unwrap();
+        let thing_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "by must be positive", "condition": "by is not positive"}
+            ]}],
+            "examples": [
+                {"id": "bump-by-two", "setup": "Thing t = new Thing(1)", "defines": ["t"], "call": "t.bump(2)", "expect": {"value": "3"}}
+            ]
+        });
+        let service_answer = json!({
+            "methods": [{"throws": [
+                {"order": 1, "exception_type": "IllegalArgumentException", "message": "Unknown thing", "condition": "the thing is unknown"}
+            ]}],
+            "examples": [
+                {"id": "unknown-thing", "setup": "ThingService s = new ThingService(repo)", "defines": ["s"], "call": "s.bump(\"T-9\", 2)", "expect": {"throws": "IllegalArgumentException", "message": "Unknown thing"}}
+            ]
+        });
+        let (generator, requests) = script(vec![reply(&thing_answer), reply(&service_answer)]);
+        draft_structured(&generator, &plan, &feature).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // `thing` has no dependency of its own, so its prompt states nothing.
+        assert!(!requests[0].messages[1].content.contains("What a dependency already does"));
+        // `thing-service` depends on `thing`, which was drafted first in this same pass — its own
+        // prompt must state exactly what `thing`'s own rules already say it does.
+        let service_user = &requests[1].messages[1].content;
+        assert!(service_user.contains("What a dependency already does"), "{service_user}");
+        assert!(
+            service_user.contains("bump adds `by` to value; by must be positive."),
             "{service_user}"
         );
     }
